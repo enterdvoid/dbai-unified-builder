@@ -660,7 +660,6 @@ jobs:
             echo "## Firmware assets"
             echo
             echo "The image filenames encode the Armbian image version, OS release, kernel version, image profile, and filesystem."
-            echo "Each image is accompanied by an Armbian \`.img.txt\` build-information file containing upstream build details and DBAI-specific metadata."
             echo
             shopt -s nullglob
             found_image=false
