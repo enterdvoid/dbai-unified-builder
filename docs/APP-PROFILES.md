@@ -46,7 +46,7 @@ Proxmox is selected from the same application dropdown as CasaOS and the other a
 
 - `proxmox-official`: uses the official Proxmox package repository on Trixie.
 - `proxmox-community`: uses community PXVIRT packages on Bookworm, with mirror fallback.
-- `proxmox-both`: creates both variants and requires Bookworm and Trixie in the selected release set.
+- `proxmox-both`: maps Bookworm to the Community variant and Trixie to the Official variant. Both are produced when both releases are selected; otherwise, only the compatible selected release gets an Application image.
 
 These are application-profile jobs, not a separate `proxmox` profile. The workflow uses the existing DBAI Proxmox extensions and VM-import helper from `enterdvoid/build`, and freezes BSP/kernel package updates for these variants. This is a package-based experiment that retains the Armbian kernel, not the official Proxmox ISO or a guarantee of full Proxmox VE compatibility on an Amlogic TV box. Official Proxmox VE 9.2 ARM64 requires UEFI/ACPI for supported systems; device-tree-only SBCs are not supported by the official ARM64 release.
 
@@ -56,6 +56,6 @@ Proxmox options live in the same application selector as CasaOS and the other ap
 
 - `proxmox-official`: creates an application-profile variant on Trixie.
 - `proxmox-community`: creates an application-profile variant on Bookworm.
-- `proxmox-both`: creates both variants, requiring both Bookworm and Trixie in the selected release set.
+- `proxmox-both`: maps Bookworm to Community and Trixie to Official; both variants are produced when both releases are selected.
 
 When a selected app does not support a particular release in a multi-release batch, the workflow builds a generic application image for that release rather than trying an incompatible installer.
