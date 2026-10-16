@@ -60,13 +60,12 @@ fi
 if bash "$VALIDATOR" "aml-s9xx-box" "" "sid" "server" "ext4" "Kernel Official" "none"; then
   echo "Expected unsupported release to fail" >&2; exit 1
 fi
-# Canonical published image naming: normalize repeated app suffix from the generated Armbian filename.
+# Canonical published image naming removes duplicate application profile tokens.
 normalize_asset_name() {
   local name="$1"
   local app="$2"
-  name="${name//-${app}-${app}/-${app}}"
+  name="${name//-${app}-${app}-/-${app}-}"
   printf '%s\n' "$name"
 }
 [[ "$(normalize_asset_name "DBAI2K26-Armbian_26.11.0-aml-s9xx-trixie-k6.18.57-proxmox-official-proxmox-official-ext4.img.xz" proxmox-official)" == "DBAI2K26-Armbian_26.11.0-aml-s9xx-trixie-k6.18.57-proxmox-official-ext4.img.xz" ]]
-
 echo "All input, checkbox, naming, and application compatibility tests passed."
