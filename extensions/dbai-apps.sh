@@ -70,11 +70,13 @@ services:
       TZ: Asia/Jakarta
       GO2RTC_CONFIG_PERSIST: "true"
     volumes:
-      - ./lightnvr/config:/etc/lightnvr
-      - ./lightnvr/data:/var/lib/lightnvr/data
+      - lightnvr-config:/etc/lightnvr
+      - lightnvr-data:/var/lib/lightnvr/data
 
 volumes:
   9router-data:
+  lightnvr-config:
+  lightnvr-data:
 COMPOSE
 
 	# The profile list is supplied explicitly so unrelated containers do not start.
@@ -88,8 +90,8 @@ COMPOSE
 #!/usr/bin/env bash
 set -euo pipefail
 APP_DIR=/opt/dbai/apps
-mkdir -p "$APP_DIR/lightnvr/config" "$APP_DIR/lightnvr/data"
-chmod 750 "$APP_DIR" "$APP_DIR/lightnvr" "$APP_DIR/lightnvr/config" "$APP_DIR/lightnvr/data"
+mkdir -p "$APP_DIR"
+chmod 750 "$APP_DIR"
 read -r -a selected_profiles <<< "${DBAI_COMPOSE_PROFILE}"
 profile_args=()
 for profile in "${selected_profiles[@]}"; do
