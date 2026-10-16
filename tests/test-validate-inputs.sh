@@ -33,8 +33,8 @@ if bash "$PROFILE_RESOLVER" true yes false true; then
 fi
 
 ALL_RESOLVER="$ROOT/scripts/resolve-app-variants.sh"
-[[ "$(bash "$ALL_RESOLVER" all bookworm | sort | tr '\n' ',')" == "casaos,hermes-9router,hermes-9router-lightnvr,lightnvr-go2rtc,openmediavault,proxmox-community," ]]
-[[ "$(bash "$ALL_RESOLVER" all trixie | sort | tr '\n' ',')" == "casaos,hermes-9router,hermes-9router-lightnvr,lightnvr-go2rtc,openmediavault,proxmox-official," ]]
+[[ "$(bash "$ALL_RESOLVER" all bookworm | sort | tr '\n' ',')" == "casaos,hermes-9router,hermes-9router-lightnvr,homeassistant,lightnvr-go2rtc,openmediavault,proxmox-community," ]]
+[[ "$(bash "$ALL_RESOLVER" all trixie | sort | tr '\n' ',')" == "casaos,hermes-9router,hermes-9router-lightnvr,homeassistant,lightnvr-go2rtc,openmediavault,proxmox-official," ]]
 [[ "$(bash "$ALL_RESOLVER" all bullseye)" == "homeassistant" ]]
 [[ "$(bash "$ALL_RESOLVER" none resolute)" == "none" ]]
 
