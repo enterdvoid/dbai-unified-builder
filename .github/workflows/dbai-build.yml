@@ -1,6 +1,10 @@
 name: DBAI Unified Firmware Builder
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/dbai-build.yml"
   workflow_dispatch:
     inputs:
       board:
@@ -96,6 +100,7 @@ concurrency:
 
 jobs:
   plan:
+    if: ${{ github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[dbai-smoke]') }}
     name: Validate inputs and expand build matrix
     runs-on: ubuntu-24.04
     outputs:
@@ -107,15 +112,15 @@ jobs:
         id: matrix
         shell: bash
         env:
-          BOARD_INPUT: ${{ inputs.board }}
-          CUSTOM_BOARD: ${{ inputs.custom_board_name }}
-          RELEASES_INPUT: ${{ inputs.releases }}
-          PROFILES_INPUT: ${{ inputs.profiles }}
-          FILESYSTEM_INPUT: ${{ inputs.filesystem }}
-          KERNEL_MODE: ${{ inputs.kernel_mode }}
-          APP_PROFILE: ${{ inputs.app_profile }}
-          KERNEL_ARCHIVES_INPUT: ${{ inputs.kernel_archives }}
-          PROXMOX_MODE: ${{ inputs.proxmox_mode }}
+          BOARD_INPUT: ${{ inputs.board || 'aml-s9xx-box' }}
+          CUSTOM_BOARD: ${{ inputs.custom_board_name || '' }}
+          RELEASES_INPUT: ${{ inputs.releases || 'trixie' }}
+          PROFILES_INPUT: ${{ inputs.profiles || 'minimal,server,application,desktop' }}
+          FILESYSTEM_INPUT: ${{ inputs.filesystem || 'ext4' }}
+          KERNEL_MODE: ${{ inputs.kernel_mode || 'official' }}
+          APP_PROFILE: ${{ inputs.app_profile || 'none' }}
+          KERNEL_ARCHIVES_INPUT: ${{ inputs.kernel_archives || '' }}
+          PROXMOX_MODE: ${{ inputs.proxmox_mode || 'official' }}
           RELEASE_TOKEN_PRESENT: ${{ secrets.DBAI_RELEASE_TOKEN != '' }}
         run: |
           set -euo pipefail
@@ -208,12 +213,12 @@ jobs:
       RELEASE: ${{ matrix.release }}
       PROFILE: ${{ matrix.profile }}
       FILESYSTEM: ${{ matrix.filesystem }}
-      SOURCE_REF: ${{ inputs.source_ref }}
+      SOURCE_REF: ${{ inputs.source_ref || 'main' }}
       KERNEL_MODE: ${{ inputs.kernel_mode }}
       APP_PROFILE: ${{ inputs.app_profile }}
       PROXMOX_MODE: ${{ inputs.proxmox_mode }}
       PROXMOX_VARIANT: ${{ matrix.proxmox_variant }}
-      KERNEL_ARCHIVES: ${{ inputs.kernel_archives }}
+      KERNEL_ARCHIVES: ${{ inputs.kernel_archives || '' }}
     steps:
       - name: Report runner resources before disk setup
         shell: bash
@@ -485,7 +490,7 @@ jobs:
       FILESYSTEM_INPUT: ${{ inputs.filesystem }}
       APP_PROFILE: ${{ inputs.app_profile }}
       PROXMOX_MODE: ${{ inputs.proxmox_mode }}
-      DELETE_OLD: "true"
+      DELETE_OLD: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[dbai-smoke]') && 'false' || 'true' }}
     steps:
       - name: Report release assembly runner resources
         shell: bash
