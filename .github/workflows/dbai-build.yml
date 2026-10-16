@@ -517,13 +517,15 @@ jobs:
           SHORT_BOARD="${BOARD%-box}"
           for image in "${images[@]}"; do
             base="$(basename "$image")"
-            if [[ "$base" =~ ^Armbian(-unofficial)?_([^_]+)_([^_]+)_([^_]+)_([^_]+)_([^_]+)_(minimal|server|desktop)\.img(\.(xz|gz|zst))?$ ]]; then
+            # Armbian output may omit the profile suffix (e.g. *_6.18.57.img.xz).
+            # Accept both profile-suffixed and unsuffixed image names.
+            if [[ "$base" =~ ^Armbian(-unofficial)?_([^_]+)_([^_]+)_([^_]+)_([^_]+)_([^_.]+)(_((minimal|server|desktop)))?\.img(\.(xz|gz|zst))?$ ]]; then
               armbian_version="${BASH_REMATCH[2]}"
               image_board="${BASH_REMATCH[3]}"
               image_release="${BASH_REMATCH[4]}"
               image_branch="${BASH_REMATCH[5]}"
               kernel_version="${BASH_REMATCH[6]}"
-              source_profile="${BASH_REMATCH[7]}"
+              source_profile="${BASH_REMATCH[9]:-unknown}"
             else
               echo "::error::Cannot parse Armbian image filename: $base"
               exit 1
