@@ -155,7 +155,7 @@ jobs:
             if ! tar -tzf "$bootfs_archive" | awk ' /^\// { bad=1 } /(^|\/)\.\.(\/|$)/ { bad=1 } END { exit bad }'; then
               echo "::error::Unsafe absolute or parent-traversal path in custom bootfs archive."; exit 2
             fi
-            [[ -n "$(tar -tzf "$bootfs_archive" | sed '/^[.][/]*$/d' | head -n 1)" ]] || { echo "::error::Custom bootfs archive is empty."; exit 2; }
+            [[ -n "$(tar -tzf "$bootfs_archive" | awk 'NF && $0 !~ /^\.\/?$/ { found=1 } END { exit !found }')" ]] || { echo "::error::Custom bootfs archive is empty."; exit 2; }
           fi
           if [[ "$KERNEL_MODE" == "Custom Kernel" ]]; then
             [[ "$KERNEL_CUSTOM_INPUT" =~ ^https:// ]] || { echo "::error::Custom Kernel requires one HTTPS URL to a .tar.gz/.tar.xz bundle."; exit 2; }
@@ -397,8 +397,10 @@ jobs:
           cp extensions/dbai-apps.sh armbian-source/userpatches/extensions/
           cp extensions/dbai-custom-kernel.sh armbian-source/userpatches/extensions/
           cp extensions/dbai-custom-bootfs.sh armbian-source/userpatches/extensions/
-          mkdir -p armbian-source/userpatches/bootfs-custom-kernel
-          cp "$GITHUB_WORKSPACE/bootfs-custom-kernel/bootfs_custom_kernel.tar.gz" armbian-source/userpatches/bootfs-custom-kernel/
+          if [[ "$KERNEL_MODE" == "Custom Kernel" || "$KERNEL_MODE" == "Recompile Custom Kernel" ]]; then
+            mkdir -p armbian-source/userpatches/bootfs-custom-kernel
+            cp "$GITHUB_WORKSPACE/bootfs-custom-kernel/bootfs_custom_kernel.tar.gz" armbian-source/userpatches/bootfs-custom-kernel/
+          fi
           mkdir -p "armbian-source/userpatches/kernel/archive/$KERNEL_PATCH_SERIES"
           shopt -s nullglob
           patch_files=("$GITHUB_WORKSPACE/kernel-patches/$KERNEL_PATCH_SERIES"/*.patch)
