@@ -226,26 +226,17 @@ jobs:
               profile="$(xargs <<< "$profile")"
               app_candidates=("none")
               if [[ "$profile" == "application" ]]; then
-                if [[ "$APP_PROFILE" == "all" ]]; then
-                  # Expand all concrete app variants; Proxmox Both is represented by
-                  # its OS-specific Community/Official variants to avoid duplicate builds.
-                  app_candidates=(homeassistant openmediavault casaos hermes-9router lightnvr-go2rtc hermes-9router-lightnvr proxmox-community proxmox-official)
-                else
-                  app_candidates=("$APP_PROFILE")
+                if ! app_candidates_text="$(bash scripts/resolve-app-variants.sh "$APP_PROFILE" "$release")"; then
+                  echo "::error::Could not resolve application '$APP_PROFILE' for release '$release'."
+                  exit 2
                 fi
+                if [[ -z "$app_candidates_text" ]]; then
+                  echo "::notice::Skipping Application image for '$release': no selected app is compatible with this release."
+                  continue
+                fi
+                mapfile -t app_candidates <<< "$app_candidates_text"
               fi
-              for app_candidate in "${app_candidates[@]}"; do
-                app_variant="$app_candidate"
-                if [[ "$profile" == "application" ]]; then
-                  if ! app_variant="$(bash scripts/resolve-app-variant.sh "$app_candidate" "$release")"; then
-                    echo "::error::Could not resolve application '$app_candidate' for release '$release'."
-                    exit 2
-                  fi
-                  if [[ -z "$app_variant" ]]; then
-                    echo "::notice::Skipping Application image for '$release': app '$app_candidate' is not compatible with this release."
-                    continue
-                  fi
-                fi
+              for app_variant in "${app_candidates[@]}"; do
                 for fs in "${filesystems[@]}"; do
                   matrix="$(jq -c --arg release "$release" --arg profile "$profile" --arg filesystem "$fs" --arg app_variant "$app_variant" '.include += [{release:$release,profile:$profile,filesystem:$filesystem,app_variant:$app_variant}]' <<< "$matrix")"
                 done
