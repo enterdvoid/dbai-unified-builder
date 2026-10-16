@@ -115,7 +115,7 @@ STOP
 	chmod 755 "${SDCARD}/usr/local/sbin/dbai-apps-stop.sh"
 
 	# Store selected Compose profiles in a root-only environment file.
-	printf 'DBAI_COMPOSE_PROFILE=%s\n' "${compose_profiles}" > "${SDCARD}/etc/dbai-apps.env"
+	printf 'DBAI_COMPOSE_PROFILE="%s"\n' "${compose_profiles}" > "${SDCARD}/etc/dbai-apps.env"
 	chmod 600 "${SDCARD}/etc/dbai-apps.env"
 
 	cat > "${SDCARD}/etc/systemd/system/dbai-apps.service" <<'UNIT'
