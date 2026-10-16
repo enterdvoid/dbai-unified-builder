@@ -50,6 +50,9 @@ function pre_customize_image__dbai_overlay_kernel_bundle() {
 	tar -tf "${cache_dir}/modules.tar" | grep -Eq '^lib/modules/[^/]+/' || exit_with_error "modules-<version> archive must contain lib/modules/<kernel-release>/"
 	tar -tf "${cache_dir}/headers.tar" | grep -Eq '^(usr/src/|lib/modules/[^/]+/build)' || exit_with_error "header-<version> archive must contain usr/src/ or matching modules build paths"
 
+	# Replace default boot scripts/config before applying the kernel bundle's /boot files.
+	dbai_replace_bootfs_files
+
 	for archive in "${cache_dir}/boot.tar" "${cache_dir}/dtb.tar" "${cache_dir}/modules.tar" "${cache_dir}/headers.tar"; do
 		tar --no-same-owner --no-same-permissions -xf "${archive}" -C "${SDCARD}"
 	done
