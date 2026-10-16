@@ -8,7 +8,7 @@ function extension_prepare_config__dbai_proxmox_official() {
 	esac
 	[[ "${ARCH}" == "arm64" ]] || exit_with_error "Proxmox VE Official packages require ARM64; got ${ARCH}"
 	display_alert "Target image will include Proxmox VE 9 official userspace packages (Armbian kernel retained)" "${RELEASE}" "info"
-	EXTRA_IMAGE_SUFFIXES+=("-proxmox-official")
+	EXTRA_IMAGE_SUFFIXES+=("")
 }
 
 function post_repo_customize_image__dbai_install_proxmox_official() {
