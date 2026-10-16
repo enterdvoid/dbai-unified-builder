@@ -70,3 +70,22 @@ The kernel image, DTBs, modules, and headers must match each other and the targe
 - compatible firmware, initramfs, and modules.
 
 Use public, immutable HTTPS release URLs for bundle downloads. Do not put private tokens in workflow inputs or URLs.
+
+
+## Custom bootfs overlay
+
+Both **Custom Kernel** and **Recompile Custom Kernel** require the repository file:
+
+```text
+bootfs-custom-kernel/bootfs_custom_kernel.tar.gz
+```
+
+This archive represents the contents of the boot partition itself. Archive entries should be relative to the boot partition root (for example `s905_autoscript`, `extlinux/extlinux.conf`, and any other scripts/configuration you intend to supply), not wrapped inside another `boot/` directory. Create it from a directory containing the intended bootfs files:
+
+```bash
+tar -czf bootfs_custom_kernel.tar.gz -C /path/to/your-bootfs .
+```
+
+For either custom-kernel mode, the workflow removes the default files under the image's `/boot` directory and extracts this archive. In **Custom Kernel**, the four-part kernel bundle is overlaid afterwards so its kernel and DTBs take precedence where paths collide. In **Recompile Custom Kernel**, the workflow preserves the freshly built kernel image and compiled DTB files, replaces the other boot files with your archive, and restores those kernel artifacts.
+
+The archive is intentionally not included in this repository yet. Add your own file at the exact path above before starting either custom-kernel mode; the planning job will fail early if the archive is missing or invalid.
