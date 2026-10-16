@@ -1,5 +1,7 @@
 # Application Profiles
 
+Published firmware uses the `DBAI2K26-Armbian_...` prefix. App names are kept once in the final asset filename, even if an upstream extension also modifies Armbian's source image suffix.
+
 The application selector is used only when the **Application** image checkbox is enabled. Minimal, Server, and Desktop images remain normal Armbian images. Incompatible Application/release pairs are omitted from the matrix; other image types for those releases still build. If every requested matrix row is incompatible, planning stops with a clear error.
 
 | Workflow selection | What is staged/installed | Release and architecture constraints |
