@@ -165,16 +165,7 @@ jobs:
             *) echo "::error::Unknown Armbian Version Release selection: $RELEASE_GROUP"; exit 2 ;;
           esac
           [[ -n "${RELEASES_INPUT//[[:space:]]/}" ]] || { echo "::error::Custom releases cannot be empty."; exit 2; }
-          PROFILES_INPUT=""
-          for profile_flag in "minimal:$BUILD_MINIMAL_INPUT" "server:$BUILD_SERVER_INPUT" "application:$BUILD_APPLICATION_INPUT" "desktop:$BUILD_DESKTOP_INPUT"; do
-            profile="${profile_flag%%:*}"
-            enabled="${profile_flag#*:}"
-            if [[ "$enabled" == "true" ]]; then
-              [[ -n "$PROFILES_INPUT" ]] && PROFILES_INPUT+=","
-              PROFILES_INPUT+="$profile"
-            fi
-          done
-          [[ -n "$PROFILES_INPUT" ]] || { echo "::error::Select at least one image type (Minimal, Server, Application, or Desktop)."; exit 2; }
+          PROFILES_INPUT="$(bash scripts/resolve-selected-profiles.sh "$BUILD_MINIMAL_INPUT" "$BUILD_SERVER_INPUT" "$BUILD_APPLICATION_INPUT" "$BUILD_DESKTOP_INPUT")"
           echo "Resolved releases: $RELEASES_INPUT"
           echo "Selected image types: $PROFILES_INPUT"
           bash scripts/validate-inputs.sh "$BOARD" "" "$RELEASES_INPUT" "$PROFILES_INPUT" "$FILESYSTEM_INPUT" "$KERNEL_MODE" "$APP_PROFILE"
