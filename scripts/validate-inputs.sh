@@ -41,10 +41,7 @@ if [[ "$proxmox_mode" != "none" ]]; then
       ;;
   esac
 fi
-if [[ ",$profiles_compact," == *",application,"* && "$proxmox_mode" == "none" && "$app_profile" == "none" ]]; then
-  echo "The application profile requires an app_profile selection or Proxmox mode." >&2
-  exit 2
-fi
+# app_profile=none intentionally builds a generic application image without bundling an app.
 if [[ ",$profiles_compact," == *",application,"* ]]; then
   for item in "${release_list[@]}"; do
     item="$(xargs <<< "$item")"
