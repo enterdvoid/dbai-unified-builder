@@ -1,0 +1,89 @@
+{
+  "schema_version": 1,
+  "default_board": "aml-s9xx-box",
+  "custom_option": "custom",
+  "boards": [
+    {
+      "id": "aml-s9xx-box",
+      "label": "Amlogic S9xx TV Box (DBAI/community)",
+      "source": "enterdvoid/build",
+      "source_kind": "community",
+      "notes": "Uses config/boards/aml-s9xx-box.tvb in the DBAI fork; not an official Armbian SBC target."
+    },
+    {
+      "id": "orangepi5-plus",
+      "label": "Orange Pi 5 Plus",
+      "source": "armbian/build",
+      "source_kind": "official",
+      "notes": "Validate board availability against the selected Armbian source ref before building."
+    },
+    {
+      "id": "orangepi5",
+      "label": "Orange Pi 5",
+      "source": "armbian/build",
+      "source_kind": "official",
+      "notes": "Validate board availability against the selected Armbian source ref before building."
+    },
+    {
+      "id": "orangepi3-lts",
+      "label": "Orange Pi 3 LTS",
+      "source": "armbian/build",
+      "source_kind": "official",
+      "notes": "Validate board availability against the selected Armbian source ref before building."
+    },
+    {
+      "id": "odroidn2",
+      "label": "ODROID N2/N2+",
+      "source": "armbian/build",
+      "source_kind": "official",
+      "notes": "Validate board availability against the selected Armbian source ref before building."
+    },
+    {
+      "id": "odroidm1",
+      "label": "ODROID M1",
+      "source": "armbian/build",
+      "source_kind": "official",
+      "notes": "Validate board availability against the selected Armbian source ref before building."
+    },
+    {
+      "id": "odroidc4",
+      "label": "ODROID C4",
+      "source": "armbian/build",
+      "source_kind": "official",
+      "notes": "Validate board availability against the selected Armbian source ref before building."
+    },
+    {
+      "id": "khadas-vim4",
+      "label": "Khadas VIM4",
+      "source": "armbian/build",
+      "source_kind": "official",
+      "notes": "Validate board availability against the selected Armbian source ref before building."
+    },
+    {
+      "id": "nanopi-r4s",
+      "label": "NanoPi R4S",
+      "source": "armbian/build",
+      "source_kind": "official",
+      "notes": "Validate board availability against the selected Armbian source ref before building."
+    },
+    {
+      "id": "bananapim5",
+      "label": "Banana Pi M5",
+      "source": "armbian/build",
+      "source_kind": "official",
+      "notes": "Validate board availability against the selected Armbian source ref before building."
+    },
+    {
+      "id": "rock-5b",
+      "label": "Radxa ROCK 5B",
+      "source": "armbian/build",
+      "source_kind": "official",
+      "notes": "Validate board availability against the selected Armbian source ref before building."
+    }
+  ],
+  "custom": {
+    "id": "custom",
+    "requires_input": "custom_board_name",
+    "source_policy": "Try official Armbian first, then DBAI fork if the board config exists there."
+  }
+}
