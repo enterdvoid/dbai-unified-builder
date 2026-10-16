@@ -677,7 +677,7 @@ jobs:
             echo
             echo "## Integrity"
             echo
-            echo "- \`SHA256SUMS\` contains SHA-256 checksums for every uploaded image and information file."
+            echo "- SHA256SUMS contains SHA-256 checksums for every uploaded firmware image."
             echo "- Verify downloads with: \`sha256sum -c SHA256SUMS\`"
             echo
             echo "## Notes"
