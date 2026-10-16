@@ -216,9 +216,13 @@ jobs:
             modules_listing="$temp_dir/modules-list.txt"
             tar -tf "$temp_dir/modules.tar" > "$modules_listing" || { echo "::error::Unable to read modules archive file list."; exit 2; }
             if ! grep -Eq '^([.]/)?lib/modules/[^/]+/' "$modules_listing"; then
-              echo "::error::Modules archive needs lib/modules/<release>/. First archive entries:"
-              sed -n '1,40p' "$modules_listing"
-              exit 2
+              if grep -Eq '^([.]/)?[^/]+/modules[.]dep$|^([.]/)?[^/]+/kernel/' "$modules_listing"; then
+                echo "Detected release-root modules archive; installer will normalize it to lib/modules/<release>/."
+              else
+                echo "::error::Modules archive needs lib/modules/<release>/ or a top-level <release>/ module tree. First archive entries:"
+                sed -n '1,40p' "$modules_listing"
+                exit 2
+              fi
             fi
             headers_listing="$temp_dir/headers-list.txt"
             tar -tf "$temp_dir/headers.tar" > "$headers_listing" || { echo "::error::Unable to read headers archive file list."; exit 2; }
