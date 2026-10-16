@@ -377,11 +377,10 @@ jobs:
           # shellcheck disable=SC2153
           [[ "$SOURCE_REF" =~ ^[A-Za-z0-9._/-]+$ ]] || { echo "::error::source_ref contains unsupported characters"; exit 2; }
 
-          if [[ "$BOARD" == "aml-s9xx-box" ]]; then
-            SOURCE_REPO="enterdvoid/build"
-          else
-            SOURCE_REPO="armbian/build"
-          fi
+          # Prefer the official Armbian framework so Kernel Official can match
+          # the public Armbian OCI artifact cache. The DBAI fork changes framework
+          # hashes and can force a cache miss even when the kernel inputs are identical.
+          SOURCE_REPO="armbian/build"
 
           clone_source() {
             local repo="$1"
@@ -393,11 +392,9 @@ jobs:
 
           clone_source "$SOURCE_REPO"
           if ! find armbian-source/config/boards -maxdepth 1 -type f -name "$BOARD.*" -print -quit | grep -q .; then
-            if [[ "$BOARD" != "aml-s9xx-box" && "$SOURCE_REPO" == "armbian/build" ]]; then
-              echo "Board not found upstream; trying DBAI fork."
-              SOURCE_REPO="enterdvoid/build"
-              clone_source "$SOURCE_REPO"
-            fi
+            echo "Board '$BOARD' not found in official Armbian source; trying DBAI fork."
+            SOURCE_REPO="enterdvoid/build"
+            clone_source "$SOURCE_REPO"
           fi
           if ! find armbian-source/config/boards -maxdepth 1 -type f -name "$BOARD.*" -print -quit | grep -q .; then
             echo "::error::Board '$BOARD' was not found as config/boards/$BOARD.* in source $SOURCE_REPO at ref $SOURCE_REF."
