@@ -519,7 +519,7 @@ jobs:
             base="$(basename "$image")"
             # Armbian output may omit the profile suffix (e.g. *_6.18.57.img.xz).
             # Accept both profile-suffixed and unsuffixed image names.
-            if [[ "$base" =~ ^Armbian(-unofficial)?_([^_]+)_([^_]+)_([^_]+)_([^_]+)_([^_.]+)(_((minimal|server|desktop)))?\.img(\.(xz|gz|zst))?$ ]]; then
+            if [[ "$base" =~ ^Armbian(-unofficial)?_([^_]+)_([^_]+)_([^_]+)_([^_]+)_([^_]+)(_((minimal|server|desktop)))?\.img(\.(xz|gz|zst))?$ ]]; then
               armbian_version="${BASH_REMATCH[2]}"
               image_board="${BASH_REMATCH[3]}"
               image_release="${BASH_REMATCH[4]}"
