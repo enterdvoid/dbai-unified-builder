@@ -84,7 +84,7 @@ on:
         required: false
         default: ""
       custom_kernel_repo_url:
-        description: "Recompile Custom Kernel only: HTTPS or SSH Git URL of the kernel source repository"
+        description: "Recompile Custom Kernel only: public HTTPS Git URL of the kernel source repository"
         type: string
         required: false
         default: ""
@@ -433,6 +433,7 @@ jobs:
           if [[ "$PROFILE" == "proxmox" ]]; then
             APP_PROFILE_EFFECTIVE=none
             BUILD_KERNEL_MODE="Kernel Official"
+            ARTIFACT_IGNORE_CACHE=no
             case "$PROXMOX_VARIANT" in
               official) EXTENSIONS+=(proxmox-official) ;;
               community) EXTENSIONS+=(proxmox-community) ;;
@@ -467,7 +468,11 @@ jobs:
             export DBAI_KERNEL_MODE="Custom Kernel"
           elif [[ "$BUILD_KERNEL_MODE" == "Recompile Custom Kernel" ]]; then
             KERNELSOURCE_ARG=("KERNELSOURCE=$CUSTOM_KERNEL_REPO_URL")
-            KERNELBRANCH_ARG=("KERNELBRANCH=branch:$CUSTOM_KERNEL_REPO_REF")
+            if [[ "$CUSTOM_KERNEL_REPO_REF" == branch:* || "$CUSTOM_KERNEL_REPO_REF" == tag:* ]]; then
+              KERNELBRANCH_ARG=("KERNELBRANCH=$CUSTOM_KERNEL_REPO_REF")
+            else
+              KERNELBRANCH_ARG=("KERNELBRANCH=branch:$CUSTOM_KERNEL_REPO_REF")
+            fi
             export DBAI_KERNEL_MODE="Recompile Custom Kernel"
           else
             export DBAI_KERNEL_MODE="$BUILD_KERNEL_MODE"
@@ -650,8 +655,8 @@ jobs:
             tar -tf "$temp_dir/headers.tar" | grep -Eq '^(usr/src/|lib/modules/[^/]+/build)' || { echo "::error::Headers archive needs usr/src/ or matching modules build paths"; exit 2; }
             rm -rf "$temp_dir"
           elif [[ "$KERNEL_MODE" == "Recompile Custom Kernel" ]]; then
-            [[ "$CUSTOM_KERNEL_REPO_URL" =~ ^(https://|git@|ssh://) ]] || { echo "::error::Recompile Custom Kernel requires a valid HTTPS/SSH Git repository URL."; exit 2; }
-            [[ "$CUSTOM_KERNEL_REPO_REF" =~ ^[A-Za-z0-9._/-]+$ ]] || { echo "::error::Custom kernel repo ref contains unsupported characters."; exit 2; }
+            [[ "$CUSTOM_KERNEL_REPO_URL" =~ ^https:// ]] || { echo "::error::Recompile Custom Kernel requires a public HTTPS Git repository URL."; exit 2; }
+            [[ "$CUSTOM_KERNEL_REPO_REF" =~ ^(branch:|tag:)?[A-Za-z0-9._/-]+$ ]] || { echo "::error::Custom kernel repo ref must be a branch name or tag (optionally prefixed with branch: or tag:)."; exit 2; }
           fi
 
           IFS=',' read -r -a releases <<< "$RELEASES_INPUT"
