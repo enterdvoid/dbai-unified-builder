@@ -594,7 +594,13 @@ jobs:
               *) echo "::error::Unrecognized image format: $base"; exit 1 ;;
             esac
 
-            safe_base="DBAI-Armbian_${armbian_version_filename}-${SHORT_BOARD}-${RELEASE}-k${kernel_version}-${PROFILE_VARIANT}-${FILESYSTEM}${suffix}"
+            safe_base="DBAI2K26-Armbian_${armbian_version_filename}-${SHORT_BOARD}-${RELEASE}-k${kernel_version}-${PROFILE_VARIANT}-${FILESYSTEM}${suffix}"
+            # Extensions can append the application suffix themselves; avoid duplicates in published assets.
+            duplicate_app_suffix="-${PROFILE_VARIANT}-${PROFILE_VARIANT}-${FILESYSTEM}${suffix}"
+            canonical_app_suffix="-${PROFILE_VARIANT}-${FILESYSTEM}${suffix}"
+            if [[ "$PROFILE" == "application" && "$safe_base" == *"$duplicate_app_suffix" ]]; then
+              safe_base="${safe_base%"$duplicate_app_suffix"}${canonical_app_suffix}"
+            fi
             stage_image="$GITHUB_WORKSPACE/stage/$safe_base"
             cp "$image" "$stage_image"
 
@@ -708,7 +714,7 @@ jobs:
             echo
             shopt -s nullglob
             found_image=false
-            for asset in dist/DBAI-Armbian_*; do
+            for asset in dist/DBAI2K26-Armbian_*; do
               case "$asset" in
                 *.img|*.img.xz|*.img.gz|*.img.zst)
                   found_image=true
