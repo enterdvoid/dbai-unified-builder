@@ -64,7 +64,8 @@ fi
 normalize_kernel_version() {
   local kernel="$1"
   local app="$2"
-  printf '%s\n' "${kernel%-${app}}"
+  app_suffix="-${app}"
+  printf '%s\n' "${kernel%"$app_suffix"}"
 }
 [[ "$(normalize_kernel_version "6.18.57-proxmox-official" "proxmox-official")" == "6.18.57" ]]
 
