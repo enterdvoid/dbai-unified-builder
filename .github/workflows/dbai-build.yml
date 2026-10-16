@@ -214,9 +214,9 @@ jobs:
       PROFILE: ${{ matrix.profile }}
       FILESYSTEM: ${{ matrix.filesystem }}
       SOURCE_REF: ${{ inputs.source_ref || 'main' }}
-      KERNEL_MODE: ${{ inputs.kernel_mode }}
-      APP_PROFILE: ${{ inputs.app_profile }}
-      PROXMOX_MODE: ${{ inputs.proxmox_mode }}
+      KERNEL_MODE: ${{ inputs.kernel_mode || 'official' }}
+      APP_PROFILE: ${{ inputs.app_profile || 'none' }}
+      PROXMOX_MODE: ${{ inputs.proxmox_mode || 'official' }}
       PROXMOX_VARIANT: ${{ matrix.proxmox_variant }}
       KERNEL_ARCHIVES: ${{ inputs.kernel_archives || '' }}
     steps:
@@ -485,11 +485,11 @@ jobs:
     env:
       GH_TOKEN: ${{ secrets.DBAI_RELEASE_TOKEN }}
       BOARD: ${{ needs.plan.outputs.board }}
-      RELEASES_INPUT: ${{ inputs.releases }}
-      PROFILES_INPUT: ${{ inputs.profiles }}
-      FILESYSTEM_INPUT: ${{ inputs.filesystem }}
-      APP_PROFILE: ${{ inputs.app_profile }}
-      PROXMOX_MODE: ${{ inputs.proxmox_mode }}
+      RELEASES_INPUT: ${{ inputs.releases || 'trixie' }}
+      PROFILES_INPUT: ${{ inputs.profiles || 'minimal,server,application,desktop' }}
+      FILESYSTEM_INPUT: ${{ inputs.filesystem || 'ext4' }}
+      APP_PROFILE: ${{ inputs.app_profile || 'none' }}
+      PROXMOX_MODE: ${{ inputs.proxmox_mode || 'official' }}
       DELETE_OLD: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[dbai-smoke]') && 'false' || 'true' }}
     steps:
       - name: Report release assembly runner resources
