@@ -69,12 +69,13 @@ on:
           - lightnvr-go2rtc
           - hermes-9router-lightnvr
       kernel_mode:
-        description: "Official kernel is the safe default; custom-four-part overlays four archives"
+        description: "Choose Armbian cache-aware kernel, force source recompilation, or custom DBAI four-archive kernel"
         type: choice
         required: true
         default: official
         options:
           - official
+          - recompile
           - custom-four-part
       kernel_archives:
         description: "Optional custom mode: four comma-separated HTTPS tar URLs in order boot,DTB,modules,headers (URLs must not contain commas)"
@@ -392,6 +393,12 @@ jobs:
           PROXMOX_VARIANT="${PROXMOX_VARIANT:-none}"
           BUILD_KERNEL_MODE="$KERNEL_MODE"
           APP_PROFILE_EFFECTIVE="$APP_PROFILE"
+          ARTIFACT_IGNORE_CACHE=no
+          if [[ "$BUILD_KERNEL_MODE" == "recompile" ]]; then
+            # Bypass Armbian local/remote artifact caches and rebuild artifacts from source.
+            ARTIFACT_IGNORE_CACHE=yes
+            BUILD_KERNEL_MODE=official
+          fi
 
           if [[ "$PROFILE" == "proxmox" ]]; then
             APP_PROFILE_EFFECTIVE=none
@@ -438,7 +445,7 @@ jobs:
           ENABLE_EXTENSIONS="$(IFS=,; echo "${EXTENSIONS[*]}")"
           echo "Board=$BOARD Release=$RELEASE Profile=$PROFILE Filesystem=$FILESYSTEM Kernel=$BUILD_KERNEL_MODE App=$APP_PROFILE_EFFECTIVE Proxmox=$PROXMOX_VARIANT"
           echo "Extensions=$ENABLE_EXTENSIONS"
-          ./compile.sh build             BOARD="$BOARD"             BRANCH=current             RELEASE="$RELEASE"             BUILD_MINIMAL="$BUILD_MINIMAL"             BUILD_DESKTOP="$BUILD_DESKTOP"             ROOTFS_TYPE="$FILESYSTEM"             FIXED_IMAGE_SIZE="$IMAGE_SIZE"             BOOTSIZE=256             COMPRESS_OUTPUTIMAGE=sha,xz             IMAGE_XZ_COMPRESSION_RATIO=0             KERNEL_CONFIGURE=no             ENABLE_EXTENSIONS="$ENABLE_EXTENSIONS" \
+          ./compile.sh build             BOARD="$BOARD"             BRANCH=current             RELEASE="$RELEASE"             BUILD_MINIMAL="$BUILD_MINIMAL"             BUILD_DESKTOP="$BUILD_DESKTOP"             ROOTFS_TYPE="$FILESYSTEM"             FIXED_IMAGE_SIZE="$IMAGE_SIZE"             BOOTSIZE=256             COMPRESS_OUTPUTIMAGE=sha,xz             IMAGE_XZ_COMPRESSION_RATIO=0             KERNEL_CONFIGURE=no             ARTIFACT_IGNORE_CACHE="$ARTIFACT_IGNORE_CACHE"             ENABLE_EXTENSIONS="$ENABLE_EXTENSIONS" \
             "${BSPFREEZE_ARG[@]}"
 
           mkdir -p "$GITHUB_WORKSPACE/stage"
