@@ -68,4 +68,20 @@ normalize_kernel_version() {
 }
 [[ "$(normalize_kernel_version "6.18.57-proxmox-official" "proxmox-official")" == "6.18.57" ]]
 
+# Canonical filename removes an application suffix appended to the parsed kernel version.
+app="proxmox-official"
+kernel_version="6.18.57-${app}"
+asset_kernel_version="${kernel_version%-${app}}"
+safe_base="DBAI2K26-Armbian_26.11.0-aml-s9xx-trixie-k${asset_kernel_version}-${app}-ext4.img.xz"
+[[ "$safe_base" == "DBAI2K26-Armbian_26.11.0-aml-s9xx-trixie-k6.18.57-proxmox-official-ext4.img.xz" ]]
+
+# The branding extension writes the expected vendor in /etc/armbian-release.
+brand_tmp="$(mktemp -d)"
+trap 'rm -rf "$brand_tmp"' EXIT
+mkdir -p "$brand_tmp/etc"
+printf 'BOARD="aml-s9xx-box"\nVENDOR="Old name"\n' > "$brand_tmp/etc/armbian-release"
+SDCARD="$brand_tmp" bash -c 'source "$1"; post_repo_customize_image__dbai_branding' _ "$ROOT/extensions/dbai-branding.sh"
+grep -qx 'VENDOR="DBAI2K26"' "$brand_tmp/etc/armbian-release"
+grep -qx 'VENDORPRETTYNAME="DBAI2K26"' "$brand_tmp/etc/armbian-release"
+
 echo "All input, checkbox, naming, and application compatibility tests passed."
