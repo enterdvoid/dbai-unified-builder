@@ -107,7 +107,7 @@ function pre_customize_image__dbai_overlay_kernel_bundle() {
 	# The supplied DBAI modules archive stores the kernel-release directory
 	# at archive root. Normalize it into the standard target /lib/modules path.
 	if [[ "${modules_layout}" == "release-root" ]]; then
-		tar --no-same-owner --no-same-permissions --transform='s,^[.]/,,;s,^([^/]+)/,lib/modules/\1/,' -xf "${cache_dir}/modules.tar" -C "${SDCARD}"
+		tar --no-same-owner --no-same-permissions --transform='s,^[.]/,,;s,^\([^/][^/]*\)/,lib/modules/\1/,' -xf "${cache_dir}/modules.tar" -C "${SDCARD}"
 	else
 		tar --no-same-owner --no-same-permissions -xf "${cache_dir}/modules.tar" -C "${SDCARD}"
 	fi
