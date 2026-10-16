@@ -31,6 +31,21 @@ function dbai_detect_kernel_headers_layout() {
 	return 1
 }
 
+# Resolve the module release from the archive itself. The preflight workflow and
+# installer share this parser so filenames match the modules actually overlaid.
+function dbai_detect_kernel_modules_release() {
+	local listing_file="${1:-}"
+	local release=""
+	[[ -n "${listing_file}" && -f "${listing_file}" ]] || return 1
+
+	if grep -Eq '^([.]/)?lib/modules/[^/]+/' "${listing_file}"; then
+		release="$(sed -nE 's#^([.]/)?lib/modules/([^/]+)/.*#\2#p' "${listing_file}" | head -n 1)"
+	else
+		release="$(sed -nE 's#^([.]/)?([^/]+)/modules[.]dep$#\2#p; s#^([.]/)?([^/]+)/kernel/.*#\2#p' "${listing_file}" | head -n 1)"
+	fi
+	[[ -n "${release}" && "${release}" =~ ^[A-Za-z0-9._+-]+$ ]] || return 1
+	printf '%s\n' "${release}"
+}
 function extension_prepare_config__dbai_custom_kernel() {
 	if [[ "${DBAI_KERNEL_MODE:-}" != "Custom Kernel" ]]; then
 		exit_with_error "dbai-custom-kernel extension was enabled while DBAI_KERNEL_MODE is not Custom Kernel"
@@ -104,12 +119,7 @@ function pre_customize_image__dbai_overlay_kernel_bundle() {
 		exit_with_error "header-<version> archive must contain a kernel build tree or only a root include/ UAPI tree"
 	}
 	local modules_release=""
-	if [[ "${modules_layout}" == "release-root" ]]; then
-		modules_release="$(sed -nE 's#^([.]/)?([^/]+)/modules[.]dep$#\2#p' "${modules_listing}" | head -n 1)"
-	else
-		modules_release="$(sed -nE 's#^([.]/)?lib/modules/([^/]+)/.*#\2#p' "${modules_listing}" | head -n 1)"
-	fi
-	[[ -n "${modules_release}" && "${modules_release}" =~ ^[A-Za-z0-9._+-]+$ ]] || exit_with_error "Unable to safely determine kernel release from modules archive"
+	modules_release="$(dbai_detect_kernel_modules_release "${modules_listing}")" || exit_with_error "Unable to safely determine kernel release from modules archive"
 
 	# Replace default boot scripts/config before applying the kernel bundle's /boot files.
 	dbai_replace_bootfs_files
