@@ -4,6 +4,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 VALIDATOR="$ROOT/scripts/validate-inputs.sh"
 
 bash "$VALIDATOR" "orangepi5" "" "bookworm,trixie" "minimal,server" "both" "official" "none"
+bash "$VALIDATOR" "aml-s9xx-box" "" "trixie" "server" "ext4" "recompile" "none"
 bash "$VALIDATOR" "custom" "my-custom-board" "bookworm" "application" "ext4" "official" "casaos"
 bash "$VALIDATOR" "aml-s9xx-box" "" "bookworm,trixie" "minimal,server" "both" "official" "casaos" "both"
 
