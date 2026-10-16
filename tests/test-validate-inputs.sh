@@ -11,10 +11,8 @@ if bash "$VALIDATOR" "../bad" "" "bookworm" "server" "ext4" "official" "none"; t
   echo "Expected invalid board ID to fail" >&2
   exit 1
 fi
-if bash "$VALIDATOR" "orangepi5" "" "bookworm" "application" "ext4" "official" "none"; then
-  echo "Expected application profile without an app to fail" >&2
-  exit 1
-fi
+# A generic application image without bundled apps is a supported option.
+bash "$VALIDATOR" "orangepi5" "" "bookworm" "application" "ext4" "official" "none"
 if bash "$VALIDATOR" "orangepi5" "" "bookworm" "application" "ext4" "official" "none" "official"; then
   echo "Expected official Proxmox on Bookworm to fail" >&2
   exit 1
