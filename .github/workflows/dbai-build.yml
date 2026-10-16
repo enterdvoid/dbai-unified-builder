@@ -110,8 +110,13 @@ jobs:
           KERNEL_MODE: ${{ inputs.kernel_mode }}
           APP_PROFILE: ${{ inputs.app_profile }}
           KERNEL_ARCHIVES_INPUT: ${{ inputs.kernel_archives }}
+          RELEASE_TOKEN_PRESENT: ${{ secrets.DBAI_RELEASE_TOKEN != '' }}
         run: |
           set -euo pipefail
+          if [[ "$RELEASE_TOKEN_PRESENT" != "true" ]]; then
+            echo "::error::Missing repository secret DBAI_RELEASE_TOKEN. Add it before starting a firmware batch to avoid wasting build time."
+            exit 2
+          fi
           BOARD="$BOARD_INPUT"
           if [[ "$BOARD" == "custom" ]]; then
             BOARD="$CUSTOM_BOARD"

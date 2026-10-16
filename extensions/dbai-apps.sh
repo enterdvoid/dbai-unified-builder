@@ -104,13 +104,15 @@ if [[ ! -s "$ENV_FILE" ]]; then
   } > "$tmp"
   install -o root -g root -m 600 "$tmp" "$ENV_FILE"
   rm -f "$tmp"
-  {
-    echo "DBAI first-boot app credentials"
-    echo "9Router dashboard: http://<device-ip>:20128"
-    echo "Initial 9Router password: $(sed -n 's/^INITIAL_PASSWORD=//p' "$ENV_FILE")"
-    echo "Change the password immediately after first login."
-  } > /root/DBAI-APP-CREDENTIALS.txt
-  chmod 600 /root/DBAI-APP-CREDENTIALS.txt
+  if [[ "${DBAI_COMPOSE_PROFILE:-}" == *"hermes-9router"* ]]; then
+    {
+      echo "DBAI first-boot app credentials"
+      echo "9Router dashboard: http://<device-ip>:20128"
+      echo "Initial 9Router password: $(sed -n 's/^INITIAL_PASSWORD=//p' "$ENV_FILE")"
+      echo "Change the password immediately after first login."
+    } > /root/DBAI-APP-CREDENTIALS.txt
+    chmod 600 /root/DBAI-APP-CREDENTIALS.txt
+  fi
 fi
 read -r -a selected_profiles <<< "${DBAI_COMPOSE_PROFILE}"
 profile_args=()
