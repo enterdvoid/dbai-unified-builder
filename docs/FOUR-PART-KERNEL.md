@@ -18,7 +18,7 @@ Set `kernel_custom_input` to a public HTTPS URL for one outer `.tar.gz` or `.tar
 
 The version string is an example. The four inner archives must all use the same kernel release and contain paths rooted at the target filesystem:
 
-- boot archive: `boot/` (kernel image and related boot files)
+- boot archive: either `boot/` (kernel image and related boot files), or boot-partition-root entries such as `Image` / `uInitrd` (the workflow normalizes these into `boot/`)
 - DTB archive: DTB files under `boot/`
 - modules archive: `lib/modules/<kernel-release>/`
 - header archive: `usr/src/` and/or matching module build links
