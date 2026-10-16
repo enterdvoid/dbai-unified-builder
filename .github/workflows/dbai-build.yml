@@ -131,6 +131,12 @@ jobs:
       profiles: ${{ steps.matrix.outputs.profiles }}
     steps:
       - uses: actions/checkout@v4
+      - name: Run input and kernel guard tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash tests/test-validate-inputs.sh
+          bash tests/test-kernel-cache-guard.sh
       - name: Validate inputs and create matrix
         id: matrix
         shell: bash
