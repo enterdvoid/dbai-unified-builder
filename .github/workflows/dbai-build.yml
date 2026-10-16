@@ -146,7 +146,11 @@ jobs:
               fi
             done
             tar -tf "$temp_dir/boot.tar" | grep -Eq '^boot/' || { echo "::error::Boot archive needs paths under boot/"; exit 2; }
-            tar -tf "$temp_dir/dtb.tar" | grep -Eq '^boot/.*\.dtb
+            tar -tf "$temp_dir/dtb.tar" | grep -Eq '^boot/.*\.dtb$' || { echo "::error::DTB archive needs .dtb files under boot/"; exit 2; }
+            tar -tf "$temp_dir/modules.tar" | grep -Eq '^lib/modules/[^/]+/' || { echo "::error::Modules archive needs lib/modules/<release>/"; exit 2; }
+            tar -tf "$temp_dir/headers.tar" | grep -Eq '^(usr/src/|lib/modules/[^/]+/build)' || { echo "::error::Headers archive needs usr/src/ or matching modules build paths"; exit 2; }
+            rm -rf "$temp_dir"
+          fi
 
           IFS=',' read -r -a releases <<< "$RELEASES_INPUT"
           IFS=',' read -r -a profiles <<< "$PROFILES_INPUT"
