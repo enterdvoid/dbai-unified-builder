@@ -6,12 +6,13 @@ import sys
 
 MARKER = "# DBAI_KERNEL_OFFICIAL_CACHE_ONLY_GUARD"
 FUNCTION = "function artifact_kernel_build_from_sources() {"
-GUARD = '''function artifact_kernel_build_from_sources() {
-\t{marker}
-\tif [[ "${{DBAI_KERNEL_MODE:-}}" == "Kernel Official" ]]; then
-\t\texit_with_error "DBAI Kernel Official: no reusable official kernel artifact was found in the Armbian artifact cache. Refusing to compile from source. Choose Recompile Kernel Official to build it."
-\tfi
-'''.replace("${{DBAI_KERNEL_MODE:-}}", "${DBAI_KERNEL_MODE:-}").format(marker=MARKER)
+GUARD = (
+    FUNCTION
+    + "\n\t" + MARKER
+    + '\n\tif [[ "${DBAI_KERNEL_MODE:-}" == "Kernel Official" ]]; then'
+    + '\n\t\texit_with_error "DBAI Kernel Official: no reusable official kernel artifact was found in the Armbian artifact cache. Refusing to compile from source. Choose Recompile Kernel Official to build it."'
+    + "\n\tfi\n"
+)
 
 
 def main() -> int:
