@@ -1,3 +1,4 @@
+# Temporary smoke-build trigger; remove after the exact regression scenario finishes.
 name: DBAI Unified Firmware Builder
 
 on:
