@@ -89,7 +89,7 @@ on:
         required: false
         default: ""
       custom_kernel_repo_ref:
-        description: "Branch or tag to compile from in the custom kernel repository"
+        description: "Branch or tag to compile from in the custom kernel repository (use tag:<name> for tags)"
         type: string
         required: false
         default: main
@@ -155,7 +155,6 @@ jobs:
           fi
           bash scripts/validate-inputs.sh "$BOARD" "" "$RELEASES_INPUT" "$PROFILES_INPUT" "$FILESYSTEM_INPUT" "$KERNEL_MODE" "$APP_PROFILE" "$PROXMOX_MODE"
 
-          [[ "$KERNEL_PATCH_SERIES" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "::error::Invalid kernel patch series"; exit 2; }
           if [[ "$KERNEL_MODE" == "Custom Kernel" ]]; then
             [[ "$CUSTOM_KERNEL_BUNDLE_URL" =~ ^https:// ]] || { echo "::error::Custom Kernel requires one HTTPS URL to a .tar.gz/.tar.xz bundle."; exit 2; }
             temp_dir="$(mktemp -d)"
@@ -177,7 +176,15 @@ jobs:
               fi
             done
             tar -tf "$temp_dir/boot.tar" | grep -Eq '^boot/' || { echo "::error::Boot archive needs paths under boot/"; exit 2; }
-            tar -tf "$temp_dir/dtb.tar" | grep -Eq '^boot/.*\.dtb
+            tar -tf "$temp_dir/dtb.tar" | grep -Eq '^boot/.*\.dtb$' || { echo "::error::DTB archive needs .dtb files under boot/"; exit 2; }
+            tar -tf "$temp_dir/modules.tar" | grep -Eq '^lib/modules/[^/]+/' || { echo "::error::Modules archive needs lib/modules/<release>/"; exit 2; }
+            tar -tf "$temp_dir/headers.tar" | grep -Eq '^(usr/src/|lib/modules/[^/]+/build)' || { echo "::error::Headers archive needs usr/src/ or matching modules build paths"; exit 2; }
+            rm -rf "$temp_dir"
+          elif [[ "$KERNEL_MODE" == "Recompile Custom Kernel" ]]; then
+            [[ "$CUSTOM_KERNEL_REPO_URL" =~ ^https:// ]] || { echo "::error::Recompile Custom Kernel requires a public HTTPS Git repository URL."; exit 2; }
+            [[ "$CUSTOM_KERNEL_REPO_REF" =~ ^(branch:|tag:)?[A-Za-z0-9._/-]+$ ]] || { echo "::error::Custom kernel repo ref must be a branch name or tag (optionally prefixed with branch: or tag:)."; exit 2; }
+          fi
+
           IFS=',' read -r -a releases <<< "$RELEASES_INPUT"
           IFS=',' read -r -a profiles <<< "$PROFILES_INPUT"
           filesystems=()
