@@ -228,9 +228,19 @@ jobs:
             tar -tf "$temp_dir/headers.tar" > "$headers_listing" || { echo "::error::Unable to read headers archive file list."; exit 2; }
             if ! grep -Eq '^([.]/)?(usr/src/|lib/modules/[^/]+/build)' "$headers_listing"; then
               if grep -Eq '^([.]/)?include/' "$headers_listing" && grep -Eq '^([.]/)?Makefile$' "$headers_listing"; then
-                echo "Detected kernel headers archive rooted at its contents; installer will normalize it to /usr/src/linux-headers-<release>/."
+                echo "Detected complete kernel headers archive rooted at its contents; installer will normalize it to /usr/src/linux-headers-<release>/."
+              elif grep -Eq '^([.]/)?include/' "$headers_listing" && ! grep -Eq '^([.]/)?Makefile$' "$headers_listing" && awk '
+                {
+                  path=$0
+                  sub(/^\.\//, "", path)
+                  if (path=="." || path=="" || path=="include" || path ~ /^include\//) next
+                  bad=1
+                }
+                END { exit bad }
+              ' "$headers_listing"; then
+                echo "::notice::Detected exported UAPI headers only (include/ tree, no kernel Makefile). Installer will preserve them under /usr/src/linux-uapi-headers-<release>/; these are not suitable for compiling external kernel modules."
               else
-                echo "::error::Headers archive needs usr/src/, lib/modules/<release>/build, or a root-level kernel header tree containing include/ and Makefile. First archive entries:"
+                echo "::error::Headers archive is neither a target-root kernel build tree nor a recognized UAPI-only include tree. First archive entries:"
                 sed -n '1,40p' "$headers_listing"
                 exit 2
               fi
