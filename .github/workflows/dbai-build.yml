@@ -503,7 +503,12 @@ jobs:
           ENABLE_EXTENSIONS="$(IFS=,; echo "${EXTENSIONS[*]}")"
           echo "Board=$BOARD Release=$RELEASE Profile=$PROFILE Filesystem=$FILESYSTEM Kernel=$BUILD_KERNEL_MODE App=$APP_PROFILE_EFFECTIVE"
           echo "Extensions=$ENABLE_EXTENSIONS"
-          ./compile.sh build             BOARD="$BOARD"             BRANCH=current             RELEASE="$RELEASE"             BUILD_MINIMAL="$BUILD_MINIMAL"             BUILD_DESKTOP="$BUILD_DESKTOP"             ROOTFS_TYPE="$FILESYSTEM"             FIXED_IMAGE_SIZE="$IMAGE_SIZE"             BOOTSIZE=256             COMPRESS_OUTPUTIMAGE=sha,xz             IMAGE_XZ_COMPRESSION_RATIO=0             KERNEL_CONFIGURE=no             ARTIFACT_IGNORE_CACHE="$ARTIFACT_IGNORE_CACHE"             ENABLE_EXTENSIONS="$ENABLE_EXTENSIONS" \
+          # aml-s9xx-box requires an actual FAT32 /boot filesystem and FAT32-LBA MBR type (0x0C),
+          # not Armbian's default ext4 /boot or XBOOTLDR type 0xEA.
+          if [[ "$BOARD" == "aml-s9xx-box" ]]; then
+            export BOOTFS_TYPE=fat
+          fi
+          ./compile.sh build             BOARD="$BOARD"             BRANCH=current             RELEASE="$RELEASE"             BUILD_MINIMAL="$BUILD_MINIMAL"             BUILD_DESKTOP="$BUILD_DESKTOP"             ROOTFS_TYPE="$FILESYSTEM"             FIXED_IMAGE_SIZE="$IMAGE_SIZE"             BOOTSIZE=512             COMPRESS_OUTPUTIMAGE=sha,xz             IMAGE_XZ_COMPRESSION_RATIO=0             KERNEL_CONFIGURE=no             ARTIFACT_IGNORE_CACHE="$ARTIFACT_IGNORE_CACHE"             ENABLE_EXTENSIONS="$ENABLE_EXTENSIONS" \
             "${KERNELSOURCE_ARG[@]}" "${KERNELBRANCH_ARG[@]}" "${BSPFREEZE_ARG[@]}"
 
           mkdir -p "$GITHUB_WORKSPACE/stage"
