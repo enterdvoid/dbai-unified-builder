@@ -830,3 +830,42 @@ jobs:
           # may be removed by cleanup_partial_release if remote asset verification fails.
           echo "Verified release: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/tag/$TAG"
           trap - EXIT
+
+  # One-time repair path for release notes created by a smoke push.
+  # The tag is accepted only from a validated marker in the commit message.
+  repair-smoke-release-notes:
+    if: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[dbai-release-notes-fix:') }}
+    name: Repair smoke release metadata
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Correct kernel mode in the existing smoke release notes
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="$(git log -1 --format=%B | sed -nE 's/.*\\[dbai-release-notes-fix:([^]]+)\\].*/\\1/p' | head -n 1)"
+          [[ "$tag" =~ ^dbai-build-[0-9]{8}-[0-9]{6}-[0-9]+$ ]] || {
+            echo "::error::Missing or invalid release tag in repair commit marker."
+            exit 2
+          }
+          notes="$RUNNER_TEMP/release-notes.md"
+          gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json body --jq .body > "$notes"
+          python3 - "$notes" <<'PY'
+          import pathlib, sys
+
+          path = pathlib.Path(sys.argv[1])
+          body = path.read_text(encoding="utf-8")
+          old = "- **Kernel mode:** Kernel Official"
+          new = "- **Kernel mode:** Custom Kernel"
+          if body.count(old) != 1:
+              raise SystemExit("Expected exactly one stale Kernel Official metadata line; refusing to change unexpected notes.")
+          path.write_text(body.replace(old, new, 1), encoding="utf-8")
+          PY
+          gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --notes-file "$notes"
+          gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json body --jq .body | grep -Fx -- "- **Kernel mode:** Custom Kernel"
+          echo "Corrected release metadata: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/tag/$tag"
+
