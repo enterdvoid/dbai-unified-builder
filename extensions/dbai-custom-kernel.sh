@@ -45,7 +45,9 @@ function pre_customize_image__dbai_overlay_kernel_bundle() {
 		fi
 	done
 
-	tar -tf "${cache_dir}/boot.tar" | grep -Eq '^boot/' || exit_with_error "boot-<version> archive must contain paths rooted at boot/"
+	if ! tar -tf "${cache_dir}/boot.tar" | grep -Eq '^(boot/.*|(\./)?(Image[^/]*|vmlinuz[^/]*|uImage|zImage|initrd[^/]*|uInitrd)(/|$))'; then
+		exit_with_error "boot-<version> archive must contain files under boot/ or a recognizable kernel image at its archive root"
+	fi
 	tar -tf "${cache_dir}/dtb.tar" | grep -Eq '^boot/.*\.dtb$' || exit_with_error "dtb-amlogic-<version> archive must contain at least one .dtb under boot/"
 	tar -tf "${cache_dir}/modules.tar" | grep -Eq '^lib/modules/[^/]+/' || exit_with_error "modules-<version> archive must contain lib/modules/<kernel-release>/"
 	tar -tf "${cache_dir}/headers.tar" | grep -Eq '^(usr/src/|lib/modules/[^/]+/build)' || exit_with_error "header-<version> archive must contain usr/src/ or matching modules build paths"
@@ -53,7 +55,15 @@ function pre_customize_image__dbai_overlay_kernel_bundle() {
 	# Replace default boot scripts/config before applying the kernel bundle's /boot files.
 	dbai_replace_bootfs_files
 
-	for archive in "${cache_dir}/boot.tar" "${cache_dir}/dtb.tar" "${cache_dir}/modules.tar" "${cache_dir}/headers.tar"; do
+	# Some kernel bundles store boot archive entries directly at the boot-partition root
+	# (for example Image and uInitrd) instead of prefixing every entry with boot/.
+	# Normalize those entries into /boot; preserve archives already rooted at boot/.
+	if tar -tf "${cache_dir}/boot.tar" | grep -Eq '^boot/'; then
+		tar --no-same-owner --no-same-permissions -xf "${cache_dir}/boot.tar" -C "${SDCARD}"
+	else
+		tar --no-same-owner --no-same-permissions --transform='s,^[.]/,,;s,^,boot/,' -xf "${cache_dir}/boot.tar" -C "${SDCARD}"
+	fi
+	for archive in "${cache_dir}/dtb.tar" "${cache_dir}/modules.tar" "${cache_dir}/headers.tar"; do
 		tar --no-same-owner --no-same-permissions -xf "${archive}" -C "${SDCARD}"
 	done
 
