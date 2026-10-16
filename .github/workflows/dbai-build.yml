@@ -633,6 +633,8 @@ jobs:
       RELEASES_INPUT: ${{ needs.plan.outputs.releases }}
       PROFILES_INPUT: ${{ needs.plan.outputs.profiles }}
       FILESYSTEM_INPUT: ${{ inputs.filesystem || 'ext4' }}
+      KERNEL_MODE: ${{ inputs.kernel_mode || 'Kernel Official' }}
+      SOURCE_REF: ${{ inputs.source_ref || 'main' }}
       APP_PROFILE: ${{ inputs.build_application && inputs.app_profile || 'none' }}
       DELETE_OLD: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[dbai-smoke]') && 'false' || 'true' }}
     steps:
@@ -693,8 +695,8 @@ jobs:
             echo "- **Image profiles:** $PROFILES_INPUT"
             echo "- **Filesystem selection:** $FILESYSTEM_INPUT"
             echo "- **Application profile:** $APP_PROFILE"
-            echo "- **Kernel mode:** ${{ inputs.kernel_mode || 'Kernel Official' }}"
-            echo "- **Armbian source ref:** ${{ inputs.source_ref || 'main' }}"
+            echo "- **Kernel mode:** $KERNEL_MODE"
+            echo "- **Armbian source ref:** $SOURCE_REF"
             echo "- **Builder commit:** $GITHUB_SHA"
             echo "- **Workflow run:** $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
             echo
