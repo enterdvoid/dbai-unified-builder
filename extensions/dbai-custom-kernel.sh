@@ -53,10 +53,18 @@ function pre_customize_image__dbai_overlay_kernel_bundle() {
 	grep -Eq '(^|/)[^/]+[.]dtb' "${dtb_listing}" || exit_with_error "dtb-amlogic-<version> archive must contain at least one .dtb file"
 	local modules_listing="${cache_dir}/modules-list.txt"
 	tar -tf "${cache_dir}/modules.tar" > "${modules_listing}" || exit_with_error "Unable to read modules archive file list"
+	# Accept either a target-root archive (lib/modules/<release>/...) or
+	# a module-tree archive whose top-level directory is the kernel release
+	# (for example 6.1.66-DBAI/modules.dep and 6.1.66-DBAI/kernel/...).
+	local modules_layout="target-root"
 	if ! grep -Eq '^([.]/)?lib/modules/[^/]+/' "${modules_listing}"; then
-		echo "First modules archive entries:"
-		sed -n '1,40p' "${modules_listing}"
-		exit_with_error "modules-<version> archive must contain lib/modules/<kernel-release>/"
+		if grep -Eq '^([.]/)?[^/]+/modules[.]dep$|^([.]/)?[^/]+/kernel/' "${modules_listing}"; then
+			modules_layout="release-root"
+		else
+			echo "First modules archive entries:"
+			sed -n '1,40p' "${modules_listing}"
+			exit_with_error "modules-<version> archive must contain lib/modules/<kernel-release>/ or a top-level <kernel-release>/ module tree"
+		fi
 	fi
 	local headers_listing="${cache_dir}/headers-list.txt"
 	tar -tf "${cache_dir}/headers.tar" > "${headers_listing}" || exit_with_error "Unable to read headers archive file list"
@@ -96,9 +104,14 @@ function pre_customize_image__dbai_overlay_kernel_bundle() {
 		cp -f "${dtb_file}" "${dtb_target}"
 	done < <(find "${dtb_stage}" -type f -name '*.dtb' -print0)
 	find "${SDCARD}/boot" -type f -name '*.dtb' -print -quit | grep -q . || exit_with_error "DTB archive contained .dtb files, but none were installed under target /boot"
-	for archive in "${cache_dir}/modules.tar" "${cache_dir}/headers.tar"; do
-		tar --no-same-owner --no-same-permissions -xf "${archive}" -C "${SDCARD}"
-	done
+	# The supplied DBAI modules archive stores the kernel-release directory
+	# at archive root. Normalize it into the standard target /lib/modules path.
+	if [[ "${modules_layout}" == "release-root" ]]; then
+		tar --no-same-owner --no-same-permissions --transform='s,^[.]/,,;s,^([^/]+)/,lib/modules/\1/,' -xf "${cache_dir}/modules.tar" -C "${SDCARD}"
+	else
+		tar --no-same-owner --no-same-permissions -xf "${cache_dir}/modules.tar" -C "${SDCARD}"
+	fi
+	tar --no-same-owner --no-same-permissions -xf "${cache_dir}/headers.tar" -C "${SDCARD}"
 
 	find "${SDCARD}/boot" -maxdepth 4 -type f \( -name 'Image' -o -name 'Image-*' -o -name 'vmlinuz*' -o -name 'uImage' -o -name 'zImage' \) -print -quit | grep -q . || exit_with_error "No recognizable kernel image found under target /boot after overlay"
 	find "${SDCARD}/boot" -type f -name '*.dtb' -print -quit | grep -q . || exit_with_error "No DTB found under target /boot after overlay"
