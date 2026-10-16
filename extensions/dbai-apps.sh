@@ -33,7 +33,7 @@ function extension_prepare_config__dbai_apps() {
 
 function pre_customize_image__dbai_stage_docker_apps() {
 	: "${SDCARD:?Armbian did not set SDCARD for DBAI app staging}"
-	chroot_sdcard_apt_get_install ca-certificates curl openssl
+	chroot_sdcard_apt_get_install ca-certificates curl
 	local app_dir="${SDCARD}/opt/dbai/apps"
 	mkdir -p "${app_dir}" "${SDCARD}/usr/local/sbin" "${SDCARD}/etc/systemd/system" "${SDCARD}/var/lib/dbai"
 	chmod 755 "${app_dir}"
@@ -52,10 +52,6 @@ services:
       PORT: "20128"
       HOSTNAME: 0.0.0.0
       DATA_DIR: /app/data
-      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
-      INITIAL_PASSWORD: ${INITIAL_PASSWORD:?INITIAL_PASSWORD is required}
-      API_KEY_SECRET: ${API_KEY_SECRET:?API_KEY_SECRET is required}
-      MACHINE_ID_SALT: ${MACHINE_ID_SALT:?MACHINE_ID_SALT is required}
     volumes:
       - 9router-data:/app/data
 
@@ -92,29 +88,8 @@ COMPOSE
 #!/usr/bin/env bash
 set -euo pipefail
 APP_DIR=/opt/dbai/apps
-ENV_FILE="$APP_DIR/.env"
 mkdir -p "$APP_DIR/lightnvr/config" "$APP_DIR/lightnvr/data"
 chmod 750 "$APP_DIR" "$APP_DIR/lightnvr" "$APP_DIR/lightnvr/config" "$APP_DIR/lightnvr/data"
-if [[ ! -s "$ENV_FILE" ]]; then
-  tmp="$(mktemp)"
-  {
-    printf 'JWT_SECRET=%s\n' "$(openssl rand -hex 32)"
-    printf 'INITIAL_PASSWORD=%s\n' "$(openssl rand -hex 12)"
-    printf 'API_KEY_SECRET=%s\n' "$(openssl rand -hex 32)"
-    printf 'MACHINE_ID_SALT=%s\n' "$(openssl rand -hex 32)"
-  } > "$tmp"
-  install -o root -g root -m 600 "$tmp" "$ENV_FILE"
-  rm -f "$tmp"
-  if [[ "${DBAI_COMPOSE_PROFILE:-}" == *"hermes-9router"* ]]; then
-    {
-      echo "DBAI first-boot app credentials"
-      echo "9Router dashboard: http://<device-ip>:20128"
-      echo "Initial 9Router password: $(sed -n 's/^INITIAL_PASSWORD=//p' "$ENV_FILE")"
-      echo "Change the password immediately after first login."
-    } > /root/DBAI-APP-CREDENTIALS.txt
-    chmod 600 /root/DBAI-APP-CREDENTIALS.txt
-  fi
-fi
 read -r -a selected_profiles <<< "${DBAI_COMPOSE_PROFILE}"
 profile_args=()
 for profile in "${selected_profiles[@]}"; do
