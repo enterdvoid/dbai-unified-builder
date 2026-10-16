@@ -87,6 +87,19 @@ if ! tar -tzf "$bootfs_test_dir/bootfs.tar.gz" | awk 'NF && $0 !~ /^\.\/?$/ { fo
 fi
 rm -rf "$bootfs_test_dir"
 
+# Custom kernel boot archives may use either target-root paths (boot/Image)
+# or boot-partition-root paths (Image); both forms must pass validation.
+kernel_boot_test_dir="$(mktemp -d)"
+mkdir -p "$kernel_boot_test_dir/prefixed/boot" "$kernel_boot_test_dir/rooted"
+printf 'kernel-image\n' > "$kernel_boot_test_dir/prefixed/boot/Image"
+printf 'kernel-image\n' > "$kernel_boot_test_dir/rooted/Image"
+tar -czf "$kernel_boot_test_dir/prefixed.tar.gz" -C "$kernel_boot_test_dir/prefixed" boot
+tar -czf "$kernel_boot_test_dir/rooted.tar.gz" -C "$kernel_boot_test_dir/rooted" Image
+boot_archive_pattern='^(boot/.*|(\./)?(Image[^/]*|vmlinuz[^/]*|uImage|zImage|initrd[^/]*|uInitrd)(/|$))'
+tar -tf "$kernel_boot_test_dir/prefixed.tar.gz" | grep -Eq "$boot_archive_pattern"
+tar -tf "$kernel_boot_test_dir/rooted.tar.gz" | grep -Eq "$boot_archive_pattern"
+rm -rf "$kernel_boot_test_dir"
+
 # The branding extension writes the expected vendor in /etc/armbian-release.
 brand_tmp="$(mktemp -d)"
 trap 'rm -rf "$brand_tmp"' EXIT
