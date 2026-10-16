@@ -74,7 +74,7 @@ on:
         description: "Build ext4, btrfs, or both variants"
         type: choice
         required: true
-        default: both
+        default: ext4
         options:
           - both
           - ext4
