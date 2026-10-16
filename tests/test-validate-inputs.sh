@@ -20,6 +20,17 @@ fi
 bash "$VALIDATOR" "aml-s9xx-box" "" "bookworm" "minimal,server,application" "ext4" "Kernel Official" "proxmox-official"
 bash "$VALIDATOR" "aml-s9xx-box" "" "trixie" "minimal,server,application" "ext4" "Kernel Official" "proxmox-community"
 
+PROFILE_RESOLVER="$ROOT/scripts/resolve-selected-profiles.sh"
+[[ "$(bash "$PROFILE_RESOLVER" true true true true)" == "minimal,server,application,desktop" ]]
+[[ "$(bash "$PROFILE_RESOLVER" false true false true)" == "server,desktop" ]]
+[[ "$(bash "$PROFILE_RESOLVER" false false true false)" == "application" ]]
+if bash "$PROFILE_RESOLVER" false false false false; then
+  echo "Expected no selected image types to fail" >&2; exit 1
+fi
+if bash "$PROFILE_RESOLVER" true yes false true; then
+  echo "Expected invalid checkbox boolean to fail" >&2; exit 1
+fi
+
 RESOLVER="$ROOT/scripts/resolve-app-variant.sh"
 [[ "$(bash "$RESOLVER" proxmox-community bookworm)" == "proxmox-community" ]]
 [[ -z "$(bash "$RESOLVER" proxmox-community trixie)" ]]
@@ -42,4 +53,4 @@ fi
 if bash "$VALIDATOR" "aml-s9xx-box" "" "sid" "server" "ext4" "Kernel Official" "none"; then
   echo "Expected unsupported release to fail" >&2; exit 1
 fi
-echo "All validator and application compatibility tests passed."
+echo "All input, checkbox, and application compatibility tests passed."
