@@ -8,7 +8,7 @@ A GitHub Actions frontend for building ready-to-use Armbian-based firmware for A
 - Amlogic TV-box builds use the DBAI Armbian fork; official SBCs use the official `armbian/build` source.
 - Batch selection of Debian releases, image profiles, and ext4/btrfs.
 - Official kernel is the default. Optional custom-kernel mode overlays four validated archive inputs: boot, DTB, modules, and headers.
-- App integration starts with Armbian-maintained Home Assistant and OpenMediaVault extensions plus an experimental CasaOS extension.
+- App integration starts with Armbian-maintained Home Assistant and OpenMediaVault extensions plus an experimental CasaOS extension. Select `app_profile=none` to build a generic application image without a bundled app.
 - Release publication happens only after all matrix jobs succeed and every image has a manifest and SHA-256 checksum. Partial releases are removed on publication failure.
 
 ## Run
