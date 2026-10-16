@@ -112,9 +112,27 @@ if [[ ! -s "$ENV_FILE" ]]; then
   } > /root/DBAI-APP-CREDENTIALS.txt
   chmod 600 /root/DBAI-APP-CREDENTIALS.txt
 fi
-docker compose --project-directory "$APP_DIR" --profile "${DBAI_COMPOSE_PROFILE}" -f "$APP_DIR/docker-compose.yml" up -d
+read -r -a selected_profiles <<< "${DBAI_COMPOSE_PROFILE}"
+profile_args=()
+for profile in "${selected_profiles[@]}"; do
+  profile_args+=(--profile "$profile")
+done
+docker compose --project-directory "$APP_DIR" "${profile_args[@]}" -f "$APP_DIR/docker-compose.yml" up -d
 START
 	chmod 755 "${SDCARD}/usr/local/sbin/dbai-apps-start.sh"
+
+	cat > "${SDCARD}/usr/local/sbin/dbai-apps-stop.sh" <<'STOP'
+#!/usr/bin/env bash
+set -euo pipefail
+APP_DIR=/opt/dbai/apps
+read -r -a selected_profiles <<< "${DBAI_COMPOSE_PROFILE}"
+profile_args=()
+for profile in "${selected_profiles[@]}"; do
+  profile_args+=(--profile "$profile")
+done
+docker compose --project-directory "$APP_DIR" "${profile_args[@]}" -f "$APP_DIR/docker-compose.yml" down
+STOP
+	chmod 755 "${SDCARD}/usr/local/sbin/dbai-apps-stop.sh"
 
 	# Store selected Compose profiles in a root-only environment file.
 	printf 'DBAI_COMPOSE_PROFILE=%s\n' "${compose_profiles}" > "${SDCARD}/etc/dbai-apps.env"
@@ -131,7 +149,7 @@ Type=oneshot
 RemainAfterExit=yes
 EnvironmentFile=/etc/dbai-apps.env
 ExecStart=/usr/local/sbin/dbai-apps-start.sh
-ExecStop=/usr/bin/docker compose --project-directory /opt/dbai/apps --profile ${DBAI_COMPOSE_PROFILE} -f /opt/dbai/apps/docker-compose.yml down
+ExecStop=/usr/local/sbin/dbai-apps-stop.sh
 TimeoutStartSec=0
 
 [Install]
