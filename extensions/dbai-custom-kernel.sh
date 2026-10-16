@@ -73,6 +73,7 @@ function pre_customize_image__dbai_overlay_kernel_bundle() {
 	local dtb_file dtb_rel dtb_target
 	while IFS= read -r -d '' dtb_file; do
 		dtb_rel="${dtb_file#"${dtb_stage}/"}"
+		while [[ "${dtb_rel}" == ./* ]]; do dtb_rel="${dtb_rel#./}"; done
 		case "/${dtb_rel}" in
 			*/boot/*) dtb_target="${SDCARD}/${dtb_rel}" ;;
 			*/dtb/*) dtb_target="${SDCARD}/boot/dtb/${dtb_rel#dtb/}" ;;
