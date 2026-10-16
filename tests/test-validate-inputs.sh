@@ -16,19 +16,30 @@ bash "$VALIDATOR" "aml-s9xx-box" "" "bookworm,trixie" "application" "ext4" "Kern
 if bash "$VALIDATOR" "../bad" "" "bookworm" "server" "ext4" "Kernel Official" "none"; then
   echo "Expected invalid board ID to fail" >&2; exit 1
 fi
-if bash "$VALIDATOR" "aml-s9xx-box" "" "bookworm" "application" "ext4" "Kernel Official" "proxmox-official"; then
-  echo "Expected Proxmox Official without Trixie to fail" >&2; exit 1
-fi
-if bash "$VALIDATOR" "aml-s9xx-box" "" "trixie" "application" "ext4" "Kernel Official" "proxmox-community"; then
-  echo "Expected Proxmox Community without Bookworm to fail" >&2; exit 1
-fi
-if bash "$VALIDATOR" "aml-s9xx-box" "" "bookworm" "application" "ext4" "Kernel Official" "proxmox-both"; then
-  echo "Expected Proxmox Both without both releases to fail" >&2; exit 1
-fi
+# Compatibility mismatches are allowed at validation time; the matrix resolver skips only those app rows.
+bash "$VALIDATOR" "aml-s9xx-box" "" "bookworm" "minimal,server,application" "ext4" "Kernel Official" "proxmox-official"
+bash "$VALIDATOR" "aml-s9xx-box" "" "trixie" "minimal,server,application" "ext4" "Kernel Official" "proxmox-community"
+
+RESOLVER="$ROOT/scripts/resolve-app-variant.sh"
+[[ "$(bash "$RESOLVER" proxmox-community bookworm)" == "proxmox-community" ]]
+[[ -z "$(bash "$RESOLVER" proxmox-community trixie)" ]]
+[[ "$(bash "$RESOLVER" proxmox-official trixie)" == "proxmox-official" ]]
+[[ -z "$(bash "$RESOLVER" proxmox-official bookworm)" ]]
+[[ "$(bash "$RESOLVER" proxmox-both bookworm)" == "proxmox-community" ]]
+[[ "$(bash "$RESOLVER" proxmox-both trixie)" == "proxmox-official" ]]
+[[ -z "$(bash "$RESOLVER" proxmox-both jammy)" ]]
+[[ "$(bash "$RESOLVER" openmediavault bookworm)" == "openmediavault" ]]
+[[ "$(bash "$RESOLVER" openmediavault trixie)" == "openmediavault" ]]
+[[ -z "$(bash "$RESOLVER" openmediavault jammy)" ]]
+[[ "$(bash "$RESOLVER" homeassistant bullseye)" == "homeassistant" ]]
+[[ -z "$(bash "$RESOLVER" homeassistant forky)" ]]
+[[ "$(bash "$RESOLVER" casaos trixie)" == "casaos" ]]
+[[ -z "$(bash "$RESOLVER" casaos noble)" ]]
+[[ "$(bash "$RESOLVER" none resolute)" == "none" ]]
 if bash "$VALIDATOR" "orangepi5" "" "bookworm" "unknown" "ext4" "Kernel Official" "none"; then
   echo "Expected unknown profile to fail" >&2; exit 1
 fi
 if bash "$VALIDATOR" "aml-s9xx-box" "" "sid" "server" "ext4" "Kernel Official" "none"; then
   echo "Expected unsupported release to fail" >&2; exit 1
 fi
-echo "All validator tests passed."
+echo "All validator and application compatibility tests passed."
