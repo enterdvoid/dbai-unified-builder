@@ -215,8 +215,70 @@ jobs:
       PROXMOX_VARIANT: ${{ matrix.proxmox_variant }}
       KERNEL_ARCHIVES: ${{ inputs.kernel_archives }}
     steps:
+      - name: Report runner resources before disk setup
+        shell: bash
+        run: |
+          echo "Runner: $(uname -a)"
+          echo "Workspace: $GITHUB_WORKSPACE"
+          echo "=== Filesystems before disk setup ==="
+          df -hT / /mnt "$GITHUB_WORKSPACE" || true
+          lsblk -o NAME,SIZE,FSTYPE,MOUNTPOINTS || true
+          echo "=== Memory and swap ==="
+          free -h
+          swapon --show || true
+
+      - name: Maximize available build disk
+        uses: easimon/maximize-build-space@v10
+        timeout-minutes: 10
+        with:
+          root-reserve-mb: 512
+          swap-size-mb: 1024
+          remove-dotnet: "true"
+          remove-android: "true"
+          remove-haskell: "true"
+          remove-codeql: "true"
+          remove-docker-images: "true"
+
       - name: Checkout builder repository
         uses: actions/checkout@v4
+
+      - name: Move Docker storage to large build volume
+        shell: bash
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          docker_root="$GITHUB_WORKSPACE/.docker-data"
+          exclude_file="$GITHUB_WORKSPACE/.git/info/exclude"
+          grep -qxF '/.docker-data/' "$exclude_file" || printf '\n/.docker-data/\n' >> "$exclude_file"
+          sudo systemctl stop docker.socket docker.service || true
+          sudo mkdir -p "$docker_root"
+          sudo chown root:root "$docker_root"
+          sudo python3 - "$docker_root" <<'PY'
+          import json, os, sys
+          path = "/etc/docker/daemon.json"
+          try:
+              with open(path, encoding="utf-8") as f:
+                  config = json.load(f)
+          except FileNotFoundError:
+              config = {}
+          config["data-root"] = sys.argv[1]
+          tmp = path + ".tmp"
+          with open(tmp, "w", encoding="utf-8") as f:
+              json.dump(config, f, indent=2)
+              f.write("\n")
+          os.replace(tmp, path)
+          PY
+          sudo systemctl start docker
+          for i in {1..30}; do
+            if docker info >/dev/null 2>&1; then break; fi
+            sleep 2
+          done
+          actual_root="$(docker info --format '{{.DockerRootDir}}')"
+          echo "DockerRootDir=$actual_root"
+          [[ "$actual_root" == "$docker_root" ]] || { echo "::error::Docker did not switch to the large workspace volume."; exit 1; }
+          df -h "$docker_root" "$GITHUB_WORKSPACE"
+          available_gb="$(df -BG --output=avail "$GITHUB_WORKSPACE" | tail -n 1 | tr -dc '0-9')"
+          (( available_gb >= 35 )) || { echo "::error::Only ${available_gb} GB free in build workspace; at least 35 GB is required."; exit 1; }
 
       - name: Resolve source and verify board ID
         id: source
@@ -410,6 +472,25 @@ jobs:
       BOARD: ${{ needs.plan.outputs.board }}
       DELETE_OLD: "true"
     steps:
+      - name: Report release assembly runner resources
+        shell: bash
+        run: |
+          echo "Runner: $(uname -a)"
+          df -hT / /mnt "$GITHUB_WORKSPACE" || true
+          free -h
+
+      - name: Maximize release assembly disk
+        uses: easimon/maximize-build-space@v10
+        timeout-minutes: 10
+        with:
+          root-reserve-mb: 512
+          swap-size-mb: 1024
+          remove-dotnet: "true"
+          remove-android: "true"
+          remove-haskell: "true"
+          remove-codeql: "true"
+          remove-docker-images: "true"
+
       - name: Checkout builder repository
         uses: actions/checkout@v4
 
@@ -463,8 +544,13 @@ jobs:
 
           CHECK_DIR="$RUNNER_TEMP/dbai-release-check"
           mkdir -p "$CHECK_DIR"
-          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir "$CHECK_DIR"
-          (cd "$CHECK_DIR" && sha256sum -c SHA256SUMS)
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern SHA256SUMS --dir "$CHECK_DIR"
+          while IFS=' ' read -r expected filename; do
+            [[ -n "$filename" ]] || continue
+            gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "$filename" --dir "$CHECK_DIR"
+            printf '%s  %s\n' "$expected" "$filename" | (cd "$CHECK_DIR" && sha256sum -c -)
+            rm -f "$CHECK_DIR/$filename"
+          done < "$CHECK_DIR/SHA256SUMS"
 
           if [[ "$DELETE_OLD" == "true" ]]; then
             gh release list --repo "$GITHUB_REPOSITORY" --limit 1000 --json tagName               | jq -r --arg current "$TAG" '.[] | select(.tagName | startswith("dbai-build-")) | select(.tagName != $current) | .tagName'               | while IFS= read -r old_tag; do
