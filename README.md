@@ -9,7 +9,7 @@ A GitHub Actions frontend for building ready-to-use Armbian-based firmware for A
 - Release dropdown supports all listed Debian releases, Ubuntu LTS releases, Debian-only, Ubuntu-only, or a custom comma-separated list.
 - Kernel mode is selectable per run: **Kernel Official** reuses a matching official Armbian OCI kernel artifact and fails on cache miss rather than compiling; **Recompile Kernel Official** bypasses the artifact cache and builds from source; **Custom Kernel** uses one URL containing four kernel archives; **Recompile Custom Kernel** builds from a custom Git source URL/ref. Optional patches live in `kernel-patches/meson64-current/`. See [kernel mode behavior](docs/KERNEL-MODES.md).
 - Four independent checkbox inputs select Minimal, Server, Application, and Desktop images. The application selector only affects Application images; choose `none` for a generic image without an extra app. Application jobs are skipped on OS releases the selected app does not support.
-- Release publication happens only after all matrix jobs succeed and every image has a manifest and SHA-256 checksum. Partial releases are removed on publication failure.
+- Release publication happens only after all matrix jobs succeed. Releases contain firmware images and one consolidated `SHA256SUMS` file; partial releases are removed on publication failure.
 
 ## Run
 
