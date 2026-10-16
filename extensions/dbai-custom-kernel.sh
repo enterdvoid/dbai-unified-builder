@@ -68,11 +68,97 @@ function pre_customize_image__dbai_overlay_kernel_bundle() {
 	fi
 	local headers_listing="${cache_dir}/headers-list.txt"
 	tar -tf "${cache_dir}/headers.tar" > "${headers_listing}" || exit_with_error "Unable to read headers archive file list"
+	local headers_layout="target-root"
 	if ! grep -Eq '^([.]/)?(usr/src/|lib/modules/[^/]+/build)' "${headers_listing}"; then
-		echo "First headers archive entries:"
-		sed -n '1,40p' "${headers_listing}"
-		exit_with_error "header-<version> archive must contain usr/src/ or matching modules build paths"
+		if grep -Eq '^([.]/)?include/' "${headers_listing}" && grep -Eq '^([.]/)?Makefile
+
+	# Replace default boot scripts/config before applying the kernel bundle's /boot files.
+	dbai_replace_bootfs_files
+
+	# Some kernel bundles store boot archive entries directly at the boot-partition root
+	# (for example Image and uInitrd) instead of prefixing every entry with boot/.
+	# Normalize those entries into /boot; preserve archives already rooted at boot/.
+	if tar -tf "${cache_dir}/boot.tar" | grep -Eq '^boot/'; then
+		tar --no-same-owner --no-same-permissions -xf "${cache_dir}/boot.tar" -C "${SDCARD}"
+	else
+		tar --no-same-owner --no-same-permissions --transform='s,^[.]/,,;s,^,boot/,' -xf "${cache_dir}/boot.tar" -C "${SDCARD}"
 	fi
+	# Normalize common DTB archive layouts into the target /boot/dtb tree.
+	local dtb_stage="${cache_dir}/dtb-unpacked"
+	rm -rf "${dtb_stage}"
+	mkdir -p "${dtb_stage}"
+	tar --no-same-owner --no-same-permissions -xf "${cache_dir}/dtb.tar" -C "${dtb_stage}"
+	local dtb_file dtb_rel dtb_target
+	while IFS= read -r -d '' dtb_file; do
+		dtb_rel="${dtb_file#"${dtb_stage}/"}"
+		while [[ "${dtb_rel}" == ./* ]]; do dtb_rel="${dtb_rel#./}"; done
+		case "/${dtb_rel}" in
+			*/boot/*) dtb_target="${SDCARD}/${dtb_rel}" ;;
+			*/dtb/*) dtb_target="${SDCARD}/boot/dtb/${dtb_rel#dtb/}" ;;
+			*/amlogic/*) dtb_target="${SDCARD}/boot/dtb/${dtb_rel#./}" ;;
+			*) dtb_target="${SDCARD}/boot/dtb/amlogic/${dtb_rel##*/}" ;;
+		esac
+		mkdir -p "$(dirname "${dtb_target}")"
+		cp -f "${dtb_file}" "${dtb_target}"
+	done < <(find "${dtb_stage}" -type f -name '*.dtb' -print0)
+	find "${SDCARD}/boot" -type f -name '*.dtb' -print -quit | grep -q . || exit_with_error "DTB archive contained .dtb files, but none were installed under target /boot"
+	# The supplied DBAI modules archive stores the kernel-release directory
+	# at archive root. Normalize it into the standard target /lib/modules path.
+	if [[ "${modules_layout}" == "release-root" ]]; then
+		tar --no-same-owner --no-same-permissions --transform='s,^[.]/,,;s,^\([^/][^/]*\)/,lib/modules/\1/,' -xf "${cache_dir}/modules.tar" -C "${SDCARD}"
+	else
+		tar --no-same-owner --no-same-permissions -xf "${cache_dir}/modules.tar" -C "${SDCARD}"
+	fi
+	case "${headers_layout}" in
+		header-root)
+			mkdir -p "${SDCARD}/usr/src/linux-headers-${modules_release}"
+			tar --no-same-owner --no-same-permissions --transform="s,^[.]/,,;s,^,usr/src/linux-headers-${modules_release}/," -xf "${cache_dir}/headers.tar" -C "${SDCARD}"
+			;;
+		target-root)
+			tar --no-same-owner --no-same-permissions -xf "${cache_dir}/headers.tar" -C "${SDCARD}"
+			;;
+	esac
+	# Ensure module build links point at the normalized header tree regardless
+	# of whether the original module archive carried dangling build/source links.
+	mkdir -p "${SDCARD}/lib/modules/${modules_release}" "${SDCARD}/usr/src"
+	if [[ -d "${SDCARD}/usr/src/linux-headers-${modules_release}" ]]; then
+		ln -sfn "/usr/src/linux-headers-${modules_release}" "${SDCARD}/lib/modules/${modules_release}/build"
+		ln -sfn "/usr/src/linux-headers-${modules_release}" "${SDCARD}/lib/modules/${modules_release}/source"
+	fi
+
+	find "${SDCARD}/boot" -maxdepth 4 -type f \( -name 'Image' -o -name 'Image-*' -o -name 'vmlinuz*' -o -name 'uImage' -o -name 'zImage' \) -print -quit | grep -q . || exit_with_error "No recognizable kernel image found under target /boot after overlay"
+	find "${SDCARD}/boot" -type f -name '*.dtb' -print -quit | grep -q . || exit_with_error "No DTB found under target /boot after overlay"
+	find "${SDCARD}/lib/modules" -type f -name '*.ko*' -print -quit | grep -q . || exit_with_error "No kernel module found under target /lib/modules after overlay"
+	find "${SDCARD}/usr/src" -type f -name 'Makefile' -print -quit | grep -q . || exit_with_error "No kernel header Makefile found under target /usr/src after overlay"
+
+	local manifest="${SDCARD}/root/DBAI-CUSTOM-KERNEL-MANIFEST.txt"
+	mkdir -p "${SDCARD}/root"
+	{
+		echo "Kernel mode: Custom Kernel"
+		echo "Bundle URL: ${DBAI_KERNEL_BUNDLE_URL}"
+		echo "Overlay timestamp UTC: $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+		echo "Inner archive SHA-256:"
+		sha256sum "${cache_dir}/boot.tar" "${cache_dir}/dtb.tar" "${cache_dir}/modules.tar" "${cache_dir}/headers.tar"
+	} > "${manifest}"
+	display_alert "DBAI custom kernel" "Four-part bundle overlay and basic checks completed; hardware boot testing is still required" "warn"
+}
+ "${headers_listing}"; then
+			headers_layout="header-root"
+		else
+			echo "First headers archive entries:"
+			sed -n '1,40p' "${headers_listing}"
+			exit_with_error "header-<version> archive must contain usr/src/, lib/modules/<release>/build, or a root-level kernel header tree with include/ and Makefile"
+		fi
+	fi
+	# Resolve the module release from the archive layout so root-level headers
+	# are installed into a versioned directory and the standard build symlink is valid.
+	local modules_release=""
+	if [[ "${modules_layout}" == "release-root" ]]; then
+		modules_release="$(sed -nE 's#^([.]/)?([^/]+)/modules[.]dep$#\2#p' "${modules_listing}" | head -n 1)"
+	else
+		modules_release="$(sed -nE 's#^([.]/)?lib/modules/([^/]+)/.*#\2#p' "${modules_listing}" | head -n 1)"
+	fi
+	[[ -n "${modules_release}" && "${modules_release}" =~ ^[A-Za-z0-9._+-]+$ ]] || exit_with_error "Unable to safely determine kernel release from modules archive"
 
 	# Replace default boot scripts/config before applying the kernel bundle's /boot files.
 	dbai_replace_bootfs_files
