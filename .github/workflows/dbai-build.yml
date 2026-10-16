@@ -514,44 +514,101 @@ jobs:
             application) PROFILE_VARIANT="$APP_PROFILE_EFFECTIVE" ;;
             *) PROFILE_VARIANT="$PROFILE" ;;
           esac
+          SHORT_BOARD="${BOARD%-box}"
           for image in "${images[@]}"; do
             base="$(basename "$image")"
+            if [[ "$base" =~ ^Armbian(-unofficial)?_([^_]+)_([^_]+)_([^_]+)_([^_]+)_([^_]+)_(minimal|server|desktop)\.img(\.(xz|gz|zst))?$ ]]; then
+              armbian_version="${BASH_REMATCH[2]}"
+              image_board="${BASH_REMATCH[3]}"
+              image_release="${BASH_REMATCH[4]}"
+              image_branch="${BASH_REMATCH[5]}"
+              kernel_version="${BASH_REMATCH[6]}"
+              source_profile="${BASH_REMATCH[7]}"
+            else
+              echo "::error::Cannot parse Armbian image filename: $base"
+              exit 1
+            fi
+
+            [[ "$image_release" == "$RELEASE" ]] || {
+              echo "::error::Image release in '$base' is '$image_release', expected '$RELEASE'."
+              exit 1
+            }
+            [[ "${image_board,,}" == "${BOARD,,}" ]] || {
+              echo "::error::Image board in '$base' is '$image_board', expected '$BOARD'."
+              exit 1
+            }
+
+            armbian_version_filename="${armbian_version%-trunk}"
             case "$base" in
-              *.img.xz) suffix=".img.xz" ;;
-              *.img.gz) suffix=".img.gz" ;;
-              *.img.zst) suffix=".img.zst" ;;
-              *.img) suffix=".img" ;;
+              *.img.xz) suffix=".img.xz"; source_txt="${image%.xz}.txt" ;;
+              *.img.gz) suffix=".img.gz"; source_txt="${image%.gz}.txt" ;;
+              *.img.zst) suffix=".img.zst"; source_txt="${image%.zst}.txt" ;;
+              *.img) suffix=".img"; source_txt="${image}.txt" ;;
               *) echo "::error::Unrecognized image format: $base"; exit 1 ;;
             esac
-            safe_base="DBAI-${BOARD}-${FILESYSTEM}-${RELEASE}-${PROFILE_VARIANT}${suffix}"
-            cp "$image" "$GITHUB_WORKSPACE/stage/$safe_base"
-            bytes="$(stat -c '%s' "$GITHUB_WORKSPACE/stage/$safe_base")"
-            if (( bytes > 1900000000 )); then
+
+            safe_base="DBAI-Armbian_${armbian_version_filename}-${SHORT_BOARD}-${RELEASE}-k${kernel_version}-${PROFILE_VARIANT}-${FILESYSTEM}${suffix}"
+            stage_image="$GITHUB_WORKSPACE/stage/$safe_base"
+            cp "$image" "$stage_image"
+
+            if [[ ! -f "$source_txt" ]]; then
+              echo "::error::Armbian build information file is missing: $source_txt"
+              exit 1
+            fi
+            metadata_base="$safe_base"
+            metadata_base="${metadata_base%.xz}"
+            metadata_base="${metadata_base%.gz}"
+            metadata_base="${metadata_base%.zst}"
+            metadata_base="${metadata_base}.txt"
+            metadata_path="$GITHUB_WORKSPACE/stage/$metadata_base"
+            cp "$source_txt" "$metadata_path"
+
+            # Make the upstream information file refer to the renamed release asset.
+            python3 - "$metadata_path" "$base" "$safe_base" <<'PY'
+          import pathlib, sys
+          path = pathlib.Path(sys.argv[1])
+          old_name, new_name = sys.argv[2], sys.argv[3]
+          text = path.read_text(encoding="utf-8", errors="replace")
+          path.write_text(text.replace(old_name, new_name), encoding="utf-8")
+          PY
+
+            image_size="$(stat -c '%s' "$stage_image")"
+            if (( image_size > 1900000000 )); then
               echo "::error::Asset $safe_base is larger than 1.9 GB; split/compress it before publishing to GitHub Releases."
               exit 1
             fi
-          done
+            image_sha="$(sha256sum "$stage_image" | awk '{print $1}')"
 
-          cat > "$GITHUB_WORKSPACE/stage/manifest.json" <<EOF
-          {
-            "repository": "$GITHUB_REPOSITORY",
-            "board": "$BOARD",
-            "release": "$RELEASE",
-            "profile": "$PROFILE",
-            "filesystem": "$FILESYSTEM",
-            "kernel_mode": "$BUILD_KERNEL_MODE",
-            "kernel_source_repository": "${CUSTOM_KERNEL_REPO_URL:-}",
-            "kernel_source_ref": "${CUSTOM_KERNEL_REPO_REF:-}",
-            "kernel_patch_series": "$KERNEL_PATCH_SERIES",
-            "application": "$APP_PROFILE_EFFECTIVE",
-            "source_repository": "$SOURCE_REPO",
-            "source_commit": "$SOURCE_SHA",
-            "source_ref": "$SOURCE_REF",
-            "run_id": "$GITHUB_RUN_ID",
-            "run_attempt": "$GITHUB_RUN_ATTEMPT"
-          }
+            cat >> "$metadata_path" <<EOF
+
+          ================================================================================
+          DBAI UNIFIED FIRMWARE BUILDER
+          ================================================================================
+          Release asset: $safe_base
+          Board ID: $BOARD
+          Armbian image version: $armbian_version
+          OS release: $RELEASE
+          Kernel version: $kernel_version
+          Kernel branch: $image_branch
+          Armbian source profile: $source_profile
+          DBAI image profile: $PROFILE
+          Application variant: $APP_PROFILE_EFFECTIVE
+          Root filesystem: $FILESYSTEM
+          Kernel mode: $BUILD_KERNEL_MODE
+          Kernel patch series: $KERNEL_PATCH_SERIES
+          Armbian source repository: $SOURCE_REPO
+          Armbian source ref: $SOURCE_REF
+          Armbian source commit: $SOURCE_SHA
+          DBAI builder repository: $GITHUB_REPOSITORY
+          DBAI builder commit: $GITHUB_SHA
+          Workflow run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID
+          Image size in bytes: $image_size
+          Image SHA-256: $image_sha
+          ================================================================================
           EOF
-          mv "$GITHUB_WORKSPACE/stage/manifest.json" "$GITHUB_WORKSPACE/stage/DBAI-${BOARD}-${FILESYSTEM}-${RELEASE}-${PROFILE_VARIANT}-manifest.json"
+            echo "Staged image: $safe_base (Armbian $armbian_version; kernel $kernel_version)"
+            echo "Staged build information: $metadata_base"
+          done
 
       - name: Upload image artifact
         uses: actions/upload-artifact@v4
@@ -623,16 +680,66 @@ jobs:
           (cd dist && sha256sum -- * > SHA256SUMS)
           (cd dist && sha256sum -c SHA256SUMS)
 
+          NOTES_FILE="$RUNNER_TEMP/DBAI-RELEASE-NOTES.md"
+          {
+            echo "# DBAI Unified Firmware Builder"
+            echo
+            echo "Firmware images built with the Armbian build framework."
+            echo
+            echo "## Build batch"
+            echo
+            echo "- **Board:** $BOARD"
+            echo "- **Requested OS releases:** $RELEASES_INPUT"
+            echo "- **Image profiles:** $PROFILES_INPUT"
+            echo "- **Filesystem selection:** $FILESYSTEM_INPUT"
+            echo "- **Application profile:** $APP_PROFILE"
+            echo "- **Kernel mode:** ${{ inputs.kernel_mode || 'Kernel Official' }}"
+            echo "- **Armbian source ref:** ${{ inputs.source_ref || 'main' }}"
+            echo "- **Builder commit:** $GITHUB_SHA"
+            echo "- **Workflow run:** $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+            echo
+            echo "## Firmware assets"
+            echo
+            echo "The image filenames encode the Armbian image version, OS release, kernel version, image profile, and filesystem."
+            echo "Each image is accompanied by an Armbian `.img.txt` build-information file containing upstream build details and DBAI-specific metadata."
+            echo
+            shopt -s nullglob
+            found_image=false
+            for asset in dist/DBAI-Armbian_*; do
+              case "$asset" in
+                *.img|*.img.xz|*.img.gz|*.img.zst)
+                  found_image=true
+                  name="$(basename "$asset")"
+                  size="$(stat -c '%s' "$asset")"
+                  echo "- `$name` — $size bytes"
+                  ;;
+              esac
+            done
+            [[ "$found_image" == true ]] || { echo "::error::No versioned DBAI Armbian image assets were found."; exit 1; }
+            echo
+            echo "## Integrity"
+            echo
+            echo "- `SHA256SUMS` contains SHA-256 checksums for every uploaded image and information file."
+            echo "- Verify downloads with: `sha256sum -c SHA256SUMS`"
+            echo
+            echo "## Notes"
+            echo
+            echo "- Armbian version and kernel version in the filenames come from the actual output filename generated by the build framework."
+            echo "- Test on target hardware before production use."
+          } > "$NOTES_FILE"
+
           TAG="dbai-build-$(date -u +'%Y%m%d-%H%M%S')-$GITHUB_RUN_ID"
           TITLE="DBAI Armbian ${BOARD} ${RELEASES_INPUT} [${PROFILES_INPUT}] [${FILESYSTEM_INPUT}] app-${APP_PROFILE} $(date -u +'%Y-%m-%d_%H-%M')"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "title=$TITLE" >> "$GITHUB_OUTPUT"
+          echo "notes_file=$NOTES_FILE" >> "$GITHUB_OUTPUT"
 
       - name: Publish release and verify remote assets
         shell: bash
         env:
           TAG: ${{ steps.release.outputs.tag }}
           TITLE: ${{ steps.release.outputs.title }}
+          NOTES_FILE: ${{ steps.release.outputs.notes_file }}
         run: |
           set -euo pipefail
           cleanup_partial_release() {
@@ -646,7 +753,7 @@ jobs:
           }
           trap cleanup_partial_release EXIT
 
-          gh release create "$TAG" dist/*             --repo "$GITHUB_REPOSITORY"             --title "$TITLE"             --prerelease             --notes "DBAI firmware batch. Board: $BOARD. Application profile: $APP_PROFILE. Resolved releases: $RELEASES_INPUT. Workflow run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID. Every image includes a build manifest and SHA-256 checksum. Test on target hardware before production use."
+          gh release create "$TAG" dist/* --repo "$GITHUB_REPOSITORY" --title "$TITLE" --prerelease --notes-file "$NOTES_FILE"
 
           CHECK_DIR="$RUNNER_TEMP/dbai-release-check"
           mkdir -p "$CHECK_DIR"
