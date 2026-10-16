@@ -49,6 +49,37 @@ cat > "${tmp}/uapi-root.txt" <<'EOF'
 EOF
 assert_layout "exported UAPI only" "uapi-root" "${tmp}/uapi-root.txt"
 
+cat > "${tmp}/modules-target-root.txt" <<'EOF'
+./
+./lib/
+./lib/modules/6.1.66-DBAI/
+./lib/modules/6.1.66-DBAI/modules.dep
+EOF
+actual="$(dbai_detect_kernel_modules_release "${tmp}/modules-target-root.txt")"
+[[ "${actual}" == "6.1.66-DBAI" ]] || { echo "FAIL: target-root modules release expected 6.1.66-DBAI, got '${actual}'" >&2; exit 1; }
+echo "PASS: target-root modules release -> ${actual}"
+
+cat > "${tmp}/modules-release-root.txt" <<'EOF'
+./
+./6.1.66-DBAI/
+./6.1.66-DBAI/modules.dep
+./6.1.66-DBAI/kernel/
+EOF
+actual="$(dbai_detect_kernel_modules_release "${tmp}/modules-release-root.txt")"
+[[ "${actual}" == "6.1.66-DBAI" ]] || { echo "FAIL: release-root modules release expected 6.1.66-DBAI, got '${actual}'" >&2; exit 1; }
+echo "PASS: release-root modules release -> ${actual}"
+
+cat > "${tmp}/modules-invalid.txt" <<'EOF'
+./
+./not-a-kernel-tree/
+./not-a-kernel-tree/anything
+EOF
+if dbai_detect_kernel_modules_release "${tmp}/modules-invalid.txt" >/dev/null; then
+  echo "FAIL: invalid modules tree was incorrectly accepted" >&2
+  exit 1
+fi
+echo "PASS: invalid modules tree is rejected"
+
 cat > "${tmp}/invalid.txt" <<'EOF'
 ./
 ./include/
