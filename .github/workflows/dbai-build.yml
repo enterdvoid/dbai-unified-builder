@@ -201,7 +201,9 @@ jobs:
                 echo "::error::Unsafe path in inner $label archive"; exit 2
               fi
             done
-            tar -tf "$temp_dir/boot.tar" | grep -Eq '^boot/' || { echo "::error::Boot archive needs paths under boot/"; exit 2; }
+            if ! tar -tf "$temp_dir/boot.tar" | grep -Eq '^(boot/.*|(\./)?(Image[^/]*|vmlinuz[^/]*|uImage|zImage|initrd[^/]*|uInitrd)(/|$))'; then
+              echo "::error::Boot archive must contain files under boot/ or a recognizable kernel image at its archive root."; exit 2
+            fi
             tar -tf "$temp_dir/dtb.tar" | grep -Eq '^boot/.*\.dtb$' || { echo "::error::DTB archive needs .dtb files under boot/"; exit 2; }
             tar -tf "$temp_dir/modules.tar" | grep -Eq '^lib/modules/[^/]+/' || { echo "::error::Modules archive needs lib/modules/<release>/"; exit 2; }
             tar -tf "$temp_dir/headers.tar" | grep -Eq '^(usr/src/|lib/modules/[^/]+/build)' || { echo "::error::Headers archive needs usr/src/ or matching modules build paths"; exit 2; }
@@ -782,12 +784,7 @@ jobs:
             rm -f "$CHECK_DIR/$filename"
           done < "$CHECK_DIR/SHA256SUMS"
 
-          if [[ "$DELETE_OLD" == "true" ]]; then
-            gh release list --repo "$GITHUB_REPOSITORY" --limit 1000 --json tagName               | jq -r --arg current "$TAG" '.[] | select(.tagName | startswith("dbai-build-")) | select(.tagName != $current) | .tagName'               | while IFS= read -r old_tag; do
-                  [[ -n "$old_tag" ]] || continue
-                  echo "Removing previously verified DBAI build release: $old_tag"
-                  gh release delete "$old_tag" --repo "$GITHUB_REPOSITORY" --cleanup-tag --yes || echo "::warning::Could not delete old release $old_tag"
-                done
-          fi
+          # Keep every previously published release. Only a partially created current release
+          # may be removed by cleanup_partial_release if remote asset verification fails.
           echo "Verified release: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/tag/$TAG"
           trap - EXIT
