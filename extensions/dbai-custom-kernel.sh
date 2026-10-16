@@ -51,8 +51,20 @@ function pre_customize_image__dbai_overlay_kernel_bundle() {
 	local dtb_listing="${cache_dir}/dtb-list.txt"
 	tar -tf "${cache_dir}/dtb.tar" > "${dtb_listing}" || exit_with_error "Unable to read DTB archive file list"
 	grep -Eq '(^|/)[^/]+[.]dtb' "${dtb_listing}" || exit_with_error "dtb-amlogic-<version> archive must contain at least one .dtb file"
-	tar -tf "${cache_dir}/modules.tar" | grep -Eq '^lib/modules/[^/]+/' || exit_with_error "modules-<version> archive must contain lib/modules/<kernel-release>/"
-	tar -tf "${cache_dir}/headers.tar" | grep -Eq '^(usr/src/|lib/modules/[^/]+/build)' || exit_with_error "header-<version> archive must contain usr/src/ or matching modules build paths"
+	local modules_listing="${cache_dir}/modules-list.txt"
+	tar -tf "${cache_dir}/modules.tar" > "${modules_listing}" || exit_with_error "Unable to read modules archive file list"
+	if ! grep -Eq '^(./)?lib/modules/[^/]+/' "${modules_listing}"; then
+		echo "First modules archive entries:"
+		sed -n '1,40p' "${modules_listing}"
+		exit_with_error "modules-<version> archive must contain lib/modules/<kernel-release>/"
+	fi
+	local headers_listing="${cache_dir}/headers-list.txt"
+	tar -tf "${cache_dir}/headers.tar" > "${headers_listing}" || exit_with_error "Unable to read headers archive file list"
+	if ! grep -Eq '^(./)?(usr/src/|lib/modules/[^/]+/build)' "${headers_listing}"; then
+		echo "First headers archive entries:"
+		sed -n '1,40p' "${headers_listing}"
+		exit_with_error "header-<version> archive must contain usr/src/ or matching modules build paths"
+	fi
 
 	# Replace default boot scripts/config before applying the kernel bundle's /boot files.
 	dbai_replace_bootfs_files
