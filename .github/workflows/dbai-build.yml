@@ -234,30 +234,16 @@ jobs:
               profile="$(xargs <<< "$profile")"
               app_variant="none"
               if [[ "$profile" == "application" ]]; then
-                case "$APP_PROFILE" in
-                  proxmox-official)
-                    [[ "$release" == "trixie" ]] && app_variant="proxmox-official" || app_variant="" ;;
-                  proxmox-community)
-                    [[ "$release" == "bookworm" ]] && app_variant="proxmox-community" || app_variant="" ;;
-                  proxmox-both)
-                    case "$release" in
-                      bookworm) app_variant="proxmox-community" ;;
-                      trixie) app_variant="proxmox-official" ;;
-                      *) app_variant="" ;;
-                    esac ;;
-                  homeassistant)
-                    [[ "$release" =~ ^(bullseye|bookworm|trixie)$ ]] && app_variant="homeassistant" || app_variant="" ;;
-                  openmediavault|casaos|hermes-9router|lightnvr-go2rtc|hermes-9router-lightnvr)
-                    [[ "$release" =~ ^(bookworm|trixie)$ ]] && app_variant="$APP_PROFILE" || app_variant="" ;;
-                  none) app_variant="none" ;;
-                  *) echo "::error::Unsupported application profile $APP_PROFILE"; exit 2 ;;
-                esac
+                if ! app_variant="$(bash scripts/resolve-app-variant.sh "$APP_PROFILE" "$release")"; then
+                  echo "::error::Could not resolve application '$APP_PROFILE' for release '$release'."
+                  exit 2
+                fi
                 if [[ -z "$app_variant" ]]; then
                   echo "::notice::Skipping Application image for '$release': app '$APP_PROFILE' is not compatible with this release."
                   continue
                 fi
               fi
-              for fs in "${filesystems[@]}"; do
+              for fs in "${filesystems[@]}"; do              for fs in "${filesystems[@]}"; do
                 matrix="$(jq -c --arg release "$release" --arg profile "$profile" --arg filesystem "$fs" --arg app_variant "$app_variant" '.include += [{release:$release,profile:$profile,filesystem:$filesystem,app_variant:$app_variant}]' <<< "$matrix")"
               done
             done
