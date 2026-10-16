@@ -58,4 +58,4 @@ Proxmox options live in the same application selector as CasaOS and the other ap
 - `proxmox-community`: creates an application-profile variant on Bookworm.
 - `proxmox-both`: maps Bookworm to Community and Trixie to Official; both variants are produced when both releases are selected.
 
-When a selected app does not support a particular release in a multi-release batch, the workflow builds a generic application image for that release rather than trying an incompatible installer.
+When a selected app does not support a particular release in a multi-release batch, the workflow skips that Application row rather than silently creating a generic image. Choose `none` explicitly if you want generic Application images for every selected release.
