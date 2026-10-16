@@ -40,7 +40,7 @@ function pre_customize_image__dbai_stage_docker_apps() {
 	cat > "${app_dir}/docker-compose.yml" <<'COMPOSE'
 services:
   9router:
-    image: 9router/9router:latest
+    image: ghcr.io/decolua/9router:0.5.95
     container_name: dbai-9router
     profiles: ["hermes-9router"]
     restart: unless-stopped
@@ -50,13 +50,13 @@ services:
       NODE_ENV: production
       PORT: "20128"
       HOSTNAME: 0.0.0.0
-      DATA_DIR: /root/.9router
+      DATA_DIR: /app/data
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
       INITIAL_PASSWORD: ${INITIAL_PASSWORD:?INITIAL_PASSWORD is required}
       API_KEY_SECRET: ${API_KEY_SECRET:?API_KEY_SECRET is required}
       MACHINE_ID_SALT: ${MACHINE_ID_SALT:?MACHINE_ID_SALT is required}
     volumes:
-      - 9router-data:/root/.9router
+      - 9router-data:/app/data
 
   lightnvr:
     image: ghcr.io/opensensor/lightnvr:0.37.2
