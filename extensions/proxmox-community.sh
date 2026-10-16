@@ -8,7 +8,7 @@ function extension_prepare_config__dbai_proxmox_community() {
 	esac
 	[[ "${ARCH}" == "arm64" ]] || exit_with_error "Proxmox Community (PXVIRT 8) requires ARM64; got ${ARCH}"
 	display_alert "Target image will include PXVIRT 8 community userspace packages (Armbian kernel retained)" "${RELEASE}" "info"
-	EXTRA_IMAGE_SUFFIXES+=("-proxmox-community")
+	EXTRA_IMAGE_SUFFIXES+=("")
 }
 
 function post_repo_customize_image__dbai_install_proxmox_community() {
