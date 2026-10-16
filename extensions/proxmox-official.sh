@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 # @description Preinstalls Proxmox VE 9 userspace packages from the official no-subscription repository on Debian Trixie while retaining the Armbian kernel and device tree. Amlogic STB compatibility is experimental; official Proxmox ARM64 platform support does not certify this U-Boot/device-tree board.
 
 function extension_prepare_config__dbai_proxmox_official() {

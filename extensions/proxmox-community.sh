@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 # @description Preinstalls PXVIRT 8, the community-maintained Proxmox-derived ARM64 virtualization stack, from its Bookworm repository. Retains the Armbian kernel and device tree for U-Boot-based TV boxes; storage bridging and guest configuration remain user tasks.
 
 function extension_prepare_config__dbai_proxmox_community() {
