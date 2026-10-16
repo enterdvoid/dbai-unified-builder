@@ -145,15 +145,33 @@ jobs:
           esac
 
           matrix='[]'
+          has_bookworm=false
+          has_trixie=false
           for release in "${releases[@]}"; do
             release="$(xargs <<< "$release")"
+            [[ "$release" == "bookworm" ]] && has_bookworm=true
+            [[ "$release" == "trixie" ]] && has_trixie=true
             for profile in "${profiles[@]}"; do
               profile="$(xargs <<< "$profile")"
               for fs in "${filesystems[@]}"; do
-                matrix="$(jq -c --arg release "$release" --arg profile "$profile" --arg filesystem "$fs" '. + [{release:$release,profile:$profile,filesystem:$filesystem}]' <<< "$matrix")"
+                matrix="$(jq -c --arg release "$release" --arg profile "$profile" --arg filesystem "$fs" '. + [{release:$release,profile:$profile,filesystem:$filesystem,proxmox_variant:"none"}]' <<< "$matrix")"
               done
             done
           done
+
+          # Proxmox images are separate profile jobs, not application variants.
+          if [[ "$PROXMOX_MODE" == "official" || "$PROXMOX_MODE" == "both" ]]; then
+            [[ "$has_trixie" == "true" ]] || { echo "::error::Official Proxmox mode needs trixie in releases"; exit 2; }
+            for fs in "${filesystems[@]}"; do
+              matrix="$(jq -c --arg filesystem "$fs" '. + [{release:"trixie",profile:"proxmox",filesystem:$filesystem,proxmox_variant:"official"}]' <<< "$matrix")"
+            done
+          fi
+          if [[ "$PROXMOX_MODE" == "community" || "$PROXMOX_MODE" == "both" ]]; then
+            [[ "$has_bookworm" == "true" ]] || { echo "::error::Community Proxmox mode needs bookworm in releases"; exit 2; }
+            for fs in "${filesystems[@]}"; do
+              matrix="$(jq -c --arg filesystem "$fs" '. + [{release:"bookworm",profile:"proxmox",filesystem:$filesystem,proxmox_variant:"community"}]' <<< "$matrix")"
+            done
+          fi
           echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
           echo "board=$BOARD" >> "$GITHUB_OUTPUT"
           echo "Resolved board: $BOARD"
@@ -161,7 +179,7 @@ jobs:
           jq . <<< "$matrix"
 
   build:
-    name: ${{ matrix.release }} / ${{ matrix.profile }} / ${{ matrix.filesystem }}
+    name: ${{ matrix.release }} / ${{ matrix.profile }} / ${{ matrix.proxmox_variant }} / ${{ matrix.filesystem }}
     needs: plan
     runs-on: ubuntu-24.04
     timeout-minutes: 360
@@ -178,6 +196,7 @@ jobs:
       KERNEL_MODE: ${{ inputs.kernel_mode }}
       APP_PROFILE: ${{ inputs.app_profile }}
       PROXMOX_MODE: ${{ inputs.proxmox_mode }}
+      PROXMOX_VARIANT: ${{ matrix.proxmox_variant }}
       KERNEL_ARCHIVES: ${{ inputs.kernel_archives }}
     steps:
       - name: Checkout builder repository
@@ -258,56 +277,46 @@ jobs:
             minimal) BUILD_MINIMAL=yes; IMAGE_SIZE=4096 ;;
             server) BUILD_MINIMAL=no; IMAGE_SIZE=4096 ;;
             application) BUILD_MINIMAL=no; IMAGE_SIZE=8192 ;;
+            proxmox) BUILD_MINIMAL=no; IMAGE_SIZE=8192 ;;
             desktop) BUILD_MINIMAL=no; BUILD_DESKTOP=yes; IMAGE_SIZE=8192 ;;
             *) echo "::error::Unknown profile $PROFILE"; exit 2 ;;
           esac
 
           EXTENSIONS=()
-          PROXMOX_VARIANT=none
-          if [[ "$PROFILE" == "application" && "$PROXMOX_MODE" != "none" ]]; then
-            [[ "$APP_PROFILE" == "none" ]] || { echo "::error::Select app_profile=none when Proxmox mode is enabled; keep Proxmox images separate from other application stacks."; exit 2; }
-            EXTENSIONS+=(dbai-proxmox)
-            export DBAI_PROXMOX_MODE="$PROXMOX_MODE"
-            case "$PROXMOX_MODE:$RELEASE" in
-              official:trixie|both:trixie)
-                PROXMOX_VARIANT=official
-                EXTENSIONS+=(proxmox-official)
-                ;;
-              community:bookworm|both:bookworm)
-                PROXMOX_VARIANT=community
-                EXTENSIONS+=(proxmox-community)
-                ;;
-              *) echo "::error::Proxmox mode $PROXMOX_MODE is incompatible with release $RELEASE"; exit 2 ;;
+          PROXMOX_VARIANT="${PROXMOX_VARIANT:-none}"
+          BUILD_KERNEL_MODE="$KERNEL_MODE"
+          APP_PROFILE_EFFECTIVE="$APP_PROFILE"
+
+          if [[ "$PROFILE" == "proxmox" ]]; then
+            APP_PROFILE_EFFECTIVE=none
+            BUILD_KERNEL_MODE=official
+            case "$PROXMOX_VARIANT" in
+              official) EXTENSIONS+=(proxmox-official) ;;
+              community) EXTENSIONS+=(proxmox-community) ;;
+              *) echo "::error::Missing or invalid Proxmox variant: $PROXMOX_VARIANT"; exit 2 ;;
             esac
-          elif [[ "$PROFILE" == "application" ]]; then
-            case "$APP_PROFILE" in
-              homeassistant)
-                [[ "$RELEASE" =~ ^(bullseye|bookworm|trixie)$ ]] || { echo "::error::Home Assistant extension does not support $RELEASE"; exit 2; }
-                EXTENSIONS+=(applications-ha)
-                [[ "$BUILD_MINIMAL" == "no" ]] || { echo "::error::Home Assistant requires a full CLI image"; exit 2; }
-                ;;
-              openmediavault)
-                [[ "$RELEASE" =~ ^(bookworm|trixie)$ ]] || { echo "::error::OpenMediaVault extension only supports bookworm/trixie"; exit 2; }
-                EXTENSIONS+=(applications-omv)
-                ;;
-              casaos)
-                EXTENSIONS+=(dbai-casaos)
-                ;;
-              hermes-9router|lightnvr-go2rtc|hermes-9router-lightnvr)
-                EXTENSIONS+=(dbai-apps)
-                ;;
-              none)
-                echo "::error::The application profile requires app_profile other than none."
-                exit 2
-                ;;
-              *)
-                echo "::error::Unsupported app profile $APP_PROFILE"
-                exit 2
-                ;;
-            esac
+            BSPFREEZE_ARG=(BSPFREEZE=yes)
+          else
+            BSPFREEZE_ARG=()
+            if [[ "$PROFILE" == "application" ]]; then
+              case "$APP_PROFILE" in
+                homeassistant)
+                  [[ "$RELEASE" =~ ^(bullseye|bookworm|trixie)$ ]] || { echo "::error::Home Assistant extension does not support $RELEASE"; exit 2; }
+                  EXTENSIONS+=(applications-ha)
+                  ;;
+                openmediavault)
+                  [[ "$RELEASE" =~ ^(bookworm|trixie)$ ]] || { echo "::error::OpenMediaVault extension only supports bookworm/trixie"; exit 2; }
+                  EXTENSIONS+=(applications-omv)
+                  ;;
+                casaos) EXTENSIONS+=(dbai-casaos) ;;
+                hermes-9router|lightnvr-go2rtc|hermes-9router-lightnvr) EXTENSIONS+=(dbai-apps) ;;
+                none) echo "::error::The application profile requires app_profile other than none."; exit 2 ;;
+                *) echo "::error::Unsupported app profile $APP_PROFILE"; exit 2 ;;
+              esac
+            fi
           fi
 
-          if [[ "$KERNEL_MODE" == "custom-four-part" ]]; then
+          if [[ "$BUILD_KERNEL_MODE" == "custom-four-part" ]]; then
             IFS=',' read -r DBAI_KERNEL_BOOT_URL DBAI_KERNEL_DTB_URL DBAI_KERNEL_MODULES_URL DBAI_KERNEL_HEADERS_URL <<< "$KERNEL_ARCHIVES"
             for value in "$DBAI_KERNEL_BOOT_URL" "$DBAI_KERNEL_DTB_URL" "$DBAI_KERNEL_MODULES_URL" "$DBAI_KERNEL_HEADERS_URL"; do
               [[ "$value" =~ ^https:// ]] || { echo "::error::Custom kernel mode needs four HTTPS archive URLs"; exit 2; }
@@ -319,13 +328,9 @@ jobs:
             export DBAI_KERNEL_MODE=official
           fi
 
-          export DBAI_APP_PROFILE="$APP_PROFILE"
+          export DBAI_APP_PROFILE="$APP_PROFILE_EFFECTIVE"
           ENABLE_EXTENSIONS="$(IFS=,; echo "${EXTENSIONS[*]}")"
-          BSPFREEZE_ARG=()
-          if [[ "$PROFILE" == "application" && "$PROXMOX_MODE" != "none" ]]; then
-            BSPFREEZE_ARG+=(BSPFREEZE=yes)
-          fi
-          echo "Board=$BOARD Release=$RELEASE Profile=$PROFILE Filesystem=$FILESYSTEM Kernel=$KERNEL_MODE App=$APP_PROFILE"
+          echo "Board=$BOARD Release=$RELEASE Profile=$PROFILE Filesystem=$FILESYSTEM Kernel=$BUILD_KERNEL_MODE App=$APP_PROFILE_EFFECTIVE Proxmox=$PROXMOX_VARIANT"
           echo "Extensions=$ENABLE_EXTENSIONS"
           ./compile.sh build             BOARD="$BOARD"             BRANCH=current             RELEASE="$RELEASE"             BUILD_MINIMAL="$BUILD_MINIMAL"             BUILD_DESKTOP="$BUILD_DESKTOP"             ROOTFS_TYPE="$FILESYSTEM"             FIXED_IMAGE_SIZE="$IMAGE_SIZE"             BOOTSIZE=256             COMPRESS_OUTPUTIMAGE=sha,xz             IMAGE_XZ_COMPRESSION_RATIO=0             KERNEL_CONFIGURE=no             ENABLE_EXTENSIONS="$ENABLE_EXTENSIONS" \
             "${BSPFREEZE_ARG[@]}"
@@ -354,8 +359,8 @@ jobs:
             "release": "$RELEASE",
             "profile": "$PROFILE",
             "filesystem": "$FILESYSTEM",
-            "kernel_mode": "$KERNEL_MODE",
-            "application": "$APP_PROFILE",
+            "kernel_mode": "$BUILD_KERNEL_MODE",
+            "application": "$APP_PROFILE_EFFECTIVE",
             "proxmox_mode": "$PROXMOX_MODE",
             "proxmox_variant": "$PROXMOX_VARIANT",
             "source_repository": "$SOURCE_REPO",
@@ -370,7 +375,7 @@ jobs:
       - name: Upload image artifact
         uses: actions/upload-artifact@v4
         with:
-          name: dbai-${{ matrix.release }}-${{ matrix.profile }}-${{ matrix.filesystem }}
+          name: dbai-${{ matrix.release }}-${{ matrix.profile }}-${{ matrix.proxmox_variant }}-${{ matrix.filesystem }}
           path: stage/*
           if-no-files-found: error
           compression-level: 0

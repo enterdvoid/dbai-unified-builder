@@ -33,14 +33,11 @@ profiles_compact="${profiles//[[:space:]]/}"
 [[ "$proxmox_mode" =~ ^(none|official|community|both)$ ]] || { echo "Unsupported Proxmox mode: $proxmox_mode" >&2; exit 2; }
 releases_compact="${releases//[[:space:]]/}"
 if [[ "$proxmox_mode" != "none" ]]; then
-  [[ "$kernel_mode" == "official" ]] || { echo "Proxmox mode currently requires kernel_mode=official; custom-kernel plus KVM is not yet validated" >&2; exit 2; }
-  [[ ",$profiles_compact," == *",application,"* ]] || { echo "Proxmox mode requires the application profile" >&2; exit 2; }
-  [[ "$app_profile" == "none" ]] || { echo "Use app_profile=none when Proxmox mode is enabled" >&2; exit 2; }
   case "$proxmox_mode" in
-    official) [[ "$releases_compact" == "trixie" ]] || { echo "Proxmox official mode requires releases=trixie" >&2; exit 2; } ;;
-    community) [[ "$releases_compact" == "bookworm" ]] || { echo "Proxmox community mode requires releases=bookworm" >&2; exit 2; } ;;
+    official) [[ ",$releases_compact," == *",trixie,"* ]] || { echo "Proxmox official mode requires trixie in releases" >&2; exit 2; } ;;
+    community) [[ ",$releases_compact," == *",bookworm,"* ]] || { echo "Proxmox community mode requires bookworm in releases" >&2; exit 2; } ;;
     both)
-      [[ "$releases_compact" == "bookworm,trixie" || "$releases_compact" == "trixie,bookworm" ]] || { echo "Proxmox mode both requires releases=bookworm,trixie" >&2; exit 2; }
+      [[ ",$releases_compact," == *",bookworm,"* && ",$releases_compact," == *",trixie,"* ]] || { echo "Proxmox mode both requires bookworm and trixie in releases" >&2; exit 2; }
       ;;
   esac
 fi
