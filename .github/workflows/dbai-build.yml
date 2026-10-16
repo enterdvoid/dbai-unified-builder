@@ -600,7 +600,8 @@ jobs:
             asset_kernel_version="$kernel_version"
             if [[ "$PROFILE" == "application" ]]; then
               # Armbian extensions can append the app name to the kernel field in the output filename.
-              asset_kernel_version="${asset_kernel_version%-${PROFILE_VARIANT}}"
+              app_suffix="-${PROFILE_VARIANT}"
+              asset_kernel_version="${asset_kernel_version%"$app_suffix"}"
             fi
             safe_base="DBAI2K26-Armbian_${armbian_version_filename}-${SHORT_BOARD}-${RELEASE}-k${asset_kernel_version}-${asset_profile}-${FILESYSTEM}${suffix}"
             stage_image="$GITHUB_WORKSPACE/stage/$safe_base"
