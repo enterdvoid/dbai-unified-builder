@@ -72,10 +72,20 @@ function pre_customize_image__dbai_overlay_kernel_bundle() {
 	if ! grep -Eq '^([.]/)?(usr/src/|lib/modules/[^/]+/build)' "${headers_listing}"; then
 		if grep -Eq '^([.]/)?include/' "${headers_listing}" && grep -Eq '^([.]/)?Makefile$' "${headers_listing}"; then
 			headers_layout="header-root"
+		elif grep -Eq '^([.]/)?include/' "${headers_listing}" && ! grep -Eq '^([.]/)?Makefile$' "${headers_listing}" && awk '
+			{
+				path=$0
+				sub(/^\.\//, "", path)
+				if (path=="." || path=="" || path=="include" || path ~ /^include\//) next
+				bad=1
+			}
+			END { exit bad }
+		' "${headers_listing}"; then
+			headers_layout="uapi-root"
 		else
 			echo "First headers archive entries:"
 			sed -n '1,40p' "${headers_listing}"
-			exit_with_error "header-<version> archive must contain usr/src/, lib/modules/<release>/build, or a root-level kernel header tree with include/ and Makefile"
+			exit_with_error "header-<version> archive must contain a kernel build tree or only a root include/ UAPI tree"
 		fi
 	fi
 	local modules_release=""
@@ -131,6 +141,13 @@ function pre_customize_image__dbai_overlay_kernel_bundle() {
 		target-root)
 			tar --no-same-owner --no-same-permissions -xf "${cache_dir}/headers.tar" -C "${SDCARD}"
 			;;
+		uapi-root)
+			# This bundle contains exported userspace ABI headers, not a kernel build tree.
+			# Preserve them separately so they cannot overwrite distro /usr/include files
+			# or be mistaken for valid /lib/modules/<release>/build headers.
+			mkdir -p "${SDCARD}/usr/src/linux-uapi-headers-${modules_release}"
+			tar --no-same-owner --no-same-permissions --transform="s,^[.]/,,;s,^,usr/src/linux-uapi-headers-${modules_release}/," -xf "${cache_dir}/headers.tar" -C "${SDCARD}"
+			;;
 	esac
 	mkdir -p "${SDCARD}/lib/modules/${modules_release}" "${SDCARD}/usr/src"
 	if [[ -d "${SDCARD}/usr/src/linux-headers-${modules_release}" ]]; then
@@ -141,7 +158,11 @@ function pre_customize_image__dbai_overlay_kernel_bundle() {
 	find "${SDCARD}/boot" -maxdepth 4 -type f \( -name 'Image' -o -name 'Image-*' -o -name 'vmlinuz*' -o -name 'uImage' -o -name 'zImage' \) -print -quit | grep -q . || exit_with_error "No recognizable kernel image found under target /boot after overlay"
 	find "${SDCARD}/boot" -type f -name '*.dtb' -print -quit | grep -q . || exit_with_error "No DTB found under target /boot after overlay"
 	find "${SDCARD}/lib/modules" -type f -name '*.ko*' -print -quit | grep -q . || exit_with_error "No kernel module found under target /lib/modules after overlay"
-	find "${SDCARD}/usr/src" -type f -name 'Makefile' -print -quit | grep -q . || exit_with_error "No kernel header Makefile found under target /usr/src after overlay"
+	if [[ "${headers_layout}" == "uapi-root" ]]; then
+		find "${SDCARD}/usr/src/linux-uapi-headers-${modules_release}/include" -type f -print -quit | grep -q . || exit_with_error "UAPI header archive did not install any files"
+	else
+		find "${SDCARD}/usr/src" -type f -name 'Makefile' -print -quit | grep -q . || exit_with_error "No kernel header Makefile found under target /usr/src after overlay"
+	fi
 
 	local manifest="${SDCARD}/root/DBAI-CUSTOM-KERNEL-MANIFEST.txt"
 	mkdir -p "${SDCARD}/root"
@@ -150,6 +171,10 @@ function pre_customize_image__dbai_overlay_kernel_bundle() {
 		echo "Bundle URL: ${DBAI_KERNEL_BUNDLE_URL}"
 		echo "Overlay timestamp UTC: $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
 		echo "Inner archive SHA-256:"
+		echo "Headers archive layout: ${headers_layout}"
+		if [[ "${headers_layout}" == "uapi-root" ]]; then
+			echo "Header capability: exported userspace UAPI headers only; kernel build headers/Makefile are not included."
+		fi
 		sha256sum "${cache_dir}/boot.tar" "${cache_dir}/dtb.tar" "${cache_dir}/modules.tar" "${cache_dir}/headers.tar"
 	} > "${manifest}"
 	display_alert "DBAI custom kernel" "Four-part bundle overlay and basic checks completed; hardware boot testing is still required" "warn"
