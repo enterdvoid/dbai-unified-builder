@@ -29,20 +29,16 @@ for item in "${profile_list[@]}"; do
   [[ "$item" =~ ^(minimal|server|application|desktop)$ ]] || { echo "Unsupported profile token: $item" >&2; exit 2; }
 done
 profiles_compact="${profiles//[[:space:]]/}"
-if [[ ",$profiles_compact," == *",application,"* && "$app_profile" == "none" ]]; then
-  echo "The application profile requires an app_profile selection." >&2
-  exit 2
-fi
 [[ "$app_profile" =~ ^(none|homeassistant|openmediavault|casaos|hermes-9router|lightnvr-go2rtc|hermes-9router-lightnvr)$ ]] || { echo "Unsupported app profile: $app_profile" >&2; exit 2; }
 [[ "$proxmox_mode" =~ ^(none|official|community|both)$ ]] || { echo "Unsupported Proxmox mode: $proxmox_mode" >&2; exit 2; }
+releases_compact="${releases//[[:space:]]/}"
 if [[ "$proxmox_mode" != "none" ]]; then
   [[ ",$profiles_compact," == *",application,"* ]] || { echo "Proxmox mode requires the application profile" >&2; exit 2; }
   [[ "$app_profile" == "none" ]] || { echo "Use app_profile=none when Proxmox mode is enabled" >&2; exit 2; }
   case "$proxmox_mode" in
-    official) [[ "$releases" == "trixie" ]] || { echo "Proxmox official mode requires releases=trixie" >&2; exit 2; } ;;
-    community) [[ "$releases" == "bookworm" ]] || { echo "Proxmox community mode requires releases=bookworm" >&2; exit 2; } ;;
+    official) [[ "$releases_compact" == "trixie" ]] || { echo "Proxmox official mode requires releases=trixie" >&2; exit 2; } ;;
+    community) [[ "$releases_compact" == "bookworm" ]] || { echo "Proxmox community mode requires releases=bookworm" >&2; exit 2; } ;;
     both)
-      releases_compact="${releases//[[:space:]]/}"
       [[ "$releases_compact" == "bookworm,trixie" || "$releases_compact" == "trixie,bookworm" ]] || { echo "Proxmox mode both requires releases=bookworm,trixie" >&2; exit 2; }
       ;;
   esac
