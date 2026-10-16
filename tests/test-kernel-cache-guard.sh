@@ -37,6 +37,9 @@ function another_artifact() {
 }
 FIXTURE
 python3 "$repo_root/scripts/guard-kernel-cache-only.py" "$tmp/non-official.sh" "Recompile Kernel Official"
-! grep -q 'DBAI_KERNEL_OFFICIAL_CACHE_ONLY_GUARD' "$tmp/non-official.sh"
+if grep -q 'DBAI_KERNEL_OFFICIAL_CACHE_ONLY_GUARD' "$tmp/non-official.sh"; then
+  echo "Non-official kernel mode was unexpectedly patched" >&2
+  exit 1
+fi
 
 echo "Kernel cache guard tests passed."
