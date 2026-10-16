@@ -149,7 +149,7 @@ jobs:
           echo "Resolved releases: $RELEASES_INPUT"
           bash scripts/validate-inputs.sh "$BOARD" "" "$RELEASES_INPUT" "$PROFILES_INPUT" "$FILESYSTEM_INPUT" "$KERNEL_MODE" "$APP_PROFILE"
           if [[ "$KERNEL_MODE" == "Custom Kernel" || "$KERNEL_MODE" == "Recompile Custom Kernel" ]]; then
-            bootfs_archive="$GITHUB_WORKSPACE/bootfs-custom-kernel/bootfs_custom_kernel.tar.gz"
+            bootfs_archive="$GITHUB_WORKSPACE/platform/bootfs_custom_kernel.tar.gz"
             [[ -f "$bootfs_archive" ]] || { echo "::error::Missing $bootfs_archive. Add your custom bootfs archive before using a custom kernel mode."; exit 2; }
             tar -tzf "$bootfs_archive" >/dev/null || { echo "::error::bootfs_custom_kernel.tar.gz is not a valid gzip-compressed tar archive."; exit 2; }
             if ! tar -tzf "$bootfs_archive" | awk ' /^\// { bad=1 } /(^|\/)\.\.(\/|$)/ { bad=1 } END { exit bad }'; then
@@ -400,8 +400,8 @@ jobs:
           cp extensions/dbai-custom-kernel.sh armbian-source/userpatches/extensions/
           cp extensions/dbai-custom-bootfs.sh armbian-source/userpatches/extensions/
           if [[ "$KERNEL_MODE" == "Custom Kernel" || "$KERNEL_MODE" == "Recompile Custom Kernel" ]]; then
-            mkdir -p armbian-source/userpatches/bootfs-custom-kernel
-            cp "$GITHUB_WORKSPACE/bootfs-custom-kernel/bootfs_custom_kernel.tar.gz" armbian-source/userpatches/bootfs-custom-kernel/
+            mkdir -p armbian-source/userpatches/platform
+            cp "$GITHUB_WORKSPACE/platform/bootfs_custom_kernel.tar.gz" armbian-source/userpatches/platform/
           fi
           mkdir -p "armbian-source/userpatches/kernel/archive/$KERNEL_PATCH_SERIES"
           shopt -s nullglob
