@@ -32,5 +32,5 @@ if [[ ",$profiles_compact," == *",application,"* && "$app_profile" == "none" ]];
   echo "The application profile requires an app_profile selection." >&2
   exit 2
 fi
-[[ "$app_profile" =~ ^(none|homeassistant|openmediavault|casaos)$ ]] || { echo "Unsupported app profile: $app_profile" >&2; exit 2; }
+[[ "$app_profile" =~ ^(none|homeassistant|openmediavault|casaos|hermes-9router|lightnvr-go2rtc|hermes-9router-lightnvr)$ ]] || { echo "Unsupported app profile: $app_profile" >&2; exit 2; }
 echo "Validated: board=$board releases=$releases profiles=$profiles filesystem=$filesystem kernel=$kernel_mode app=$app_profile"

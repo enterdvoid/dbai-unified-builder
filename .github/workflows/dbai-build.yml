@@ -60,6 +60,9 @@ on:
           - homeassistant
           - openmediavault
           - casaos
+          - hermes-9router
+          - lightnvr-go2rtc
+          - hermes-9router-lightnvr
       kernel_mode:
         description: "Official kernel is the safe default; custom-four-part overlays four archives"
         type: choice
@@ -220,6 +223,7 @@ jobs:
           set -euo pipefail
           mkdir -p armbian-source/userpatches/extensions
           cp extensions/dbai-casaos.sh armbian-source/userpatches/extensions/
+          cp extensions/dbai-apps.sh armbian-source/userpatches/extensions/
           cp extensions/dbai-custom-kernel.sh armbian-source/userpatches/extensions/
 
       - name: Build firmware image
@@ -257,6 +261,9 @@ jobs:
               casaos)
                 EXTENSIONS+=(dbai-casaos)
                 ;;
+              hermes-9router|lightnvr-go2rtc|hermes-9router-lightnvr)
+                EXTENSIONS+=(dbai-apps)
+                ;;
               none)
                 echo "::error::The application profile requires app_profile other than none."
                 exit 2
@@ -280,6 +287,7 @@ jobs:
             export DBAI_KERNEL_MODE=official
           fi
 
+          export DBAI_APP_PROFILE="$APP_PROFILE"
           ENABLE_EXTENSIONS="$(IFS=,; echo "${EXTENSIONS[*]}")"
           echo "Board=$BOARD Release=$RELEASE Profile=$PROFILE Filesystem=$FILESYSTEM Kernel=$KERNEL_MODE App=$APP_PROFILE"
           echo "Extensions=$ENABLE_EXTENSIONS"
