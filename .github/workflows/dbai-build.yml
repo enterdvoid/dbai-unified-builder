@@ -36,11 +36,21 @@ on:
         type: string
         required: true
         default: main
-      releases:
-        description: "Comma-separated Debian releases: bullseye,bookworm,trixie,forky"
-        type: string
+      release_group:
+        description: "Armbian Version Release selection"
+        type: choice
         required: true
-        default: "bookworm,trixie"
+        default: Custom
+        options:
+          - All
+          - Ubuntu Only
+          - Debian Only
+          - Custom
+      custom_releases:
+        description: "Used only with Custom; comma-separated release codenames (e.g. trixie,resolute)"
+        type: string
+        required: false
+        default: "trixie,resolute"
       profiles:
         description: "Comma-separated profiles: minimal,server,application,desktop"
         type: string
@@ -68,6 +78,9 @@ on:
           - hermes-9router
           - lightnvr-go2rtc
           - hermes-9router-lightnvr
+          - proxmox-official
+          - proxmox-community
+          - proxmox-both
       kernel_mode:
         description: "Kernel source/build strategy"
         type: choice
@@ -83,16 +96,6 @@ on:
         type: string
         required: false
         default: ""
-      proxmox_mode:
-        description: "Add separate Proxmox profile jobs: official=Trixie, community=Bookworm, both=both releases"
-        type: choice
-        required: true
-        default: none
-        options:
-          - none
-          - official
-          - community
-          - both
 
 permissions:
   contents: read
@@ -109,6 +112,7 @@ jobs:
     outputs:
       matrix: ${{ steps.matrix.outputs.matrix }}
       board: ${{ steps.matrix.outputs.board }}
+      releases: ${{ steps.matrix.outputs.releases }}
     steps:
       - uses: actions/checkout@v4
       - name: Validate inputs and create matrix
@@ -117,14 +121,14 @@ jobs:
         env:
           BOARD_INPUT: ${{ inputs.board || 'aml-s9xx-box' }}
           CUSTOM_BOARD: ${{ inputs.custom_board_name || '' }}
-          RELEASES_INPUT: ${{ inputs.releases || 'trixie' }}
+          RELEASE_GROUP: ${{ inputs.release_group || 'Custom' }}
+          CUSTOM_RELEASES: ${{ inputs.custom_releases || 'trixie,resolute' }}
           PROFILES_INPUT: ${{ inputs.profiles || 'minimal,server,application,desktop' }}
           FILESYSTEM_INPUT: ${{ inputs.filesystem || 'ext4' }}
           KERNEL_MODE: ${{ inputs.kernel_mode || 'Kernel Official' }}
           APP_PROFILE: ${{ inputs.app_profile || 'none' }}
           KERNEL_CUSTOM_INPUT: ${{ inputs.kernel_custom_input || '' }}
           KERNEL_PATCH_SERIES: meson64-current
-          PROXMOX_MODE: ${{ inputs.proxmox_mode || 'official' }}
           RELEASE_TOKEN_PRESENT: ${{ secrets.DBAI_RELEASE_TOKEN != '' }}
         run: |
           set -euo pipefail
@@ -133,11 +137,26 @@ jobs:
             exit 2
           fi
           BOARD="$BOARD_INPUT"
-          if [[ "$BOARD" == "custom" ]]; then
-            BOARD="$CUSTOM_BOARD"
+          if [[ "$BOARD" == "custom" ]]; then BOARD="$CUSTOM_BOARD"; fi
+          case "$RELEASE_GROUP" in
+            "All") RELEASES_INPUT="bullseye,bookworm,trixie,forky,jammy,noble,resolute" ;;
+            "Ubuntu Only") RELEASES_INPUT="jammy,noble,resolute" ;;
+            "Debian Only") RELEASES_INPUT="bullseye,bookworm,trixie,forky" ;;
+            "Custom") RELEASES_INPUT="$CUSTOM_RELEASES" ;;
+            *) echo "::error::Unknown Armbian Version Release selection: $RELEASE_GROUP"; exit 2 ;;
+          esac
+          [[ -n "${RELEASES_INPUT//[[:space:]]/}" ]] || { echo "::error::Custom releases cannot be empty."; exit 2; }
+          echo "Resolved releases: $RELEASES_INPUT"
+          bash scripts/validate-inputs.sh "$BOARD" "" "$RELEASES_INPUT" "$PROFILES_INPUT" "$FILESYSTEM_INPUT" "$KERNEL_MODE" "$APP_PROFILE"
+          if [[ "$KERNEL_MODE" == "Custom Kernel" || "$KERNEL_MODE" == "Recompile Custom Kernel" ]]; then
+            bootfs_archive="$GITHUB_WORKSPACE/bootfs-custom-kernel/bootfs_custom_kernel.tar.gz"
+            [[ -f "$bootfs_archive" ]] || { echo "::error::Missing $bootfs_archive. Add your custom bootfs archive before using a custom kernel mode."; exit 2; }
+            tar -tzf "$bootfs_archive" >/dev/null || { echo "::error::bootfs_custom_kernel.tar.gz is not a valid gzip-compressed tar archive."; exit 2; }
+            if ! tar -tzf "$bootfs_archive" | awk ' /^\// { bad=1 } /(^|\/)\.\.(\/|$)/ { bad=1 } END { exit bad }'; then
+              echo "::error::Unsafe absolute or parent-traversal path in custom bootfs archive."; exit 2
+            fi
+            [[ -n "$(tar -tzf "$bootfs_archive" | sed '/^[.][/]*$/d' | head -n 1)" ]] || { echo "::error::Custom bootfs archive is empty."; exit 2; }
           fi
-          bash scripts/validate-inputs.sh "$BOARD" "" "$RELEASES_INPUT" "$PROFILES_INPUT" "$FILESYSTEM_INPUT" "$KERNEL_MODE" "$APP_PROFILE" "$PROXMOX_MODE"
-
           if [[ "$KERNEL_MODE" == "Custom Kernel" ]]; then
             [[ "$KERNEL_CUSTOM_INPUT" =~ ^https:// ]] || { echo "::error::Custom Kernel requires one HTTPS URL to a .tar.gz/.tar.xz bundle."; exit 2; }
             temp_dir="$(mktemp -d)"
@@ -178,43 +197,45 @@ jobs:
             both) filesystems=(ext4 btrfs) ;;
             ext4|btrfs) filesystems=("$FILESYSTEM_INPUT") ;;
           esac
-
           matrix='{"include":[]}'
-          has_bookworm=false
-          has_trixie=false
           for release in "${releases[@]}"; do
             release="$(xargs <<< "$release")"
-            if [[ "$release" == "bookworm" ]]; then has_bookworm=true; fi
-            if [[ "$release" == "trixie" ]]; then has_trixie=true; fi
             for profile in "${profiles[@]}"; do
               profile="$(xargs <<< "$profile")"
+              app_variant="none"
+              if [[ "$profile" == "application" ]]; then
+                case "$APP_PROFILE" in
+                  proxmox-official) [[ "$release" == "trixie" ]] && app_variant="proxmox-official" ;;
+                  proxmox-community) [[ "$release" == "bookworm" ]] && app_variant="proxmox-community" ;;
+                  proxmox-both)
+                    [[ "$release" == "bookworm" ]] && app_variant="proxmox-community"
+                    [[ "$release" == "trixie" ]] && app_variant="proxmox-official"
+                    ;;
+                  homeassistant) [[ "$release" =~ ^(bullseye|bookworm|trixie)$ ]] && app_variant="homeassistant" ;;
+                  openmediavault|casaos|hermes-9router|lightnvr-go2rtc|hermes-9router-lightnvr)
+                    [[ "$release" =~ ^(bookworm|trixie)$ ]] && app_variant="$APP_PROFILE"
+                    ;;
+                  none) app_variant="none" ;;
+                  *) echo "::error::Unsupported application profile $APP_PROFILE"; exit 2 ;;
+                esac
+                if [[ "$app_variant" == "none" && "$APP_PROFILE" != "none" ]]; then
+                  echo "Application profile '$APP_PROFILE' is not compatible with '$release'; building a generic application image for this release."
+                fi
+              fi
               for fs in "${filesystems[@]}"; do
-                matrix="$(jq -c --arg release "$release" --arg profile "$profile" --arg filesystem "$fs" '.include += [{release:$release,profile:$profile,filesystem:$filesystem,proxmox_variant:"none"}]' <<< "$matrix")"
+                matrix="$(jq -c --arg release "$release" --arg profile "$profile" --arg filesystem "$fs" --arg app_variant "$app_variant" '.include += [{release:$release,profile:$profile,filesystem:$filesystem,app_variant:$app_variant}]' <<< "$matrix")"
               done
             done
           done
-
-          # Proxmox images are separate profile jobs, not application variants.
-          if [[ "$PROXMOX_MODE" == "official" || "$PROXMOX_MODE" == "both" ]]; then
-            [[ "$has_trixie" == "true" ]] || { echo "::error::Official Proxmox mode needs trixie in releases"; exit 2; }
-            for fs in "${filesystems[@]}"; do
-              matrix="$(jq -c --arg filesystem "$fs" '.include += [{release:"trixie",profile:"proxmox",filesystem:$filesystem,proxmox_variant:"official"}]' <<< "$matrix")"
-            done
-          fi
-          if [[ "$PROXMOX_MODE" == "community" || "$PROXMOX_MODE" == "both" ]]; then
-            [[ "$has_bookworm" == "true" ]] || { echo "::error::Community Proxmox mode needs bookworm in releases"; exit 2; }
-            for fs in "${filesystems[@]}"; do
-              matrix="$(jq -c --arg filesystem "$fs" '.include += [{release:"bookworm",profile:"proxmox",filesystem:$filesystem,proxmox_variant:"community"}]' <<< "$matrix")"
-            done
-          fi
           echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
           echo "board=$BOARD" >> "$GITHUB_OUTPUT"
+          echo "releases=$RELEASES_INPUT" >> "$GITHUB_OUTPUT"
           echo "Resolved board: $BOARD"
           echo "Planned combinations: $(jq '.include | length' <<< "$matrix")"
           jq . <<< "$matrix"
 
   build:
-    name: ${{ matrix.release }} / ${{ matrix.profile }} / ${{ matrix.proxmox_variant }} / ${{ matrix.filesystem }}
+    name: ${{ matrix.release }} / ${{ matrix.profile }} / ${{ matrix.app_variant }} / ${{ matrix.filesystem }}
     needs: plan
     runs-on: ubuntu-24.04
     timeout-minutes: 360
@@ -230,8 +251,7 @@ jobs:
       SOURCE_REF: ${{ inputs.source_ref || 'main' }}
       KERNEL_MODE: ${{ inputs.kernel_mode || 'Kernel Official' }}
       APP_PROFILE: ${{ inputs.app_profile || 'none' }}
-      PROXMOX_MODE: ${{ inputs.proxmox_mode || 'official' }}
-      PROXMOX_VARIANT: ${{ matrix.proxmox_variant }}
+      APP_VARIANT: ${{ matrix.app_variant }}
       KERNEL_CUSTOM_INPUT: ${{ inputs.kernel_custom_input || '' }}
       KERNEL_PATCH_SERIES: meson64-current
     steps:
@@ -376,6 +396,9 @@ jobs:
           cp extensions/dbai-casaos.sh armbian-source/userpatches/extensions/
           cp extensions/dbai-apps.sh armbian-source/userpatches/extensions/
           cp extensions/dbai-custom-kernel.sh armbian-source/userpatches/extensions/
+          cp extensions/dbai-custom-bootfs.sh armbian-source/userpatches/extensions/
+          mkdir -p armbian-source/userpatches/bootfs-custom-kernel
+          cp "$GITHUB_WORKSPACE/bootfs-custom-kernel/bootfs_custom_kernel.tar.gz" armbian-source/userpatches/bootfs-custom-kernel/
           mkdir -p "armbian-source/userpatches/kernel/archive/$KERNEL_PATCH_SERIES"
           shopt -s nullglob
           patch_files=("$GITHUB_WORKSPACE/kernel-patches/$KERNEL_PATCH_SERIES"/*.patch)
@@ -406,67 +429,46 @@ jobs:
             minimal) BUILD_MINIMAL=yes; IMAGE_SIZE=4096 ;;
             server) BUILD_MINIMAL=no; IMAGE_SIZE=4096 ;;
             application) BUILD_MINIMAL=no; IMAGE_SIZE=8192 ;;
-            proxmox) BUILD_MINIMAL=no; IMAGE_SIZE=8192 ;;
             desktop) BUILD_MINIMAL=no; BUILD_DESKTOP=yes; IMAGE_SIZE=8192 ;;
             *) echo "::error::Unknown profile $PROFILE"; exit 2 ;;
           esac
 
           EXTENSIONS=()
-          PROXMOX_VARIANT="${PROXMOX_VARIANT:-none}"
           BUILD_KERNEL_MODE="$KERNEL_MODE"
-          APP_PROFILE_EFFECTIVE="$APP_PROFILE"
+          APP_PROFILE_EFFECTIVE="none"
           ARTIFACT_IGNORE_CACHE=no
-          if [[ "$BUILD_KERNEL_MODE" == "Recompile Kernel Official" || "$BUILD_KERNEL_MODE" == "Recompile Custom Kernel" ]]; then
-            # Bypass Armbian local/remote artifact caches and rebuild artifacts from source.
-            ARTIFACT_IGNORE_CACHE=yes
-          fi
-
-          if [[ "$PROFILE" == "proxmox" ]]; then
-            APP_PROFILE_EFFECTIVE=none
-            BUILD_KERNEL_MODE="Kernel Official"
-            ARTIFACT_IGNORE_CACHE=no
-            case "$PROXMOX_VARIANT" in
-              official) EXTENSIONS+=(proxmox-official) ;;
-              community) EXTENSIONS+=(proxmox-community) ;;
-              *) echo "::error::Missing or invalid Proxmox variant: $PROXMOX_VARIANT"; exit 2 ;;
+          if [[ "$BUILD_KERNEL_MODE" == "Recompile Kernel Official" || "$BUILD_KERNEL_MODE" == "Recompile Custom Kernel" ]]; then ARTIFACT_IGNORE_CACHE=yes; fi
+          BSPFREEZE_ARG=()
+          if [[ "$PROFILE" == "application" ]]; then
+            APP_PROFILE_EFFECTIVE="$APP_VARIANT"
+            case "$APP_VARIANT" in
+              proxmox-official)
+                [[ "$RELEASE" == "trixie" ]] || { echo "::error::Proxmox Official application variant only supports Trixie."; exit 2; }
+                EXTENSIONS+=(proxmox-official); BSPFREEZE_ARG=(BSPFREEZE=yes) ;;
+              proxmox-community)
+                [[ "$RELEASE" == "bookworm" ]] || { echo "::error::Proxmox Community application variant only supports Bookworm."; exit 2; }
+                EXTENSIONS+=(proxmox-community); BSPFREEZE_ARG=(BSPFREEZE=yes) ;;
+              homeassistant) EXTENSIONS+=(applications-ha) ;;
+              openmediavault) EXTENSIONS+=(applications-omv) ;;
+              casaos) EXTENSIONS+=(dbai-casaos) ;;
+              hermes-9router|lightnvr-go2rtc|hermes-9router-lightnvr) EXTENSIONS+=(dbai-apps) ;;
+              none) : ;;
+              *) echo "::error::Unsupported application variant $APP_VARIANT"; exit 2 ;;
             esac
-            BSPFREEZE_ARG=(BSPFREEZE=yes)
-          else
-            BSPFREEZE_ARG=()
-            if [[ "$PROFILE" == "application" ]]; then
-              case "$APP_PROFILE" in
-                homeassistant)
-                  [[ "$RELEASE" =~ ^(bullseye|bookworm|trixie)$ ]] || { echo "::error::Home Assistant extension does not support $RELEASE"; exit 2; }
-                  EXTENSIONS+=(applications-ha)
-                  ;;
-                openmediavault)
-                  [[ "$RELEASE" =~ ^(bookworm|trixie)$ ]] || { echo "::error::OpenMediaVault extension only supports bookworm/trixie"; exit 2; }
-                  EXTENSIONS+=(applications-omv)
-                  ;;
-                casaos) EXTENSIONS+=(dbai-casaos) ;;
-                hermes-9router|lightnvr-go2rtc|hermes-9router-lightnvr) EXTENSIONS+=(dbai-apps) ;;
-                none) : ;; # Generic application image; no additional application extension.
-                *) echo "::error::Unsupported app profile $APP_PROFILE"; exit 2 ;;
-              esac
-            fi
           fi
-
           KERNELSOURCE_ARG=()
           KERNELBRANCH_ARG=()
           if [[ "$BUILD_KERNEL_MODE" == "Custom Kernel" ]]; then
             export DBAI_KERNEL_BUNDLE_URL="$KERNEL_CUSTOM_INPUT"
-            EXTENSIONS+=(dbai-custom-kernel)
+            EXTENSIONS+=(dbai-custom-kernel dbai-custom-bootfs)
             export DBAI_KERNEL_MODE="Custom Kernel"
           elif [[ "$BUILD_KERNEL_MODE" == "Recompile Custom Kernel" ]]; then
             CUSTOM_KERNEL_REPO_URL="${KERNEL_CUSTOM_INPUT%%#*}"
             CUSTOM_KERNEL_REPO_REF="main"
             if [[ "$KERNEL_CUSTOM_INPUT" == *#* ]]; then CUSTOM_KERNEL_REPO_REF="${KERNEL_CUSTOM_INPUT#*#}"; fi
             KERNELSOURCE_ARG=("KERNELSOURCE=$CUSTOM_KERNEL_REPO_URL")
-            if [[ "$CUSTOM_KERNEL_REPO_REF" == branch:* || "$CUSTOM_KERNEL_REPO_REF" == tag:* ]]; then
-              KERNELBRANCH_ARG=("KERNELBRANCH=$CUSTOM_KERNEL_REPO_REF")
-            else
-              KERNELBRANCH_ARG=("KERNELBRANCH=branch:$CUSTOM_KERNEL_REPO_REF")
-            fi
+            if [[ "$CUSTOM_KERNEL_REPO_REF" == branch:* || "$CUSTOM_KERNEL_REPO_REF" == tag:* ]]; then KERNELBRANCH_ARG=("KERNELBRANCH=$CUSTOM_KERNEL_REPO_REF"); else KERNELBRANCH_ARG=("KERNELBRANCH=branch:$CUSTOM_KERNEL_REPO_REF"); fi
+            EXTENSIONS+=(dbai-custom-bootfs)
             export DBAI_KERNEL_MODE="Recompile Custom Kernel"
           else
             export DBAI_KERNEL_MODE="$BUILD_KERNEL_MODE"
@@ -474,7 +476,7 @@ jobs:
 
           export DBAI_APP_PROFILE="$APP_PROFILE_EFFECTIVE"
           ENABLE_EXTENSIONS="$(IFS=,; echo "${EXTENSIONS[*]}")"
-          echo "Board=$BOARD Release=$RELEASE Profile=$PROFILE Filesystem=$FILESYSTEM Kernel=$BUILD_KERNEL_MODE App=$APP_PROFILE_EFFECTIVE Proxmox=$PROXMOX_VARIANT"
+          echo "Board=$BOARD Release=$RELEASE Profile=$PROFILE Filesystem=$FILESYSTEM Kernel=$BUILD_KERNEL_MODE App=$APP_PROFILE_EFFECTIVE"
           echo "Extensions=$ENABLE_EXTENSIONS"
           ./compile.sh build             BOARD="$BOARD"             BRANCH=current             RELEASE="$RELEASE"             BUILD_MINIMAL="$BUILD_MINIMAL"             BUILD_DESKTOP="$BUILD_DESKTOP"             ROOTFS_TYPE="$FILESYSTEM"             FIXED_IMAGE_SIZE="$IMAGE_SIZE"             BOOTSIZE=256             COMPRESS_OUTPUTIMAGE=sha,xz             IMAGE_XZ_COMPRESSION_RATIO=0             KERNEL_CONFIGURE=no             ARTIFACT_IGNORE_CACHE="$ARTIFACT_IGNORE_CACHE"             ENABLE_EXTENSIONS="$ENABLE_EXTENSIONS" \
             "${KERNELSOURCE_ARG[@]}" "${KERNELBRANCH_ARG[@]}" "${BSPFREEZE_ARG[@]}"
@@ -485,7 +487,6 @@ jobs:
           (("${#images[@]}" > 0)) || { echo "::error::No image file found under output/images"; exit 1; }
           case "$PROFILE" in
             application) PROFILE_VARIANT="$APP_PROFILE_EFFECTIVE" ;;
-            proxmox) PROFILE_VARIANT="proxmox-$PROXMOX_VARIANT" ;;
             *) PROFILE_VARIANT="$PROFILE" ;;
           esac
           for image in "${images[@]}"; do
@@ -518,8 +519,6 @@ jobs:
             "kernel_source_ref": "${CUSTOM_KERNEL_REPO_REF:-}",
             "kernel_patch_series": "$KERNEL_PATCH_SERIES",
             "application": "$APP_PROFILE_EFFECTIVE",
-            "proxmox_mode": "$PROXMOX_MODE",
-            "proxmox_variant": "$PROXMOX_VARIANT",
             "source_repository": "$SOURCE_REPO",
             "source_commit": "$SOURCE_SHA",
             "source_ref": "$SOURCE_REF",
@@ -532,7 +531,7 @@ jobs:
       - name: Upload image artifact
         uses: actions/upload-artifact@v4
         with:
-          name: dbai-${{ matrix.release }}-${{ matrix.profile }}-${{ matrix.proxmox_variant }}-${{ matrix.filesystem }}
+          name: dbai-${{ matrix.release }}-${{ matrix.profile }}-${{ matrix.app_variant }}-${{ matrix.filesystem }}
           path: stage/*
           if-no-files-found: error
           compression-level: 0
@@ -549,11 +548,10 @@ jobs:
     env:
       GH_TOKEN: ${{ secrets.DBAI_RELEASE_TOKEN }}
       BOARD: ${{ needs.plan.outputs.board }}
-      RELEASES_INPUT: ${{ inputs.releases || 'trixie' }}
+      RELEASES_INPUT: ${{ needs.plan.outputs.releases }}
       PROFILES_INPUT: ${{ inputs.profiles || 'minimal,server,application,desktop' }}
       FILESYSTEM_INPUT: ${{ inputs.filesystem || 'ext4' }}
       APP_PROFILE: ${{ inputs.app_profile || 'none' }}
-      PROXMOX_MODE: ${{ inputs.proxmox_mode || 'official' }}
       DELETE_OLD: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[dbai-smoke]') && 'false' || 'true' }}
     steps:
       - name: Report release assembly runner resources
@@ -601,7 +599,7 @@ jobs:
           (cd dist && sha256sum -c SHA256SUMS)
 
           TAG="dbai-build-$(date -u +'%Y%m%d-%H%M%S')-$GITHUB_RUN_ID"
-          TITLE="DBAI Armbian ${BOARD} ${RELEASES_INPUT} [${PROFILES_INPUT}] [${FILESYSTEM_INPUT}] app-${APP_PROFILE} pve-${PROXMOX_MODE} $(date -u +'%Y-%m-%d_%H-%M')"
+          TITLE="DBAI Armbian ${BOARD} ${RELEASES_INPUT} [${PROFILES_INPUT}] [${FILESYSTEM_INPUT}] app-${APP_PROFILE} $(date -u +'%Y-%m-%d_%H-%M')"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "title=$TITLE" >> "$GITHUB_OUTPUT"
 
@@ -623,7 +621,7 @@ jobs:
           }
           trap cleanup_partial_release EXIT
 
-          gh release create "$TAG" dist/*             --repo "$GITHUB_REPOSITORY"             --title "$TITLE"             --prerelease             --notes "DBAI firmware batch. Board: $BOARD. Application profile: $APP_PROFILE. Proxmox mode: $PROXMOX_MODE. Workflow run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID. Every image includes a build manifest and SHA-256 checksum. Test on target hardware before production use."
+          gh release create "$TAG" dist/*             --repo "$GITHUB_REPOSITORY"             --title "$TITLE"             --prerelease             --notes "DBAI firmware batch. Board: $BOARD. Application profile: $APP_PROFILE. Resolved releases: $RELEASES_INPUT. Workflow run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID. Every image includes a build manifest and SHA-256 checksum. Test on target hardware before production use."
 
           CHECK_DIR="$RUNNER_TEMP/dbai-release-check"
           mkdir -p "$CHECK_DIR"
