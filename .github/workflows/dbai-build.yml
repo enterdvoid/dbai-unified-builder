@@ -226,25 +226,25 @@ jobs:
             fi
             headers_listing="$temp_dir/headers-list.txt"
             tar -tf "$temp_dir/headers.tar" > "$headers_listing" || { echo "::error::Unable to read headers archive file list."; exit 2; }
-            if ! grep -Eq '^([.]/)?(usr/src/|lib/modules/[^/]+/build)' "$headers_listing"; then
-              if grep -Eq '^([.]/)?include/' "$headers_listing" && grep -Eq '^([.]/)?Makefile$' "$headers_listing"; then
-                echo "Detected complete kernel headers archive rooted at its contents; installer will normalize it to /usr/src/linux-headers-<release>/."
-              elif grep -Eq '^([.]/)?include/' "$headers_listing" && ! grep -Eq '^([.]/)?Makefile$' "$headers_listing" && awk '
-                {
-                  path=$0
-                  sub(/^\.\//, "", path)
-                  if (path=="." || path=="" || path=="include" || path ~ /^include\//) next
-                  bad=1
-                }
-                END { exit bad }
-              ' "$headers_listing"; then
-                echo "::notice::Detected exported UAPI headers only (include/ tree, no kernel Makefile). Installer will preserve them under /usr/src/linux-uapi-headers-<release>/; these are not suitable for compiling external kernel modules."
-              else
-                echo "::error::Headers archive is neither a target-root kernel build tree nor a recognized UAPI-only include tree. First archive entries:"
-                sed -n '1,40p' "$headers_listing"
-                exit 2
-              fi
+            # Share the exact same archive classifier with the installer so their
+            # path/layout assumptions cannot drift apart.
+            source extensions/dbai-custom-kernel.sh
+            if ! headers_layout="$(dbai_detect_kernel_headers_layout "$headers_listing")"; then
+              echo "::error::Headers archive is neither a recognized kernel build tree nor a root include/ UAPI-only tree. First archive entries:"
+              sed -n '1,40p' "$headers_listing"
+              exit 2
             fi
+            case "$headers_layout" in
+              target-root)
+                echo "Detected target-root kernel headers archive."
+                ;;
+              header-root)
+                echo "Detected complete kernel headers archive rooted at its contents; installer will normalize it to /usr/src/linux-headers-<release>/."
+                ;;
+              uapi-root)
+                echo "::notice::Bundle contains exported UAPI headers only (no kernel Makefile/generated build tree). They will be preserved separately; external kernel-module compilation is not supported by this headers archive."
+                ;;
+            esac
             rm -rf "$temp_dir"
           elif [[ "$KERNEL_MODE" == "Recompile Custom Kernel" ]]; then
             CUSTOM_KERNEL_REPO_URL="${KERNEL_CUSTOM_INPUT%%#*}"
