@@ -154,13 +154,8 @@ jobs:
           APP_PROFILE: ${{ inputs.app_profile || 'none' }}
           KERNEL_CUSTOM_INPUT: ${{ inputs.kernel_custom_input || '' }}
           KERNEL_PATCH_SERIES: meson64-current
-          RELEASE_TOKEN_PRESENT: ${{ secrets.DBAI_RELEASE_TOKEN != '' }}
         run: |
           set -euo pipefail
-          if [[ "$RELEASE_TOKEN_PRESENT" != "true" ]]; then
-            echo "::error::Missing repository secret DBAI_RELEASE_TOKEN. Add it before starting a firmware batch to avoid wasting build time."
-            exit 2
-          fi
           BOARD="$BOARD_INPUT"
           if [[ "$BOARD" == "custom" ]]; then BOARD="$CUSTOM_BOARD"; fi
           case "$RELEASE_GROUP" in
@@ -576,7 +571,7 @@ jobs:
     permissions:
       contents: write
     env:
-      GH_TOKEN: ${{ secrets.DBAI_RELEASE_TOKEN }}
+      GH_TOKEN: ${{ github.token }}
       BOARD: ${{ needs.plan.outputs.board }}
       RELEASES_INPUT: ${{ needs.plan.outputs.releases }}
       PROFILES_INPUT: ${{ needs.plan.outputs.profiles }}
@@ -619,7 +614,7 @@ jobs:
         run: |
           set -euo pipefail
           if [[ -z "${GH_TOKEN:-}" ]]; then
-            echo "::error::Add repository secret DBAI_RELEASE_TOKEN before publishing a release."
+            echo "::error::GitHub Actions token is unavailable. Check workflow permissions and repository Actions settings."
             exit 1
           fi
           shopt -s nullglob
