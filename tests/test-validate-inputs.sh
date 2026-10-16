@@ -108,7 +108,7 @@ printf "dtb\n" > "$dtb_test_dir/dtb/amlogic/dtb-layout.dtb"
 printf "dtb\n" > "$dtb_test_dir/amlogic/amlogic-layout.dtb"
 printf "dtb\n" > "$dtb_test_dir/root/root-layout.dtb"
 tar -czf "$dtb_test_dir/dtb-layouts.tar.gz" -C "$dtb_test_dir" boot/dtb/amlogic/boot-layout.dtb dtb/amlogic/dtb-layout.dtb amlogic/amlogic-layout.dtb root/root-layout.dtb
-tar -tf "$dtb_test_dir/dtb-layouts.tar.gz" | grep -Eq "(^|/)[^/]+\.dtb$"
+tar -tf "$dtb_test_dir/dtb-layouts.tar.gz" | grep -Eq "(^|/)[^/]+[.]dtb"
 rm -rf "$dtb_test_dir"
 
 # The branding extension writes the expected vendor in /etc/armbian-release.
