@@ -597,8 +597,10 @@ jobs:
             # Canonical DBAI2K26 name: include the selected application exactly once.
             safe_base="DBAI2K26-Armbian_${armbian_version_filename}-${SHORT_BOARD}-${RELEASE}-k${kernel_version}-${PROFILE_VARIANT}-${FILESYSTEM}${suffix}"
             if [[ "$PROFILE" == "application" ]]; then
-              duplicate_profile="-${PROFILE_VARIANT}-${PROFILE_VARIANT}-"
-              safe_base="${safe_base//"$duplicate_profile"/-${PROFILE_VARIANT}-}"
+              duplicate_profile="-${PROFILE_VARIANT}-${PROFILE_VARIANT}"
+              if [[ "$safe_base" == *"$duplicate_profile-${FILESYSTEM}${suffix}" ]]; then
+                safe_base="${safe_base%"$duplicate_profile-${FILESYSTEM}${suffix}"}-${PROFILE_VARIANT}-${FILESYSTEM}${suffix}
+              fi
             fi
             stage_image="$GITHUB_WORKSPACE/stage/$safe_base"
             cp "$image" "$stage_image"
