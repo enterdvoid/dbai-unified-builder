@@ -131,9 +131,350 @@ jobs:
 
           if [[ "$KERNEL_MODE" == "custom-four-part" ]]; then
             IFS=',' read -r boot_url dtb_url modules_url headers_url <<< "$KERNEL_ARCHIVES_INPUT"
-            for value in "$boot_url" "$dtb_url" "$modules_url" "$headers_url"; do
+            urls=("$boot_url" "$dtb_url" "$modules_url" "$headers_url")
+            names=(boot dtb modules headers)
+            temp_dir="$(mktemp -d)"
+            for index in "${!urls[@]}"; do
+              value="${urls[$index]}"
+              label="${names[$index]}"
               [[ "$value" =~ ^https:// ]] || { echo "::error::Custom kernel mode requires four comma-separated HTTPS archive URLs in boot,DTB,modules,headers order."; exit 2; }
+              archive="$temp_dir/$label.tar"
+              curl --fail --location --silent --show-error --retry 3 "$value" --output "$archive"
+              tar -tf "$archive" >/dev/null || { echo "::error::Custom kernel $label input is not a valid tar archive"; exit 2; }
+              if ! tar -tf "$archive" | awk ' /^\// { bad=1 } /(^|\/)\.\.(\/|$)/ { bad=1 } END { exit bad }'; then
+                echo "::error::Unsafe path in custom kernel $label archive"; exit 2
+              fi
             done
+            tar -tf "$temp_dir/boot.tar" | grep -Eq '^boot/' || { echo "::error::Boot archive needs paths under boot/"; exit 2; }
+            tar -tf "$temp_dir/dtb.tar" | grep -Eq '^boot/.*\.dtb
+
+          IFS=',' read -r -a releases <<< "$RELEASES_INPUT"
+          IFS=',' read -r -a profiles <<< "$PROFILES_INPUT"
+          filesystems=()
+          case "$FILESYSTEM_INPUT" in
+            both) filesystems=(ext4 btrfs) ;;
+            ext4|btrfs) filesystems=("$FILESYSTEM_INPUT") ;;
+          esac
+
+          matrix='[]'
+          has_bookworm=false
+          has_trixie=false
+          for release in "${releases[@]}"; do
+            release="$(xargs <<< "$release")"
+            [[ "$release" == "bookworm" ]] && has_bookworm=true
+            [[ "$release" == "trixie" ]] && has_trixie=true
+            for profile in "${profiles[@]}"; do
+              profile="$(xargs <<< "$profile")"
+              for fs in "${filesystems[@]}"; do
+                matrix="$(jq -c --arg release "$release" --arg profile "$profile" --arg filesystem "$fs" '. + [{release:$release,profile:$profile,filesystem:$filesystem,proxmox_variant:"none"}]' <<< "$matrix")"
+              done
+            done
+          done
+
+          # Proxmox images are separate profile jobs, not application variants.
+          if [[ "$PROXMOX_MODE" == "official" || "$PROXMOX_MODE" == "both" ]]; then
+            [[ "$has_trixie" == "true" ]] || { echo "::error::Official Proxmox mode needs trixie in releases"; exit 2; }
+            for fs in "${filesystems[@]}"; do
+              matrix="$(jq -c --arg filesystem "$fs" '. + [{release:"trixie",profile:"proxmox",filesystem:$filesystem,proxmox_variant:"official"}]' <<< "$matrix")"
+            done
+          fi
+          if [[ "$PROXMOX_MODE" == "community" || "$PROXMOX_MODE" == "both" ]]; then
+            [[ "$has_bookworm" == "true" ]] || { echo "::error::Community Proxmox mode needs bookworm in releases"; exit 2; }
+            for fs in "${filesystems[@]}"; do
+              matrix="$(jq -c --arg filesystem "$fs" '. + [{release:"bookworm",profile:"proxmox",filesystem:$filesystem,proxmox_variant:"community"}]' <<< "$matrix")"
+            done
+          fi
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+          echo "board=$BOARD" >> "$GITHUB_OUTPUT"
+          echo "Resolved board: $BOARD"
+          echo "Planned combinations: $(jq 'length' <<< "$matrix")"
+          jq . <<< "$matrix"
+
+  build:
+    name: ${{ matrix.release }} / ${{ matrix.profile }} / ${{ matrix.proxmox_variant }} / ${{ matrix.filesystem }}
+    needs: plan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    env:
+      BOARD: ${{ needs.plan.outputs.board }}
+      RELEASE: ${{ matrix.release }}
+      PROFILE: ${{ matrix.profile }}
+      FILESYSTEM: ${{ matrix.filesystem }}
+      SOURCE_REF: ${{ inputs.source_ref }}
+      KERNEL_MODE: ${{ inputs.kernel_mode }}
+      APP_PROFILE: ${{ inputs.app_profile }}
+      PROXMOX_MODE: ${{ inputs.proxmox_mode }}
+      PROXMOX_VARIANT: ${{ matrix.proxmox_variant }}
+      KERNEL_ARCHIVES: ${{ inputs.kernel_archives }}
+    steps:
+      - name: Checkout builder repository
+        uses: actions/checkout@v4
+
+      - name: Resolve source and verify board ID
+        id: source
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$BOARD" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "::error::Invalid board ID"; exit 2; }
+          # SOURCE_REF is supplied by the job-level environment.
+          # shellcheck disable=SC2153
+          [[ "$SOURCE_REF" =~ ^[A-Za-z0-9._/-]+$ ]] || { echo "::error::source_ref contains unsupported characters"; exit 2; }
+
+          if [[ "$BOARD" == "aml-s9xx-box" ]]; then
+            SOURCE_REPO="enterdvoid/build"
+          else
+            SOURCE_REPO="armbian/build"
+          fi
+
+          clone_source() {
+            local repo="$1"
+            rm -rf armbian-source
+            git clone --filter=blob:none --no-checkout "https://github.com/$repo.git" armbian-source
+            git -C armbian-source fetch --depth=1 origin "$SOURCE_REF"
+            git -C armbian-source checkout --detach FETCH_HEAD
+          }
+
+          clone_source "$SOURCE_REPO"
+          if ! find armbian-source/config/boards -maxdepth 1 -type f -name "$BOARD.*" -print -quit | grep -q .; then
+            if [[ "$BOARD" != "aml-s9xx-box" && "$SOURCE_REPO" == "armbian/build" ]]; then
+              echo "Board not found upstream; trying DBAI fork."
+              SOURCE_REPO="enterdvoid/build"
+              clone_source "$SOURCE_REPO"
+            fi
+          fi
+          if ! find armbian-source/config/boards -maxdepth 1 -type f -name "$BOARD.*" -print -quit | grep -q .; then
+            echo "::error::Board '$BOARD' was not found as config/boards/$BOARD.* in source $SOURCE_REPO at ref $SOURCE_REF."
+            echo "Check the exact board ID and source ref. Custom input is not a promise of support by either source."
+            exit 2
+          fi
+
+          SOURCE_SHA="$(git -C armbian-source rev-parse HEAD)"
+          {
+            echo "repo=$SOURCE_REPO"
+            echo "sha=$SOURCE_SHA"
+            echo "source_ref=$SOURCE_REF"
+          } >> "$GITHUB_OUTPUT"
+          echo "Using $SOURCE_REPO@$SOURCE_SHA for $BOARD"
+
+      - name: Add DBAI build extensions
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p armbian-source/userpatches/extensions
+          cp extensions/dbai-casaos.sh armbian-source/userpatches/extensions/
+          cp extensions/dbai-apps.sh armbian-source/userpatches/extensions/
+          cp extensions/dbai-custom-kernel.sh armbian-source/userpatches/extensions/
+          mkdir -p armbian-source/extensions armbian-source/tools
+          cp extensions/proxmox-official.sh armbian-source/extensions/
+          cp extensions/proxmox-community.sh armbian-source/extensions/
+          cp tools/dbai-vm-import armbian-source/tools/
+
+      - name: Build firmware image
+        shell: bash
+        env:
+          SOURCE_REPO: ${{ steps.source.outputs.repo }}
+          SOURCE_SHA: ${{ steps.source.outputs.sha }}
+        run: |
+          set -euo pipefail
+          cd armbian-source
+
+          BUILD_MINIMAL=no
+          BUILD_DESKTOP=no
+          IMAGE_SIZE=4096
+          case "$PROFILE" in
+            minimal) BUILD_MINIMAL=yes; IMAGE_SIZE=4096 ;;
+            server) BUILD_MINIMAL=no; IMAGE_SIZE=4096 ;;
+            application) BUILD_MINIMAL=no; IMAGE_SIZE=8192 ;;
+            proxmox) BUILD_MINIMAL=no; IMAGE_SIZE=8192 ;;
+            desktop) BUILD_MINIMAL=no; BUILD_DESKTOP=yes; IMAGE_SIZE=8192 ;;
+            *) echo "::error::Unknown profile $PROFILE"; exit 2 ;;
+          esac
+
+          EXTENSIONS=()
+          PROXMOX_VARIANT="${PROXMOX_VARIANT:-none}"
+          BUILD_KERNEL_MODE="$KERNEL_MODE"
+          APP_PROFILE_EFFECTIVE="$APP_PROFILE"
+
+          if [[ "$PROFILE" == "proxmox" ]]; then
+            APP_PROFILE_EFFECTIVE=none
+            BUILD_KERNEL_MODE=official
+            case "$PROXMOX_VARIANT" in
+              official) EXTENSIONS+=(proxmox-official) ;;
+              community) EXTENSIONS+=(proxmox-community) ;;
+              *) echo "::error::Missing or invalid Proxmox variant: $PROXMOX_VARIANT"; exit 2 ;;
+            esac
+            BSPFREEZE_ARG=(BSPFREEZE=yes)
+          else
+            BSPFREEZE_ARG=()
+            if [[ "$PROFILE" == "application" ]]; then
+              case "$APP_PROFILE" in
+                homeassistant)
+                  [[ "$RELEASE" =~ ^(bullseye|bookworm|trixie)$ ]] || { echo "::error::Home Assistant extension does not support $RELEASE"; exit 2; }
+                  EXTENSIONS+=(applications-ha)
+                  ;;
+                openmediavault)
+                  [[ "$RELEASE" =~ ^(bookworm|trixie)$ ]] || { echo "::error::OpenMediaVault extension only supports bookworm/trixie"; exit 2; }
+                  EXTENSIONS+=(applications-omv)
+                  ;;
+                casaos) EXTENSIONS+=(dbai-casaos) ;;
+                hermes-9router|lightnvr-go2rtc|hermes-9router-lightnvr) EXTENSIONS+=(dbai-apps) ;;
+                none) echo "::error::The application profile requires app_profile other than none."; exit 2 ;;
+                *) echo "::error::Unsupported app profile $APP_PROFILE"; exit 2 ;;
+              esac
+            fi
+          fi
+
+          if [[ "$BUILD_KERNEL_MODE" == "custom-four-part" ]]; then
+            IFS=',' read -r DBAI_KERNEL_BOOT_URL DBAI_KERNEL_DTB_URL DBAI_KERNEL_MODULES_URL DBAI_KERNEL_HEADERS_URL <<< "$KERNEL_ARCHIVES"
+            for value in "$DBAI_KERNEL_BOOT_URL" "$DBAI_KERNEL_DTB_URL" "$DBAI_KERNEL_MODULES_URL" "$DBAI_KERNEL_HEADERS_URL"; do
+              [[ "$value" =~ ^https:// ]] || { echo "::error::Custom kernel mode needs four HTTPS archive URLs"; exit 2; }
+            done
+            export DBAI_KERNEL_BOOT_URL DBAI_KERNEL_DTB_URL DBAI_KERNEL_MODULES_URL DBAI_KERNEL_HEADERS_URL
+            EXTENSIONS+=(dbai-custom-kernel)
+            export DBAI_KERNEL_MODE=custom-four-part
+          else
+            export DBAI_KERNEL_MODE=official
+          fi
+
+          export DBAI_APP_PROFILE="$APP_PROFILE_EFFECTIVE"
+          ENABLE_EXTENSIONS="$(IFS=,; echo "${EXTENSIONS[*]}")"
+          echo "Board=$BOARD Release=$RELEASE Profile=$PROFILE Filesystem=$FILESYSTEM Kernel=$BUILD_KERNEL_MODE App=$APP_PROFILE_EFFECTIVE Proxmox=$PROXMOX_VARIANT"
+          echo "Extensions=$ENABLE_EXTENSIONS"
+          ./compile.sh build             BOARD="$BOARD"             BRANCH=current             RELEASE="$RELEASE"             BUILD_MINIMAL="$BUILD_MINIMAL"             BUILD_DESKTOP="$BUILD_DESKTOP"             ROOTFS_TYPE="$FILESYSTEM"             FIXED_IMAGE_SIZE="$IMAGE_SIZE"             BOOTSIZE=256             COMPRESS_OUTPUTIMAGE=sha,xz             IMAGE_XZ_COMPRESSION_RATIO=0             KERNEL_CONFIGURE=no             ENABLE_EXTENSIONS="$ENABLE_EXTENSIONS" \
+            "${BSPFREEZE_ARG[@]}"
+
+          mkdir -p "$GITHUB_WORKSPACE/stage"
+          shopt -s nullglob
+          images=(output/images/*.img output/images/*.img.xz output/images/*.img.gz output/images/*.img.zst)
+          (("${#images[@]}" > 0)) || { echo "::error::No image file found under output/images"; exit 1; }
+          for image in "${images[@]}"; do
+            base="$(basename "$image")"
+            safe_base="DBAI_${BOARD}_${RELEASE}_${PROFILE}_${FILESYSTEM}_${base}"
+            safe_base="${safe_base// /_}"
+            cp "$image" "$GITHUB_WORKSPACE/stage/$safe_base"
+            bytes="$(stat -c '%s' "$GITHUB_WORKSPACE/stage/$safe_base")"
+            if (( bytes > 1900000000 )); then
+              echo "::error::Asset $safe_base is larger than 1.9 GB; split/compress it before publishing to GitHub Releases."
+              exit 1
+            fi
+            sha256sum "$GITHUB_WORKSPACE/stage/$safe_base" > "$GITHUB_WORKSPACE/stage/$safe_base.sha256"
+          done
+
+          cat > "$GITHUB_WORKSPACE/stage/manifest.json" <<EOF
+          {
+            "repository": "$GITHUB_REPOSITORY",
+            "board": "$BOARD",
+            "release": "$RELEASE",
+            "profile": "$PROFILE",
+            "filesystem": "$FILESYSTEM",
+            "kernel_mode": "$BUILD_KERNEL_MODE",
+            "application": "$APP_PROFILE_EFFECTIVE",
+            "proxmox_mode": "$PROXMOX_MODE",
+            "proxmox_variant": "$PROXMOX_VARIANT",
+            "source_repository": "$SOURCE_REPO",
+            "source_commit": "$SOURCE_SHA",
+            "source_ref": "$SOURCE_REF",
+            "run_id": "$GITHUB_RUN_ID",
+            "run_attempt": "$GITHUB_RUN_ATTEMPT"
+          }
+          EOF
+          mv "$GITHUB_WORKSPACE/stage/manifest.json" "$GITHUB_WORKSPACE/stage/DBAI_${BOARD}_${RELEASE}_${PROFILE}_${FILESYSTEM}_manifest.json"
+
+      - name: Upload image artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dbai-${{ matrix.release }}-${{ matrix.profile }}-${{ matrix.proxmox_variant }}-${{ matrix.filesystem }}
+          path: stage/*
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 2
+
+  publish:
+    name: Verify and publish firmware release
+    needs: [plan, build]
+    if: ${{ needs.build.result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ secrets.DBAI_RELEASE_TOKEN }}
+      BOARD: ${{ needs.plan.outputs.board }}
+      DELETE_OLD: "true"
+    steps:
+      - name: Checkout builder repository
+        uses: actions/checkout@v4
+
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: dbai-*
+          path: dist
+          merge-multiple: true
+
+      - name: Verify assets and prepare checksums
+        id: release
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${GH_TOKEN:-}" ]]; then
+            echo "::error::Add repository secret DBAI_RELEASE_TOKEN before publishing a release."
+            exit 1
+          fi
+          shopt -s nullglob
+          files=(dist/*)
+          (("${#files[@]}" > 0)) || { echo "::error::No build artifacts were downloaded"; exit 1; }
+          find dist -maxdepth 1 -type f -name '*.sha256' -delete
+          (cd dist && sha256sum -- * > SHA256SUMS)
+          (cd dist && sha256sum -c SHA256SUMS)
+
+          TAG="dbai-build-$(date -u +'%Y%m%d-%H%M%S')-$GITHUB_RUN_ID"
+          TITLE="DBAI Firmware Build $(date -u +'%Y-%m-%d_%H-%M')"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "title=$TITLE" >> "$GITHUB_OUTPUT"
+
+      - name: Publish release and verify remote assets
+        shell: bash
+        env:
+          TAG: ${{ steps.release.outputs.tag }}
+          TITLE: ${{ steps.release.outputs.title }}
+        run: |
+          set -euo pipefail
+          cleanup_partial_release() {
+            status=$?
+            if [[ $status -ne 0 ]]; then
+              echo "::error::Release failed verification; removing partial release/tag."
+              gh release delete "$TAG" --repo "$GITHUB_REPOSITORY" --cleanup-tag --yes || true
+              git push origin ":refs/tags/$TAG" || true
+            fi
+            exit "$status"
+          }
+          trap cleanup_partial_release EXIT
+
+          gh release create "$TAG" dist/*             --repo "$GITHUB_REPOSITORY"             --title "$TITLE"             --prerelease             --notes "DBAI firmware batch. Board: $BOARD. Workflow run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID. Every image includes a build manifest and SHA-256 checksum. Test on target hardware before production use."
+
+          CHECK_DIR="$RUNNER_TEMP/dbai-release-check"
+          mkdir -p "$CHECK_DIR"
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir "$CHECK_DIR"
+          (cd "$CHECK_DIR" && sha256sum -c SHA256SUMS)
+
+          if [[ "$DELETE_OLD" == "true" ]]; then
+            gh release list --repo "$GITHUB_REPOSITORY" --limit 1000 --json tagName               | jq -r --arg current "$TAG" '.[] | select(.tagName | startswith("dbai-build-")) | select(.tagName != $current) | .tagName'               | while IFS= read -r old_tag; do
+                  [[ -n "$old_tag" ]] || continue
+                  echo "Removing previously verified DBAI build release: $old_tag"
+                  gh release delete "$old_tag" --repo "$GITHUB_REPOSITORY" --cleanup-tag --yes || echo "::warning::Could not delete old release $old_tag"
+                done
+          fi
+          echo "Verified release: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/tag/$TAG"
+          trap - EXIT
+ || { echo "::error::DTB archive needs .dtb files under boot/"; exit 2; }
+            tar -tf "$temp_dir/modules.tar" | grep -Eq '^lib/modules/[^/]+/' || { echo "::error::Modules archive needs lib/modules/<release>/"; exit 2; }
+            tar -tf "$temp_dir/headers.tar" | grep -Eq '^(usr/src/|lib/modules/[^/]+/build)' || { echo "::error::Headers archive needs usr/src/ or matching modules build paths"; exit 2; }
+            rm -rf "$temp_dir"
           fi
 
           IFS=',' read -r -a releases <<< "$RELEASES_INPUT"
