@@ -423,14 +423,18 @@ jobs:
             mkdir -p armbian-source/userpatches/platform
             cp "$GITHUB_WORKSPACE/platform/bootfs_custom_kernel.tar.gz" armbian-source/userpatches/platform/
           fi
-          mkdir -p "armbian-source/userpatches/kernel/archive/$KERNEL_PATCH_SERIES"
-          shopt -s nullglob
-          patch_files=("$GITHUB_WORKSPACE/kernel-patches/$KERNEL_PATCH_SERIES"/*.patch)
-          if (("${#patch_files[@]}" > 0)); then
-            cp "${patch_files[@]}" "armbian-source/userpatches/kernel/archive/$KERNEL_PATCH_SERIES/"
-            echo "Installed ${#patch_files[@]} kernel patch(es) from kernel-patches/$KERNEL_PATCH_SERIES"
+          if [[ "$KERNEL_MODE" == "Recompile Kernel Official" || "$KERNEL_MODE" == "Recompile Custom Kernel" ]]; then
+            mkdir -p "armbian-source/userpatches/kernel/archive/$KERNEL_PATCH_SERIES"
+            shopt -s nullglob
+            patch_files=("$GITHUB_WORKSPACE/kernel-patches/$KERNEL_PATCH_SERIES"/*.patch)
+            if (("${#patch_files[@]}" > 0)); then
+              cp "${patch_files[@]}" "armbian-source/userpatches/kernel/archive/$KERNEL_PATCH_SERIES/"
+              echo "Installed ${#patch_files[@]} kernel patch(es) for explicit recompile mode from kernel-patches/$KERNEL_PATCH_SERIES"
+            else
+              echo "No optional kernel patches found in kernel-patches/$KERNEL_PATCH_SERIES"
+            fi
           else
-            echo "No optional kernel patches found in kernel-patches/$KERNEL_PATCH_SERIES"
+            echo "Skipping DBAI user kernel patches in $KERNEL_MODE to preserve official artifact-cache compatibility."
           fi
           mkdir -p armbian-source/extensions armbian-source/tools
           cp extensions/proxmox-official.sh armbian-source/extensions/
