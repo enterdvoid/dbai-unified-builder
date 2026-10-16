@@ -417,17 +417,27 @@ jobs:
           shopt -s nullglob
           images=(output/images/*.img output/images/*.img.xz output/images/*.img.gz output/images/*.img.zst)
           (("${#images[@]}" > 0)) || { echo "::error::No image file found under output/images"; exit 1; }
+          case "$PROFILE" in
+            application) PROFILE_VARIANT="$APP_PROFILE_EFFECTIVE" ;;
+            proxmox) PROFILE_VARIANT="proxmox-$PROXMOX_VARIANT" ;;
+            *) PROFILE_VARIANT="$PROFILE" ;;
+          esac
           for image in "${images[@]}"; do
             base="$(basename "$image")"
-            safe_base="DBAI_${BOARD}_${RELEASE}_${PROFILE}_${FILESYSTEM}_${base}"
-            safe_base="${safe_base// /_}"
+            case "$base" in
+              *.img.xz) suffix=".img.xz" ;;
+              *.img.gz) suffix=".img.gz" ;;
+              *.img.zst) suffix=".img.zst" ;;
+              *.img) suffix=".img" ;;
+              *) echo "::error::Unrecognized image format: $base"; exit 1 ;;
+            esac
+            safe_base="DBAI-${BOARD}-${FILESYSTEM}-${RELEASE}-${PROFILE_VARIANT}${suffix}"
             cp "$image" "$GITHUB_WORKSPACE/stage/$safe_base"
             bytes="$(stat -c '%s' "$GITHUB_WORKSPACE/stage/$safe_base")"
             if (( bytes > 1900000000 )); then
               echo "::error::Asset $safe_base is larger than 1.9 GB; split/compress it before publishing to GitHub Releases."
               exit 1
             fi
-            sha256sum "$GITHUB_WORKSPACE/stage/$safe_base" > "$GITHUB_WORKSPACE/stage/$safe_base.sha256"
           done
 
           cat > "$GITHUB_WORKSPACE/stage/manifest.json" <<EOF
@@ -448,7 +458,7 @@ jobs:
             "run_attempt": "$GITHUB_RUN_ATTEMPT"
           }
           EOF
-          mv "$GITHUB_WORKSPACE/stage/manifest.json" "$GITHUB_WORKSPACE/stage/DBAI_${BOARD}_${RELEASE}_${PROFILE}_${FILESYSTEM}_manifest.json"
+          mv "$GITHUB_WORKSPACE/stage/manifest.json" "$GITHUB_WORKSPACE/stage/DBAI-${BOARD}-${FILESYSTEM}-${RELEASE}-${PROFILE_VARIANT}-manifest.json"
 
       - name: Upload image artifact
         uses: actions/upload-artifact@v4
@@ -513,12 +523,11 @@ jobs:
           shopt -s nullglob
           files=(dist/*)
           (("${#files[@]}" > 0)) || { echo "::error::No build artifacts were downloaded"; exit 1; }
-          find dist -maxdepth 1 -type f -name '*.sha256' -delete
           (cd dist && sha256sum -- * > SHA256SUMS)
           (cd dist && sha256sum -c SHA256SUMS)
 
           TAG="dbai-build-$(date -u +'%Y%m%d-%H%M%S')-$GITHUB_RUN_ID"
-          TITLE="DBAI Firmware Build $(date -u +'%Y-%m-%d_%H-%M')"
+          TITLE="DBAI Armbian ${BOARD} ${RELEASES_INPUT} [${PROFILES_INPUT}] [${FILESYSTEM_INPUT}] app-${APP_PROFILE} pve-${PROXMOX_MODE} $(date -u +'%Y-%m-%d_%H-%M')"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "title=$TITLE" >> "$GITHUB_OUTPUT"
 
@@ -540,7 +549,7 @@ jobs:
           }
           trap cleanup_partial_release EXIT
 
-          gh release create "$TAG" dist/*             --repo "$GITHUB_REPOSITORY"             --title "$TITLE"             --prerelease             --notes "DBAI firmware batch. Board: $BOARD. Workflow run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID. Every image includes a build manifest and SHA-256 checksum. Test on target hardware before production use."
+          gh release create "$TAG" dist/*             --repo "$GITHUB_REPOSITORY"             --title "$TITLE"             --prerelease             --notes "DBAI firmware batch. Board: $BOARD. Application profile: $APP_PROFILE. Proxmox mode: $PROXMOX_MODE. Workflow run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID. Every image includes a build manifest and SHA-256 checksum. Test on target hardware before production use."
 
           CHECK_DIR="$RUNNER_TEMP/dbai-release-check"
           mkdir -p "$CHECK_DIR"
