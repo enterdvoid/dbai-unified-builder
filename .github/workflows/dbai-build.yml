@@ -388,7 +388,7 @@ jobs:
                   ;;
                 casaos) EXTENSIONS+=(dbai-casaos) ;;
                 hermes-9router|lightnvr-go2rtc|hermes-9router-lightnvr) EXTENSIONS+=(dbai-apps) ;;
-                none) echo "::error::The application profile requires app_profile other than none."; exit 2 ;;
+                none) : ;; # Generic application image; no additional application extension.
                 *) echo "::error::Unsupported app profile $APP_PROFILE"; exit 2 ;;
               esac
             fi
