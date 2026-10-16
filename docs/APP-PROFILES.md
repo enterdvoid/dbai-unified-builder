@@ -51,3 +51,14 @@ The separate `proxmox_mode` input has `none`, `official`, `community`, and `both
 Proxmox mode creates additional `proxmox` profile jobs separate from the application profile, so the selected app profile can still produce its own application image. Proxmox-specific jobs always use the official Armbian kernel and freeze BSP/kernel package updates. The workflow reuses the DBAI Proxmox extensions and VM-import helper from `enterdvoid/build`. This is a package-based experiment that retains the Armbian kernel, not the official Proxmox ISO or a guarantee of full Proxmox VE compatibility on an Amlogic TV box. Official Proxmox VE 9.2 ARM64 requires UEFI/ACPI for supported systems; device-tree-only SBCs are not supported by the official ARM64 release.
 
 See [Proxmox official ARM64 platform statement](https://forum.proxmox.com/threads/proxmox-virtual-environment-now-available-for-64-bit-arm-arm64.185527/).
+
+
+## Proxmox application variants
+
+Proxmox options live in the same application selector as CasaOS and the other applications:
+
+- `proxmox-official`: creates an application-profile variant on Trixie.
+- `proxmox-community`: creates an application-profile variant on Bookworm.
+- `proxmox-both`: creates both variants, requiring both Bookworm and Trixie in the selected release set.
+
+When a selected app does not support a particular release in a multi-release batch, the workflow builds a generic application image for that release rather than trying an incompatible installer.
