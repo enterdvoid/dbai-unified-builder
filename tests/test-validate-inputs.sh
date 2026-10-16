@@ -5,6 +5,7 @@ VALIDATOR="$ROOT/scripts/validate-inputs.sh"
 
 bash "$VALIDATOR" "orangepi5" "" "bookworm,trixie" "minimal,server" "both" "official" "none"
 bash "$VALIDATOR" "custom" "my-custom-board" "bookworm" "application" "ext4" "official" "casaos"
+bash "$VALIDATOR" "aml-s9xx-box" "" "bookworm,trixie" "application" "both" "official" "none" "both"
 
 if bash "$VALIDATOR" "../bad" "" "bookworm" "server" "ext4" "official" "none"; then
   echo "Expected invalid board ID to fail" >&2
@@ -12,6 +13,10 @@ if bash "$VALIDATOR" "../bad" "" "bookworm" "server" "ext4" "official" "none"; t
 fi
 if bash "$VALIDATOR" "orangepi5" "" "bookworm" "application" "ext4" "official" "none"; then
   echo "Expected application profile without an app to fail" >&2
+  exit 1
+fi
+if bash "$VALIDATOR" "orangepi5" "" "bookworm" "application" "ext4" "official" "none" "official"; then
+  echo "Expected official Proxmox on Bookworm to fail" >&2
   exit 1
 fi
 if bash "$VALIDATOR" "orangepi5" "" "bookworm" "unknown" "ext4" "official" "none"; then

@@ -34,7 +34,7 @@ Target image sizes are 4096 MiB for minimal/server, 6144 MiB for application, an
 
 Home Assistant and OpenMediaVault use Armbian-maintained extensions. CasaOS is experimental. The `hermes-9router`, `lightnvr-go2rtc`, and combined profiles stage Docker Compose deployments; Hermes is installed on first boot and requires the owner to configure a model/provider. 9Router credentials are generated on first boot and stored in a root-only file at `/root/DBAI-APP-CREDENTIALS.txt`. LightNVR 0.37.2 bundles go2rtc integration and exposes the web UI, RTSP, WebRTC, and API ports; do not expose these services directly to the public internet without a firewall and secure configuration.
 
-Proxmox VE is not offered for general TV boxes/SBCs. Official Arm64 support announced in 2026 is limited to NVIDIA Grace/Vera platforms, not these consumer SBC targets.
+The workflow exposes Proxmox mode `none/official/community/both`. Official packages are restricted to Trixie and community PXVIRT packages to Bookworm; `both` builds community on Bookworm and official-repository packages on Trixie. This remains experimental on consumer TV boxes/SBCs and intentionally omits the `proxmox-ve` meta-package to retain the Armbian kernel. Official Proxmox Arm64 support announced in 2026 is limited to NVIDIA Grace/Vera platforms, not these consumer SBC targets.
 
 ## Security
 

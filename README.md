@@ -29,10 +29,10 @@ The default batch can produce many images. Start with one release, one profile, 
 
 - **Home Assistant Supervised**: uses Armbian's maintained `applications-ha` extension and its documented release constraints.
 - **OpenMediaVault**: uses Armbian's maintained `applications-omv` extension.
-- **CasaOS**: experimental extension that invokes the upstream installer in the target root filesystem; validate the generated image on the target before relying on it.
+- **CasaOS**: experimental first-boot installer that runs on the actual target device to avoid build-runner architecture mismatch.
 - **Hermes + 9Router**: selectable profile. 9Router runs as a Docker container; Hermes is installed on first boot and still requires provider/model setup.
 - **LightNVR + go2rtc**: selectable profile using the pinned LightNVR 0.37.2 multi-architecture image, which includes go2rtc integration.
-- **Proxmox VE**: not offered for general TV boxes/SBCs. Official Arm64 support announced in 2026 is limited to NVIDIA Grace/Vera platforms, not these consumer SBC targets.
+- **Proxmox mode selector**: `none`, `official`, `community`, or `both`. Official packages target Trixie; community PXVIRT packages target Bookworm. This is an experimental package-based ARM integration retaining the Armbian kernel, not a supported official Proxmox install on every SBC. Official Arm64 support announced in 2026 is limited to NVIDIA Grace/Vera platforms.
 
 ## Important limitations
 

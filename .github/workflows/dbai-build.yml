@@ -76,11 +76,16 @@ on:
         type: string
         required: false
         default: ""
-      delete_previous_build_releases:
-        description: "After a new release is fully verified, delete older dbai-build-* releases"
-        type: boolean
+      proxmox_mode:
+        description: "Optional package-based Proxmox/PXVIRT mode; requires application profile and app_profile=none"
+        type: choice
         required: true
-        default: true
+        default: none
+        options:
+          - none
+          - official
+          - community
+          - both
 
 permissions:
   contents: read
@@ -110,6 +115,7 @@ jobs:
           KERNEL_MODE: ${{ inputs.kernel_mode }}
           APP_PROFILE: ${{ inputs.app_profile }}
           KERNEL_ARCHIVES_INPUT: ${{ inputs.kernel_archives }}
+          PROXMOX_MODE: ${{ inputs.proxmox_mode }}
           RELEASE_TOKEN_PRESENT: ${{ secrets.DBAI_RELEASE_TOKEN != '' }}
         run: |
           set -euo pipefail
@@ -121,7 +127,7 @@ jobs:
           if [[ "$BOARD" == "custom" ]]; then
             BOARD="$CUSTOM_BOARD"
           fi
-          bash scripts/validate-inputs.sh "$BOARD" "" "$RELEASES_INPUT" "$PROFILES_INPUT" "$FILESYSTEM_INPUT" "$KERNEL_MODE" "$APP_PROFILE"
+          bash scripts/validate-inputs.sh "$BOARD" "" "$RELEASES_INPUT" "$PROFILES_INPUT" "$FILESYSTEM_INPUT" "$KERNEL_MODE" "$APP_PROFILE" "$PROXMOX_MODE"
 
           if [[ "$KERNEL_MODE" == "custom-four-part" ]]; then
             IFS=',' read -r boot_url dtb_url modules_url headers_url <<< "$KERNEL_ARCHIVES_INPUT"
@@ -171,6 +177,7 @@ jobs:
       SOURCE_REF: ${{ inputs.source_ref }}
       KERNEL_MODE: ${{ inputs.kernel_mode }}
       APP_PROFILE: ${{ inputs.app_profile }}
+      PROXMOX_MODE: ${{ inputs.proxmox_mode }}
       KERNEL_ARCHIVES: ${{ inputs.kernel_archives }}
     steps:
       - name: Checkout builder repository
@@ -229,6 +236,7 @@ jobs:
           mkdir -p armbian-source/userpatches/extensions
           cp extensions/dbai-casaos.sh armbian-source/userpatches/extensions/
           cp extensions/dbai-apps.sh armbian-source/userpatches/extensions/
+          cp extensions/dbai-proxmox.sh armbian-source/userpatches/extensions/
           cp extensions/dbai-custom-kernel.sh armbian-source/userpatches/extensions/
 
       - name: Build firmware image
@@ -252,7 +260,20 @@ jobs:
           esac
 
           EXTENSIONS=()
-          if [[ "$PROFILE" == "application" ]]; then
+          PROXMOX_VARIANT=none
+          if [[ "$PROFILE" == "application" && "$PROXMOX_MODE" != "none" ]]; then
+            [[ "$APP_PROFILE" == "none" ]] || { echo "::error::Select app_profile=none when Proxmox mode is enabled; keep Proxmox images separate from other application stacks."; exit 2; }
+            EXTENSIONS+=(dbai-proxmox)
+            export DBAI_PROXMOX_MODE="$PROXMOX_MODE"
+            case "$PROXMOX_MODE:$RELEASE" in
+              official:trixie|community:bookworm|both:bookworm|both:trixie) ;;
+              *) echo "::error::Proxmox mode $PROXMOX_MODE is incompatible with release $RELEASE"; exit 2 ;;
+            esac
+            case "$PROXMOX_MODE:$RELEASE" in
+              official:trixie|both:trixie) PROXMOX_VARIANT=official ;;
+              community:bookworm|both:bookworm) PROXMOX_VARIANT=community ;;
+            esac
+          elif [[ "$PROFILE" == "application" ]]; then
             case "$APP_PROFILE" in
               homeassistant)
                 [[ "$RELEASE" =~ ^(bullseye|bookworm|trixie)$ ]] || { echo "::error::Home Assistant extension does not support $RELEASE"; exit 2; }
@@ -294,9 +315,14 @@ jobs:
 
           export DBAI_APP_PROFILE="$APP_PROFILE"
           ENABLE_EXTENSIONS="$(IFS=,; echo "${EXTENSIONS[*]}")"
+          BSPFREEZE_ARG=()
+          if [[ "$PROFILE" == "application" && "$PROXMOX_MODE" != "none" ]]; then
+            BSPFREEZE_ARG+=(BSPFREEZE=yes)
+          fi
           echo "Board=$BOARD Release=$RELEASE Profile=$PROFILE Filesystem=$FILESYSTEM Kernel=$KERNEL_MODE App=$APP_PROFILE"
           echo "Extensions=$ENABLE_EXTENSIONS"
-          ./compile.sh build             BOARD="$BOARD"             BRANCH=current             RELEASE="$RELEASE"             BUILD_MINIMAL="$BUILD_MINIMAL"             BUILD_DESKTOP="$BUILD_DESKTOP"             ROOTFS_TYPE="$FILESYSTEM"             FIXED_IMAGE_SIZE="$IMAGE_SIZE"             BOOTSIZE=256             COMPRESS_OUTPUTIMAGE=sha,xz             IMAGE_XZ_COMPRESSION_RATIO=0             KERNEL_CONFIGURE=no             ENABLE_EXTENSIONS="$ENABLE_EXTENSIONS"
+          ./compile.sh build             BOARD="$BOARD"             BRANCH=current             RELEASE="$RELEASE"             BUILD_MINIMAL="$BUILD_MINIMAL"             BUILD_DESKTOP="$BUILD_DESKTOP"             ROOTFS_TYPE="$FILESYSTEM"             FIXED_IMAGE_SIZE="$IMAGE_SIZE"             BOOTSIZE=256             COMPRESS_OUTPUTIMAGE=sha,xz             IMAGE_XZ_COMPRESSION_RATIO=0             KERNEL_CONFIGURE=no             ENABLE_EXTENSIONS="$ENABLE_EXTENSIONS" \
+            "${BSPFREEZE_ARG[@]}"
 
           mkdir -p "$GITHUB_WORKSPACE/stage"
           shopt -s nullglob
@@ -324,6 +350,8 @@ jobs:
             "filesystem": "$FILESYSTEM",
             "kernel_mode": "$KERNEL_MODE",
             "application": "$APP_PROFILE",
+            "proxmox_mode": "$PROXMOX_MODE",
+            "proxmox_variant": "$PROXMOX_VARIANT",
             "source_repository": "$SOURCE_REPO",
             "source_commit": "$SOURCE_SHA",
             "source_ref": "$SOURCE_REF",
@@ -353,7 +381,7 @@ jobs:
     env:
       GH_TOKEN: ${{ secrets.DBAI_RELEASE_TOKEN }}
       BOARD: ${{ needs.plan.outputs.board }}
-      DELETE_OLD: ${{ inputs.delete_previous_build_releases }}
+      DELETE_OLD: "true"
     steps:
       - name: Checkout builder repository
         uses: actions/checkout@v4
