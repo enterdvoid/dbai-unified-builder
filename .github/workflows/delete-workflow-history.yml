@@ -1,0 +1,33 @@
+name: Delete Workflow History
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_delete_history:
+        description: "Permanently delete workflow run history for this repository"
+        type: choice
+        required: true
+        default: "no"
+        options:
+          - "no"
+          - "yes"
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  delete-history:
+    if: ${{ inputs.confirm_delete_history == 'yes' }}
+    name: Delete previous workflow runs
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      CONFIRM_DELETE_HISTORY: ${{ inputs.confirm_delete_history }}
+    steps:
+      - name: Checkout scripts
+        uses: actions/checkout@v4
+      - name: Delete all workflow runs except this run
+        shell: bash
+        run: bash scripts/delete-workflow-history.sh
