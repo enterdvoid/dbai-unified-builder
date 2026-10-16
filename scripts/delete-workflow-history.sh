@@ -15,7 +15,9 @@ echo "Deleting workflow runs except the current run $GITHUB_RUN_ID."
 echo "The current cleanup run cannot reliably delete itself while it is executing."
 
 while true; do
-  mapfile -t listed_ids < <(gh run list --repo "$GITHUB_REPOSITORY" --limit 1000 --json databaseId --jq '.[].databaseId')
+  run_list="$(gh run list --repo "$GITHUB_REPOSITORY" --limit 1000 --json databaseId --jq '.[].databaseId')"
+  listed_ids=()
+  if [[ -n "$run_list" ]]; then mapfile -t listed_ids <<< "$run_list"; fi
   pending=()
   for run_id in "${listed_ids[@]}"; do
     [[ -n "$run_id" && "$run_id" != "$GITHUB_RUN_ID" ]] && pending+=("$run_id")
