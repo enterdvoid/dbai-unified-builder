@@ -77,7 +77,7 @@ Use public, immutable HTTPS release URLs for bundle downloads. Do not put privat
 Both **Custom Kernel** and **Recompile Custom Kernel** require the repository file:
 
 ```text
-bootfs-custom-kernel/bootfs_custom_kernel.tar.gz
+platform/bootfs_custom_kernel.tar.gz
 ```
 
 This archive represents the contents of the boot partition itself. Archive entries should be relative to the boot partition root (for example `s905_autoscript`, `extlinux/extlinux.conf`, and any other scripts/configuration you intend to supply), not wrapped inside another `boot/` directory. Create it from a directory containing the intended bootfs files:
