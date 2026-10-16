@@ -51,11 +51,26 @@ on:
         type: string
         required: false
         default: "trixie,resolute"
-      profiles:
-        description: "Comma-separated profiles: minimal,server,application,desktop"
-        type: string
+      build_minimal:
+        description: "Build a Minimal image"
+        type: boolean
         required: true
-        default: "minimal,server,application,desktop"
+        default: true
+      build_server:
+        description: "Build a Server image"
+        type: boolean
+        required: true
+        default: true
+      build_application:
+        description: "Build an Application image; controlled by the application selector below"
+        type: boolean
+        required: true
+        default: true
+      build_desktop:
+        description: "Build a Desktop image"
+        type: boolean
+        required: true
+        default: true
       filesystem:
         description: "Build ext4, btrfs, or both variants"
         type: choice
@@ -66,7 +81,7 @@ on:
           - ext4
           - btrfs
       app_profile:
-        description: "Applied only to the application image profile"
+        description: "Application installed into Application images only. Incompatible OS releases are skipped; choose none for a generic image."
         type: choice
         required: true
         default: casaos
@@ -113,6 +128,7 @@ jobs:
       matrix: ${{ steps.matrix.outputs.matrix }}
       board: ${{ steps.matrix.outputs.board }}
       releases: ${{ steps.matrix.outputs.releases }}
+      profiles: ${{ steps.matrix.outputs.profiles }}
     steps:
       - uses: actions/checkout@v4
       - name: Validate inputs and create matrix
@@ -123,7 +139,10 @@ jobs:
           CUSTOM_BOARD: ${{ inputs.custom_board_name || '' }}
           RELEASE_GROUP: ${{ inputs.armbian_version_release || 'Custom' }}
           CUSTOM_RELEASES: ${{ inputs.custom_releases || 'trixie,resolute' }}
-          PROFILES_INPUT: ${{ inputs.profiles || 'minimal,server,application,desktop' }}
+          BUILD_MINIMAL_INPUT: ${{ github.event_name == 'workflow_dispatch' && inputs.build_minimal || github.event_name != 'workflow_dispatch' }}
+          BUILD_SERVER_INPUT: ${{ github.event_name == 'workflow_dispatch' && inputs.build_server || github.event_name != 'workflow_dispatch' }}
+          BUILD_APPLICATION_INPUT: ${{ github.event_name == 'workflow_dispatch' && inputs.build_application || github.event_name != 'workflow_dispatch' }}
+          BUILD_DESKTOP_INPUT: ${{ github.event_name == 'workflow_dispatch' && inputs.build_desktop || github.event_name != 'workflow_dispatch' }}
           FILESYSTEM_INPUT: ${{ inputs.filesystem || 'ext4' }}
           KERNEL_MODE: ${{ inputs.kernel_mode || 'Kernel Official' }}
           APP_PROFILE: ${{ inputs.app_profile || 'none' }}
@@ -146,7 +165,18 @@ jobs:
             *) echo "::error::Unknown Armbian Version Release selection: $RELEASE_GROUP"; exit 2 ;;
           esac
           [[ -n "${RELEASES_INPUT//[[:space:]]/}" ]] || { echo "::error::Custom releases cannot be empty."; exit 2; }
+          PROFILES_INPUT=""
+          for profile_flag in "minimal:$BUILD_MINIMAL_INPUT" "server:$BUILD_SERVER_INPUT" "application:$BUILD_APPLICATION_INPUT" "desktop:$BUILD_DESKTOP_INPUT"; do
+            profile="${profile_flag%%:*}"
+            enabled="${profile_flag#*:}"
+            if [[ "$enabled" == "true" ]]; then
+              [[ -n "$PROFILES_INPUT" ]] && PROFILES_INPUT+=","
+              PROFILES_INPUT+="$profile"
+            fi
+          done
+          [[ -n "$PROFILES_INPUT" ]] || { echo "::error::Select at least one image type (Minimal, Server, Application, or Desktop)."; exit 2; }
           echo "Resolved releases: $RELEASES_INPUT"
+          echo "Selected image types: $PROFILES_INPUT"
           bash scripts/validate-inputs.sh "$BOARD" "" "$RELEASES_INPUT" "$PROFILES_INPUT" "$FILESYSTEM_INPUT" "$KERNEL_MODE" "$APP_PROFILE"
           if [[ "$KERNEL_MODE" == "Custom Kernel" || "$KERNEL_MODE" == "Recompile Custom Kernel" ]]; then
             bootfs_archive="$GITHUB_WORKSPACE/platform/bootfs_custom_kernel.tar.gz"
@@ -205,21 +235,26 @@ jobs:
               app_variant="none"
               if [[ "$profile" == "application" ]]; then
                 case "$APP_PROFILE" in
-                  proxmox-official) [[ "$release" == "trixie" ]] && app_variant="proxmox-official" ;;
-                  proxmox-community) [[ "$release" == "bookworm" ]] && app_variant="proxmox-community" ;;
+                  proxmox-official)
+                    [[ "$release" == "trixie" ]] && app_variant="proxmox-official" || app_variant="" ;;
+                  proxmox-community)
+                    [[ "$release" == "bookworm" ]] && app_variant="proxmox-community" || app_variant="" ;;
                   proxmox-both)
-                    [[ "$release" == "bookworm" ]] && app_variant="proxmox-community"
-                    [[ "$release" == "trixie" ]] && app_variant="proxmox-official"
-                    ;;
-                  homeassistant) [[ "$release" =~ ^(bullseye|bookworm|trixie)$ ]] && app_variant="homeassistant" ;;
+                    case "$release" in
+                      bookworm) app_variant="proxmox-community" ;;
+                      trixie) app_variant="proxmox-official" ;;
+                      *) app_variant="" ;;
+                    esac ;;
+                  homeassistant)
+                    [[ "$release" =~ ^(bullseye|bookworm|trixie)$ ]] && app_variant="homeassistant" || app_variant="" ;;
                   openmediavault|casaos|hermes-9router|lightnvr-go2rtc|hermes-9router-lightnvr)
-                    [[ "$release" =~ ^(bookworm|trixie)$ ]] && app_variant="$APP_PROFILE"
-                    ;;
+                    [[ "$release" =~ ^(bookworm|trixie)$ ]] && app_variant="$APP_PROFILE" || app_variant="" ;;
                   none) app_variant="none" ;;
                   *) echo "::error::Unsupported application profile $APP_PROFILE"; exit 2 ;;
                 esac
-                if [[ "$app_variant" == "none" && "$APP_PROFILE" != "none" ]]; then
-                  echo "Application profile '$APP_PROFILE' is not compatible with '$release'; building a generic application image for this release."
+                if [[ -z "$app_variant" ]]; then
+                  echo "::notice::Skipping Application image for '$release': app '$APP_PROFILE' is not compatible with this release."
+                  continue
                 fi
               fi
               for fs in "${filesystems[@]}"; do
@@ -227,10 +262,15 @@ jobs:
               done
             done
           done
+          if [[ "$(jq '.include | length' <<< "$matrix")" -eq 0 ]]; then
+            echo "::error::No build combinations remain. Check selected image types, OS releases, and application compatibility."
+            exit 2
+          fi
           {
             echo "matrix=$matrix"
             echo "board=$BOARD"
             echo "releases=$RELEASES_INPUT"
+            echo "profiles=$PROFILES_INPUT"
           } >> "$GITHUB_OUTPUT"
           echo "Resolved board: $BOARD"
           echo "Planned combinations: $(jq '.include | length' <<< "$matrix")"
@@ -553,7 +593,7 @@ jobs:
       GH_TOKEN: ${{ secrets.DBAI_RELEASE_TOKEN }}
       BOARD: ${{ needs.plan.outputs.board }}
       RELEASES_INPUT: ${{ needs.plan.outputs.releases }}
-      PROFILES_INPUT: ${{ inputs.profiles || 'minimal,server,application,desktop' }}
+      PROFILES_INPUT: ${{ needs.plan.outputs.profiles }}
       FILESYSTEM_INPUT: ${{ inputs.filesystem || 'ext4' }}
       APP_PROFILE: ${{ inputs.app_profile || 'none' }}
       DELETE_OLD: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[dbai-smoke]') && 'false' || 'true' }}
