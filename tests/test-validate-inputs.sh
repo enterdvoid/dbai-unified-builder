@@ -14,7 +14,7 @@ if bash "$VALIDATOR" "../bad" "" "bookworm" "server" "ext4" "Kernel Official" "n
 fi
 # A generic application image without bundled apps is a supported option.
 bash "$VALIDATOR" "orangepi5" "" "bookworm" "application" "ext4" "Kernel Official" "none"
-if bash "$VALIDATOR" "orangepi5" "" "bookworm" "application" "ext4" "Kernel Official" "none" "Kernel Official"; then
+if bash "$VALIDATOR" "orangepi5" "" "bookworm" "application" "ext4" "Kernel Official" "none" "official"; then
   echo "Expected official Proxmox on Bookworm to fail" >&2
   exit 1
 fi
