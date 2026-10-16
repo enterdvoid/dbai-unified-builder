@@ -100,29 +100,15 @@ tar -tf "$kernel_boot_test_dir/prefixed.tar.gz" | grep -Eq "$boot_archive_patter
 tar -tf "$kernel_boot_test_dir/rooted.tar.gz" | grep -Eq "$boot_archive_pattern"
 rm -rf "$kernel_boot_test_dir"
 
-# DTB archives can place .dtb files under boot/, dtb/amlogic/, amlogic/, or root.
+# Accept DTB archive entries in boot/dtb, dtb/amlogic, amlogic, or archive root layouts.
 dtb_test_dir="$(mktemp -d)"
 mkdir -p "$dtb_test_dir/boot/dtb/amlogic" "$dtb_test_dir/dtb/amlogic" "$dtb_test_dir/amlogic" "$dtb_test_dir/root"
-printf 'dtb\n' > "$dtb_test_dir/boot/dtb/amlogic/test-boot.dtb"
-printf 'dtb\n' > "$dtb_test_dir/dtb/amlogic/test-dtb.dtb"
-printf 'dtb\n' > "$dtb_test_dir/amlogic/test-amlogic.dtb"
-printf 'dtb\n' > "$dtb_test_dir/root/test-root.dtb"
-for layout in boot/dtb/amlogic/test-boot.dtb dtb/amlogic/test-dtb.dtb amlogic/test-amlogic.dtb root/test-root.dtb; do
-  [[ "$layout" =~ (^|/)[^/]+\.dtb$ ]]
-done
-tar -czf "$dtb_test_dir/dtb-layouts.tar.gz" -C "$dtb_test_dir" boot/dtb/amlogic/test-boot.dtb dtb/amlogic/test-dtb.dtb amlogic/test-amlogic.dtb root/test-root.dtb
-tar -tf "$dtb_test_dir/dtb-layouts.tar.gz" | grep -Eq '(^|/)[^/]+\.dtb
-# The branding extension writes the expected vendor in /etc/armbian-release.
-brand_tmp="$(mktemp -d)"
-trap 'rm -rf "$brand_tmp"' EXIT
-mkdir -p "$brand_tmp/etc"
-printf 'BOARD="aml-s9xx-box"\nVENDOR="Old name"\n' > "$brand_tmp/etc/armbian-release"
-SDCARD="$brand_tmp" bash -c 'source "$1"; post_repo_customize_image__dbai_branding' _ "$ROOT/extensions/dbai-branding.sh"
-grep -qx 'VENDOR="DBAI2K26"' "$brand_tmp/etc/armbian-release"
-grep -qx 'VENDORPRETTYNAME="DBAI2K26"' "$brand_tmp/etc/armbian-release"
-
-echo "All input, checkbox, naming, and application compatibility tests passed."
-
+printf "dtb\n" > "$dtb_test_dir/boot/dtb/amlogic/boot-layout.dtb"
+printf "dtb\n" > "$dtb_test_dir/dtb/amlogic/dtb-layout.dtb"
+printf "dtb\n" > "$dtb_test_dir/amlogic/amlogic-layout.dtb"
+printf "dtb\n" > "$dtb_test_dir/root/root-layout.dtb"
+tar -czf "$dtb_test_dir/dtb-layouts.tar.gz" -C "$dtb_test_dir" boot/dtb/amlogic/boot-layout.dtb dtb/amlogic/dtb-layout.dtb amlogic/amlogic-layout.dtb root/root-layout.dtb
+tar -tf "$dtb_test_dir/dtb-layouts.tar.gz" | grep -Eq "(^|/)[^/]+\.dtb$"
 rm -rf "$dtb_test_dir"
 
 # The branding extension writes the expected vendor in /etc/armbian-release.

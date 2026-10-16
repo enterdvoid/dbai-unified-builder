@@ -63,6 +63,24 @@ function pre_customize_image__dbai_overlay_kernel_bundle() {
 	else
 		tar --no-same-owner --no-same-permissions --transform='s,^[.]/,,;s,^,boot/,' -xf "${cache_dir}/boot.tar" -C "${SDCARD}"
 	fi
+	# Normalize common DTB archive layouts into the target /boot/dtb tree.
+	local dtb_stage="${cache_dir}/dtb-unpacked"
+	rm -rf "${dtb_stage}"
+	mkdir -p "${dtb_stage}"
+	tar --no-same-owner --no-same-permissions -xf "${cache_dir}/dtb.tar" -C "${dtb_stage}"
+	local dtb_file dtb_rel dtb_target
+	while IFS= read -r -d '' dtb_file; do
+		dtb_rel="${dtb_file#"${dtb_stage}/"}"
+		case "/${dtb_rel}" in
+			*/boot/*) dtb_target="${SDCARD}/${dtb_rel}" ;;
+			*/dtb/*) dtb_target="${SDCARD}/boot/dtb/${dtb_rel#dtb/}" ;;
+			*/amlogic/*) dtb_target="${SDCARD}/boot/dtb/${dtb_rel#./}" ;;
+			*) dtb_target="${SDCARD}/boot/dtb/amlogic/${dtb_rel##*/}" ;;
+		esac
+		mkdir -p "$(dirname "${dtb_target}")"
+		cp -f "${dtb_file}" "${dtb_target}"
+	done < <(find "${dtb_stage}" -type f -name '*.dtb' -print0)
+	find "${SDCARD}/boot" -type f -name '*.dtb' -print -quit | grep -q . || exit_with_error "DTB archive contained .dtb files, but none were installed under target /boot"
 	for archive in "${cache_dir}/modules.tar" "${cache_dir}/headers.tar"; do
 		tar --no-same-owner --no-same-permissions -xf "${archive}" -C "${SDCARD}"
 	done
@@ -84,27 +102,6 @@ function pre_customize_image__dbai_overlay_kernel_bundle() {
 	display_alert "DBAI custom kernel" "Four-part bundle overlay and basic checks completed; hardware boot testing is still required" "warn"
 }
  || exit_with_error "dtb-amlogic-<version> archive must contain at least one .dtb file"
-
-	# Normalize DTB archive layouts. Bundles may store DTBs under boot/dtb/,
-	# dtb/amlogic/, amlogic/, or directly at the archive root. Install all DTBs
-	# into the target /boot tree, preserving subdirectories where practical.
-	local dtb_stage="${cache_dir}/dtb-unpacked"
-	rm -rf "${dtb_stage}"
-	mkdir -p "${dtb_stage}"
-	tar --no-same-owner --no-same-permissions -xf "${cache_dir}/dtb.tar" -C "${dtb_stage}"
-	local dtb_file dtb_rel dtb_target
-	while IFS= read -r -d '' dtb_file; do
-		dtb_rel="${dtb_file#"${dtb_stage}/"}"
-		case "/${dtb_rel}" in
-			*/boot/*) dtb_target="${SDCARD}/${dtb_rel}" ;;
-			*/dtb/*) dtb_target="${SDCARD}/boot/dtb/${dtb_rel#dtb/}" ;;
-			*/amlogic/*) dtb_target="${SDCARD}/boot/dtb/${dtb_rel#./}" ;;
-			*) dtb_target="${SDCARD}/boot/dtb/amlogic/${dtb_rel##*/}" ;;
-		esac
-		mkdir -p "$(dirname "${dtb_target}")"
-		cp -f "${dtb_file}" "${dtb_target}"
-	done < <(find "${dtb_stage}" -type f -name '*.dtb' -print0)
-	find "${SDCARD}/boot" -type f -name '*.dtb' -print -quit | grep -q . || exit_with_error "DTB archive contained .dtb files, but none were installed under target /boot"
 	tar -tf "${cache_dir}/modules.tar" | grep -Eq '^lib/modules/[^/]+/' || exit_with_error "modules-<version> archive must contain lib/modules/<kernel-release>/"
 	tar -tf "${cache_dir}/headers.tar" | grep -Eq '^(usr/src/|lib/modules/[^/]+/build)' || exit_with_error "header-<version> archive must contain usr/src/ or matching modules build paths"
 

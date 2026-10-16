@@ -19,7 +19,7 @@ Set `kernel_custom_input` to a public HTTPS URL for one outer `.tar.gz` or `.tar
 The version string is an example. The four inner archives must all use the same kernel release and contain paths rooted at the target filesystem:
 
 - boot archive: either `boot/` (kernel image and related boot files), or boot-partition-root entries such as `Image` / `uInitrd` (the workflow normalizes these into `boot/`)
-- DTB archive: at least one `.dtb` file; the workflow normalizes common layouts such as `boot/dtb/`, `dtb/amlogic/`, `amlogic/`, and root-level DTBs into the image's `/boot/dtb/` tree
+- DTB archive: at least one `.dtb` file; common layouts (`boot/dtb/`, `dtb/amlogic/`, `amlogic/`, or root-level DTBs) are normalized into the image's `/boot/dtb/` tree.
 - modules archive: `lib/modules/<kernel-release>/`
 - header archive: `usr/src/` and/or matching module build links
 
