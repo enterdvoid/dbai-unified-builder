@@ -48,7 +48,63 @@ function pre_customize_image__dbai_overlay_kernel_bundle() {
 	if ! tar -tf "${cache_dir}/boot.tar" | grep -Eq '^(boot/.*|(\./)?(Image[^/]*|vmlinuz[^/]*|uImage|zImage|initrd[^/]*|uInitrd)(/|$))'; then
 		exit_with_error "boot-<version> archive must contain files under boot/ or a recognizable kernel image at its archive root"
 	fi
-	tar -tf "${cache_dir}/dtb.tar" | grep -Eq '^boot/.*\.dtb$' || exit_with_error "dtb-amlogic-<version> archive must contain at least one .dtb under boot/"
+	tar -tf "${cache_dir}/dtb.tar" | grep -Eq '(^|/)[^/]+\.dtb
+	tar -tf "${cache_dir}/modules.tar" | grep -Eq '^lib/modules/[^/]+/' || exit_with_error "modules-<version> archive must contain lib/modules/<kernel-release>/"
+	tar -tf "${cache_dir}/headers.tar" | grep -Eq '^(usr/src/|lib/modules/[^/]+/build)' || exit_with_error "header-<version> archive must contain usr/src/ or matching modules build paths"
+
+	# Replace default boot scripts/config before applying the kernel bundle's /boot files.
+	dbai_replace_bootfs_files
+
+	# Some kernel bundles store boot archive entries directly at the boot-partition root
+	# (for example Image and uInitrd) instead of prefixing every entry with boot/.
+	# Normalize those entries into /boot; preserve archives already rooted at boot/.
+	if tar -tf "${cache_dir}/boot.tar" | grep -Eq '^boot/'; then
+		tar --no-same-owner --no-same-permissions -xf "${cache_dir}/boot.tar" -C "${SDCARD}"
+	else
+		tar --no-same-owner --no-same-permissions --transform='s,^[.]/,,;s,^,boot/,' -xf "${cache_dir}/boot.tar" -C "${SDCARD}"
+	fi
+	for archive in "${cache_dir}/modules.tar" "${cache_dir}/headers.tar"; do
+		tar --no-same-owner --no-same-permissions -xf "${archive}" -C "${SDCARD}"
+	done
+
+	find "${SDCARD}/boot" -maxdepth 4 -type f \( -name 'Image' -o -name 'Image-*' -o -name 'vmlinuz*' -o -name 'uImage' -o -name 'zImage' \) -print -quit | grep -q . || exit_with_error "No recognizable kernel image found under target /boot after overlay"
+	find "${SDCARD}/boot" -type f -name '*.dtb' -print -quit | grep -q . || exit_with_error "No DTB found under target /boot after overlay"
+	find "${SDCARD}/lib/modules" -type f -name '*.ko*' -print -quit | grep -q . || exit_with_error "No kernel module found under target /lib/modules after overlay"
+	find "${SDCARD}/usr/src" -type f -name 'Makefile' -print -quit | grep -q . || exit_with_error "No kernel header Makefile found under target /usr/src after overlay"
+
+	local manifest="${SDCARD}/root/DBAI-CUSTOM-KERNEL-MANIFEST.txt"
+	mkdir -p "${SDCARD}/root"
+	{
+		echo "Kernel mode: Custom Kernel"
+		echo "Bundle URL: ${DBAI_KERNEL_BUNDLE_URL}"
+		echo "Overlay timestamp UTC: $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+		echo "Inner archive SHA-256:"
+		sha256sum "${cache_dir}/boot.tar" "${cache_dir}/dtb.tar" "${cache_dir}/modules.tar" "${cache_dir}/headers.tar"
+	} > "${manifest}"
+	display_alert "DBAI custom kernel" "Four-part bundle overlay and basic checks completed; hardware boot testing is still required" "warn"
+}
+ || exit_with_error "dtb-amlogic-<version> archive must contain at least one .dtb file"
+
+	# Normalize DTB archive layouts. Bundles may store DTBs under boot/dtb/,
+	# dtb/amlogic/, amlogic/, or directly at the archive root. Install all DTBs
+	# into the target /boot tree, preserving subdirectories where practical.
+	local dtb_stage="${cache_dir}/dtb-unpacked"
+	rm -rf "${dtb_stage}"
+	mkdir -p "${dtb_stage}"
+	tar --no-same-owner --no-same-permissions -xf "${cache_dir}/dtb.tar" -C "${dtb_stage}"
+	local dtb_file dtb_rel dtb_target
+	while IFS= read -r -d '' dtb_file; do
+		dtb_rel="${dtb_file#"${dtb_stage}/"}"
+		case "/${dtb_rel}" in
+			*/boot/*) dtb_target="${SDCARD}/${dtb_rel#boot/}" ;;
+			*/dtb/*) dtb_target="${SDCARD}/boot/dtb/${dtb_rel#dtb/}" ;;
+			*/amlogic/*) dtb_target="${SDCARD}/boot/dtb/${dtb_rel#./}" ;;
+			*) dtb_target="${SDCARD}/boot/dtb/amlogic/${dtb_rel##*/}" ;;
+		esac
+		mkdir -p "$(dirname "${dtb_target}")"
+		cp -f "${dtb_file}" "${dtb_target}"
+	done < <(find "${dtb_stage}" -type f -name '*.dtb' -print0)
+	find "${SDCARD}/boot" -type f -name '*.dtb' -print -quit | grep -q . || exit_with_error "DTB archive contained .dtb files, but none were installed under target /boot"
 	tar -tf "${cache_dir}/modules.tar" | grep -Eq '^lib/modules/[^/]+/' || exit_with_error "modules-<version> archive must contain lib/modules/<kernel-release>/"
 	tar -tf "${cache_dir}/headers.tar" | grep -Eq '^(usr/src/|lib/modules/[^/]+/build)' || exit_with_error "header-<version> archive must contain usr/src/ or matching modules build paths"
 
