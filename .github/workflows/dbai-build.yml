@@ -36,7 +36,7 @@ on:
         type: string
         required: true
         default: main
-      release_group:
+      armbian_version_release:
         description: "Armbian Version Release selection"
         type: choice
         required: true
@@ -121,7 +121,7 @@ jobs:
         env:
           BOARD_INPUT: ${{ inputs.board || 'aml-s9xx-box' }}
           CUSTOM_BOARD: ${{ inputs.custom_board_name || '' }}
-          RELEASE_GROUP: ${{ inputs.release_group || 'Custom' }}
+          RELEASE_GROUP: ${{ inputs.armbian_version_release || 'Custom' }}
           CUSTOM_RELEASES: ${{ inputs.custom_releases || 'trixie,resolute' }}
           PROFILES_INPUT: ${{ inputs.profiles || 'minimal,server,application,desktop' }}
           FILESYSTEM_INPUT: ${{ inputs.filesystem || 'ext4' }}
