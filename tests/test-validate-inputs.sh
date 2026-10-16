@@ -72,7 +72,7 @@ normalize_kernel_version() {
 # Canonical filename removes an application suffix appended to the parsed kernel version.
 app="proxmox-official"
 kernel_version="6.18.57-${app}"
-asset_kernel_version="${kernel_version%-${app}}"
+asset_kernel_version="$(normalize_kernel_version "$kernel_version" "$app")"
 safe_base="DBAI2K26-Armbian_26.11.0-aml-s9xx-trixie-k${asset_kernel_version}-${app}-ext4.img.xz"
 [[ "$safe_base" == "DBAI2K26-Armbian_26.11.0-aml-s9xx-trixie-k6.18.57-proxmox-official-ext4.img.xz" ]]
 
