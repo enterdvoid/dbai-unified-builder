@@ -76,6 +76,17 @@ asset_kernel_version="$(normalize_kernel_version "$kernel_version" "$app")"
 safe_base="DBAI2K26-Armbian_26.11.0-aml-s9xx-trixie-k${asset_kernel_version}-${app}-ext4.img.xz"
 [[ "$safe_base" == "DBAI2K26-Armbian_26.11.0-aml-s9xx-trixie-k6.18.57-proxmox-official-ext4.img.xz" ]]
 
+# The bootfs archive non-empty check must use awk's exit status, not empty stdout.
+bootfs_test_dir="$(mktemp -d)"
+mkdir -p "$bootfs_test_dir/boot"
+printf 'test-kernel-file\n' > "$bootfs_test_dir/boot/Image"
+tar -czf "$bootfs_test_dir/bootfs.tar.gz" -C "$bootfs_test_dir" boot
+if ! tar -tzf "$bootfs_test_dir/bootfs.tar.gz" | awk 'NF && $0 !~ /^\.\/?$/ { found=1 } END { exit !found }' >/dev/null; then
+  echo "Non-empty bootfs archive was incorrectly detected as empty" >&2
+  exit 1
+fi
+rm -rf "$bootfs_test_dir"
+
 # The branding extension writes the expected vendor in /etc/armbian-release.
 brand_tmp="$(mktemp -d)"
 trap 'rm -rf "$brand_tmp"' EXIT
