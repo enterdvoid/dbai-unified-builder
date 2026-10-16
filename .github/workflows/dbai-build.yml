@@ -689,8 +689,8 @@ jobs:
       BOARD: ${{ needs.plan.outputs.board }}
       RELEASES_INPUT: ${{ needs.plan.outputs.releases }}
       PROFILES_INPUT: ${{ needs.plan.outputs.profiles }}
-      FILESYSTEM_INPUT: ${{ inputs.filesystem || 'ext4' }}
-      KERNEL_MODE: ${{ inputs.kernel_mode || 'Kernel Official' }}
+      FILESYSTEM_INPUT: ${{ (github.event_name == 'push' && contains(github.event.head_commit.message, '[dbai-smoke]')) && 'ext4' || inputs.filesystem || 'ext4' }}
+      KERNEL_MODE: ${{ (github.event_name == 'push' && contains(github.event.head_commit.message, '[dbai-smoke]')) && 'Custom Kernel' || inputs.kernel_mode || 'Kernel Official' }}
       SOURCE_REF: ${{ inputs.source_ref || 'main' }}
       APP_PROFILE: ${{ inputs.build_application && inputs.app_profile || 'none' }}
       DELETE_OLD: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[dbai-smoke]') && 'false' || 'true' }}
