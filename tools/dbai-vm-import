@@ -6,6 +6,7 @@ IFS=$'\n\t'
 
 APP_NAME="DBAI VM Image Importer"
 UI_BACKTITLE="DBAI  |  PROXMOX VIRTUALIZATION TOOLKIT"
+UI_DIALOG_ACTIVE=0
 LOG_FILE="/var/log/dbai-vm-import.log"
 WORKDIR=""
 TMP_SOURCE=""
@@ -48,7 +49,13 @@ log_init() {
 
 die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 warn() { printf 'WARNING: %s\n' "$*" >&2; }
-info() { printf '\n==> %s\n' "$*" >&2; }
+info() {
+  if [[ "$UI_DIALOG_ACTIVE" == 1 ]]; then
+    printf '\n==> %s\n' "$*" >> "$LOG_FILE"
+  else
+    printf '\n==> %s\n' "$*" >&2
+  fi
+}
 
 has_cmd() { command -v "$1" >/dev/null 2>&1; }
 
@@ -654,6 +661,8 @@ do_import() {
 
 interactive_wizard() {
   local source_mode source_input source default_name vmid name memory cores start
+  # Keep progress chatter out of the interactive screen; it remains in the log.
+  UI_DIALOG_ACTIVE=1
   local -a menu=(
     "import" "IMPORT IMAGE  -  Buat VM dari disk image"
     "diagnose" "DIAGNOSTIK   -  Periksa storage, bridge, KVM"
@@ -669,7 +678,7 @@ interactive_wizard() {
   info "Membuka menu utama."
   action="$(ui_menu "$APP_NAME" $'DBAI VM IMPORTER  /  PROXMOX VE\n\nPilih tindakan untuk melanjutkan:' "${menu[@]}")" || { warn "Wizard dibatalkan pada menu utama."; return 0; }
   case "$action" in
-    diagnose) check_host; return ;;
+    diagnose) UI_DIALOG_ACTIVE=0; check_host; return ;;
     quit) return ;;
     import) ;;
     *) die "Menu tidak dikenal." ;;
@@ -722,6 +731,7 @@ interactive_wizard() {
   info "Bridge dipilih: ${SELECTED_BRIDGE:-tidak menggunakan NIC}."
   info "Meminta konfirmasi untuk langsung menjalankan VM."
   if ui_yesno "$APP_NAME" $'LANGKAH TERAKHIR  /  START VM\n\nJalankan VM segera setelah impor selesai?\n\nRekomendasi: pilih Tidak untuk memeriksa hardware dan console terlebih dahulu.' no; then start=yes; else start=no; fi
+  UI_DIALOG_ACTIVE=0
   info "Semua parameter wizard lengkap; memulai tahap impor."
   do_import "$source" "$vmid" "$name" "$SELECTED_STORAGE" "$memory" "$cores" "$SELECTED_BRIDGE" "$start"
 }
