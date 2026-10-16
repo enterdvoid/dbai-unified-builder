@@ -6,7 +6,7 @@ custom_board="${2:-}"
 releases="${3:-}"
 profiles="${4:-}"
 filesystem="${5:-}"
-kernel_mode="${6:-official}"
+kernel_mode="${6:-Kernel Official}"
 app_profile="${7:-none}"
 proxmox_mode="${8:-none}"
 
