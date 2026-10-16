@@ -7,7 +7,7 @@ A GitHub Actions frontend for building ready-to-use Armbian-based firmware for A
 - Manual build workflow with a board selector and a separate custom-board-name field.
 - Amlogic TV-box builds use the DBAI Armbian fork; official SBCs use the official `armbian/build` source.
 - Batch selection of Debian releases, image profiles, and ext4/btrfs.
-- Official kernel is the default. Optional custom-kernel mode overlays four validated archive inputs: boot, DTB, modules, and headers.
+- Kernel mode is selectable per run: `official` reuses Armbian's matching local/remote artifact cache when available (cache miss may compile from source); `recompile` bypasses the artifact cache and rebuilds artifacts from source (this can rebuild more than just the kernel); `custom-four-part` overlays four validated DBAI archives: boot, DTB, modules, and headers.
 - App integration starts with Armbian-maintained Home Assistant and OpenMediaVault extensions plus an experimental CasaOS extension. Select `app_profile=none` to build a generic application image without a bundled app.
 - Release publication happens only after all matrix jobs succeed and every image has a manifest and SHA-256 checksum. Partial releases are removed on publication failure.
 
@@ -18,7 +18,7 @@ A GitHub Actions frontend for building ready-to-use Armbian-based firmware for A
 3. Choose a board. If `custom` is selected, enter the exact board ID in `custom_board_name`.
 4. Enter comma-separated release and profile lists. Example: `bookworm,trixie` and `minimal,server,application,desktop`.
 5. Select `both` to build ext4 and btrfs variants.
-6. Keep `kernel_mode=official` unless all four custom-kernel archives are ready.
+6. Select `kernel_mode`: `official` uses matching Armbian cached artifacts when available (a cache miss can trigger source compilation); `recompile` forces source rebuilds by bypassing the artifact cache and may rebuild other artifacts too; `custom-four-part` installs the four DBAI kernel archives and requires all four HTTPS tar URLs in `kernel_archives`.
 7. Choose an application profile for the `application` image profile. The app is installed only in the application variant. Proxmox modes add separate `proxmox` profile jobs: `official` on Trixie, `community` on Bookworm, or `both` on both releases. The normal application image can still use the selected `app_profile`. Proxmox-specific jobs always use the official Armbian kernel and freeze BSP/kernel package updates.
 8. Ensure the repository Actions secret `DBAI_RELEASE_TOKEN` is configured before starting; the plan job checks this before expensive builds.
 9. Start the run and inspect each matrix job. The release is created only after all build jobs pass.
