@@ -1,26 +1,74 @@
-# Optional Four-Part Custom Kernel
+# Custom Kernel Bundle and Recompile Modes
 
-The default `kernel_mode=official` leaves Armbian's normal kernel, modules, DTBs, and headers untouched.
+The workflow provides four kernel choices:
 
-Select `custom-four-part` only when all four archive URLs are available:
+- **Kernel Official** — keep the Armbian/DBAI kernel selection. A matching cached artifact may be reused; a cache miss can trigger a source build.
+- **Recompile Kernel Official** — bypass artifact caches and rebuild the configured Armbian/DBAI kernel from source, retaining the source's normal patch flow.
+- **Custom Kernel** — overlay one downloadable bundle containing four matching archives.
+- **Recompile Custom Kernel** — build from a user-provided Git kernel source URL/ref using Armbian's kernel build pipeline. This is source compilation, not a prebuilt-kernel overlay.
 
-1. **Boot archive** — a tar archive whose paths begin with `boot/`; includes the intended kernel image and boot-side kernel files.
-2. **DTB archive** — a tar archive containing device-tree blobs under `boot/` (for example `boot/dtb/` or the board's matching `boot/dtb-<version>/` directory).
-3. **Modules archive** — a tar archive whose paths begin with `lib/modules/<kernel-release>/`; includes module files and dependency metadata where applicable.
-4. **Headers archive** — a tar archive whose paths begin with `usr/src/` and/or the matching `lib/modules/<kernel-release>/build` structure.
+## Custom Kernel: one URL, four inner archives
 
-Archives are extracted into the target root filesystem after the base image has been prepared. Paths must be relative to the target root (no leading slash and no `..` traversal). The workflow verifies that expected boot files, at least one DTB, kernel modules, and headers exist after overlay, then records SHA-256 hashes in the image manifest.
+Set `custom_kernel_bundle_url` to a public HTTPS URL for one outer `.tar.gz` or `.tar.xz` bundle, for example `6.1.66-DBAI.tar.gz`. The outer archive must contain exactly one of each:
 
-## Important compatibility checks
+- `boot-6.1.66-DBAI.tar.gz`
+- `dtb-amlogic-6.1.66-DBAI.tar.gz`
+- `modules-6.1.66-DBAI.tar.gz`
+- `header-6.1.66-DBAI.tar.gz`
 
-A successful overlay does not guarantee a bootable kernel. The four parts must match each other and the target board:
+The version string is an example. The four inner archives must all use the same kernel release and contain paths rooted at the target filesystem:
 
-- identical kernel release/version across the boot image, modules and headers;
-- correct architecture and ABI;
-- DTB for the exact board and SoC;
-- expected boot configuration and filenames for the board's bootloader;
-- required firmware and initramfs behavior.
+- boot archive: `boot/` (kernel image and related boot files)
+- DTB archive: DTB files under `boot/`
+- modules archive: `lib/modules/<kernel-release>/`
+- header archive: `usr/src/` and/or matching module build links
 
-The custom mode is optional and experimental until the resulting image boots and its devices are tested on target hardware. Keep the official-kernel image as a separate artifact for comparison.
+Example staging layout before creating the outer bundle:
 
-Do not put private tokens into archive URLs. Use public, immutable HTTPS URLs (such as versioned release assets).
+```text
+6.1.66-DBAI/
+├── boot-6.1.66-DBAI.tar.gz
+├── dtb-amlogic-6.1.66-DBAI.tar.gz
+├── header-6.1.66-DBAI.tar.gz
+└── modules-6.1.66-DBAI.tar.gz
+```
+
+Create the outer bundle from the directory containing those four files:
+
+```bash
+tar -czf 6.1.66-DBAI.tar.gz -C 6.1.66-DBAI .
+```
+
+The workflow validates the outer archive, each inner archive, safe relative paths, expected content roots, and the resulting files before continuing. It writes a manifest with SHA-256 hashes. A successful overlay does not guarantee bootability; test on the exact target hardware.
+
+## Recompile Custom Kernel
+
+Set:
+- `custom_kernel_repo_url`: Git URL of the kernel source repository.
+- `custom_kernel_repo_ref`: branch or tag to compile (default `main`).
+
+The workflow passes the repository URL and branch/ref to Armbian's build pipeline and bypasses artifact caches. The repository must be compatible with the selected board's kernel family, toolchain, and expected kernel configuration. Validate this source override with a small single-profile build before a large matrix.
+
+## Where to place kernel patches
+
+Place optional patch files in:
+
+```text
+kernel-patches/
+└── meson64-current/
+    ├── 0001-example-fix.patch
+    └── 0002-example-feature.patch
+```
+
+For `aml-s9xx-box`, the default patch series is `meson64-current`. The workflow copies `.patch` files from `kernel-patches/<kernel_patch_series>/` into Armbian's `userpatches/kernel/archive/<kernel_patch_series>/` before the build. Use patches written for that exact kernel family/branch and apply them in numeric order. Do not put arbitrary source files or unrelated patches in this folder. If no patch files exist, no additional DBAI patches are applied.
+
+## Compatibility and safety
+
+The kernel image, DTBs, modules, and headers must match each other and the target board:
+- same kernel release/version and ABI;
+- correct architecture;
+- DTB for the exact board/SoC;
+- expected boot filenames/configuration;
+- compatible firmware, initramfs, and modules.
+
+Use public, immutable HTTPS release URLs for bundle downloads. Do not put private tokens in workflow inputs or URLs.
