@@ -97,7 +97,7 @@ on:
           - proxmox-community
           - proxmox-both
       kernel_mode:
-        description: "Kernel source/build strategy"
+        description: "Kernel Official uses a matching cached artifact only and fails on cache miss; Recompile modes build from source"
         type: choice
         required: true
         default: Kernel Official
