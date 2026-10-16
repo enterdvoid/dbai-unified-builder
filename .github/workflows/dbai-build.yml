@@ -68,23 +68,8 @@ on:
         options:
           - official
           - custom-four-part
-      kernel_boot_url:
-        description: "HTTPS tar archive URL; paths rooted at boot/"
-        type: string
-        required: false
-        default: ""
-      kernel_dtb_url:
-        description: "HTTPS tar archive URL; contains .dtb files under boot/"
-        type: string
-        required: false
-        default: ""
-      kernel_modules_url:
-        description: "HTTPS tar archive URL; paths rooted at lib/modules/<release>/"
-        type: string
-        required: false
-        default: ""
-      kernel_headers_url:
-        description: "HTTPS tar archive URL; paths rooted at usr/src/ or matching modules build path"
+      kernel_archives:
+        description: "Optional custom mode: four comma-separated HTTPS tar URLs in order boot,DTB,modules,headers (URLs must not contain commas)"
         type: string
         required: false
         default: ""
@@ -121,10 +106,7 @@ jobs:
           FILESYSTEM_INPUT: ${{ inputs.filesystem }}
           KERNEL_MODE: ${{ inputs.kernel_mode }}
           APP_PROFILE: ${{ inputs.app_profile }}
-          KERNEL_BOOT_URL: ${{ inputs.kernel_boot_url }}
-          KERNEL_DTB_URL: ${{ inputs.kernel_dtb_url }}
-          KERNEL_MODULES_URL: ${{ inputs.kernel_modules_url }}
-          KERNEL_HEADERS_URL: ${{ inputs.kernel_headers_url }}
+          KERNEL_ARCHIVES_INPUT: ${{ inputs.kernel_archives }}
         run: |
           set -euo pipefail
           BOARD="$BOARD_INPUT"
@@ -134,8 +116,9 @@ jobs:
           bash scripts/validate-inputs.sh "$BOARD" "" "$RELEASES_INPUT" "$PROFILES_INPUT" "$FILESYSTEM_INPUT" "$KERNEL_MODE" "$APP_PROFILE"
 
           if [[ "$KERNEL_MODE" == "custom-four-part" ]]; then
-            for value in "$KERNEL_BOOT_URL" "$KERNEL_DTB_URL" "$KERNEL_MODULES_URL" "$KERNEL_HEADERS_URL"; do
-              [[ "$value" =~ ^https:// ]] || { echo "::error::Custom kernel mode requires four HTTPS archive URLs."; exit 2; }
+            IFS=',' read -r boot_url dtb_url modules_url headers_url <<< "$KERNEL_ARCHIVES_INPUT"
+            for value in "$boot_url" "$dtb_url" "$modules_url" "$headers_url"; do
+              [[ "$value" =~ ^https:// ]] || { echo "::error::Custom kernel mode requires four comma-separated HTTPS archive URLs in boot,DTB,modules,headers order."; exit 2; }
             done
           fi
 
@@ -180,10 +163,7 @@ jobs:
       SOURCE_REF: ${{ inputs.source_ref }}
       KERNEL_MODE: ${{ inputs.kernel_mode }}
       APP_PROFILE: ${{ inputs.app_profile }}
-      DBAI_KERNEL_BOOT_URL: ${{ inputs.kernel_boot_url }}
-      DBAI_KERNEL_DTB_URL: ${{ inputs.kernel_dtb_url }}
-      DBAI_KERNEL_MODULES_URL: ${{ inputs.kernel_modules_url }}
-      DBAI_KERNEL_HEADERS_URL: ${{ inputs.kernel_headers_url }}
+      KERNEL_ARCHIVES: ${{ inputs.kernel_archives }}
     steps:
       - name: Checkout builder repository
         uses: actions/checkout@v4
@@ -194,6 +174,8 @@ jobs:
         run: |
           set -euo pipefail
           [[ "$BOARD" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "::error::Invalid board ID"; exit 2; }
+          # SOURCE_REF is supplied by the job-level environment.
+          # shellcheck disable=SC2153
           [[ "$SOURCE_REF" =~ ^[A-Za-z0-9._/-]+$ ]] || { echo "::error::source_ref contains unsupported characters"; exit 2; }
 
           if [[ "$BOARD" == "aml-s9xx-box" ]]; then
@@ -225,9 +207,11 @@ jobs:
           fi
 
           SOURCE_SHA="$(git -C armbian-source rev-parse HEAD)"
-          echo "repo=$SOURCE_REPO" >> "$GITHUB_OUTPUT"
-          echo "sha=$SOURCE_SHA" >> "$GITHUB_OUTPUT"
-          echo "source_ref=$SOURCE_REF" >> "$GITHUB_OUTPUT"
+          {
+            echo "repo=$SOURCE_REPO"
+            echo "sha=$SOURCE_SHA"
+            echo "source_ref=$SOURCE_REF"
+          } >> "$GITHUB_OUTPUT"
           echo "Using $SOURCE_REPO@$SOURCE_SHA for $BOARD"
 
       - name: Add DBAI build extensions
@@ -285,6 +269,11 @@ jobs:
           fi
 
           if [[ "$KERNEL_MODE" == "custom-four-part" ]]; then
+            IFS=',' read -r DBAI_KERNEL_BOOT_URL DBAI_KERNEL_DTB_URL DBAI_KERNEL_MODULES_URL DBAI_KERNEL_HEADERS_URL <<< "$KERNEL_ARCHIVES"
+            for value in "$DBAI_KERNEL_BOOT_URL" "$DBAI_KERNEL_DTB_URL" "$DBAI_KERNEL_MODULES_URL" "$DBAI_KERNEL_HEADERS_URL"; do
+              [[ "$value" =~ ^https:// ]] || { echo "::error::Custom kernel mode needs four HTTPS archive URLs"; exit 2; }
+            done
+            export DBAI_KERNEL_BOOT_URL DBAI_KERNEL_DTB_URL DBAI_KERNEL_MODULES_URL DBAI_KERNEL_HEADERS_URL
             EXTENSIONS+=(dbai-custom-kernel)
             export DBAI_KERNEL_MODE=custom-four-part
           else
@@ -376,7 +365,7 @@ jobs:
           files=(dist/*)
           (("${#files[@]}" > 0)) || { echo "::error::No build artifacts were downloaded"; exit 1; }
           find dist -maxdepth 1 -type f -name '*.sha256' -delete
-          (cd dist && sha256sum * > SHA256SUMS)
+          (cd dist && sha256sum -- * > SHA256SUMS)
           (cd dist && sha256sum -c SHA256SUMS)
 
           TAG="dbai-build-$(date -u +'%Y%m%d-%H%M%S')-$GITHUB_RUN_ID"
