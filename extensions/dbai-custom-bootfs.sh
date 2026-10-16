@@ -6,8 +6,8 @@ function extension_prepare_config__dbai_custom_bootfs() {
 		"Custom Kernel"|"Recompile Custom Kernel") ;;
 		*) exit_with_error "dbai-custom-bootfs is only valid with Custom Kernel or Recompile Custom Kernel" ;;
 	esac
-	local archive="${SRC}/userpatches/bootfs-custom-kernel/bootfs_custom_kernel.tar.gz"
-	[[ -f "$archive" ]] || exit_with_error "Missing userpatches/bootfs-custom-kernel/bootfs_custom_kernel.tar.gz"
+	local archive="${SRC}/userpatches/platform/bootfs_custom_kernel.tar.gz"
+	[[ -f "$archive" ]] || exit_with_error "Missing userpatches/platform/bootfs_custom_kernel.tar.gz"
 	tar -tzf "$archive" >/dev/null 2>&1 || exit_with_error "Custom bootfs archive is not a valid .tar.gz file"
 	EXTRA_IMAGE_SUFFIXES+=("-custom-bootfs")
 }
@@ -15,7 +15,7 @@ function extension_prepare_config__dbai_custom_bootfs() {
 function dbai_replace_bootfs_files() {
 	: "${SDCARD:?Armbian did not set SDCARD for custom bootfs replacement}"
 	local boot_dir="${SDCARD}/boot"
-	local archive="${SRC}/userpatches/bootfs-custom-kernel/bootfs_custom_kernel.tar.gz"
+	local archive="${SRC}/userpatches/platform/bootfs_custom_kernel.tar.gz"
 	mkdir -p "$boot_dir"
 	tar -tzf "$archive" >/dev/null 2>&1 || exit_with_error "Custom bootfs archive is invalid"
 	if ! tar -tzf "$archive" | awk ' /^\// { bad=1 } /(^|\/)\.\.(\/|$)/ { bad=1 } END { exit bad }'; then
