@@ -436,6 +436,41 @@ jobs:
           cp tools/dbai-vm-import armbian-source/tools/
           # Kernel Official may consume Armbian's prebuilt OCI artifact, but must never silently fall back to source compilation.
           python3 "$GITHUB_WORKSPACE/scripts/guard-kernel-cache-only.py" "$GITHUB_WORKSPACE/armbian-source/lib/functions/artifacts/artifact-kernel.sh" "$KERNEL_MODE"
+          # Patch only aml-s9xx-box boot partition: FAT32 filesystem + MBR type 0x0C.
+          # Upstream otherwise uses XBOOTLDR 0xEA and may select FAT16.
+          if [[ "$BOARD" == "aml-s9xx-box" ]]; then
+            python3 - "$GITHUB_WORKSPACE/armbian-source/lib/functions/image/partitioning.sh" <<'PY'
+          import pathlib, sys
+          p = pathlib.Path(sys.argv[1])
+          s = p.read_text(encoding="utf-8")
+          old_type = '\t\t\t\t\t[[ "$IMAGE_PARTITION_TABLE" != "gpt" ]] && local type="ea" || local type="BC13C2FF-59E6-4262-A352-B275FD6F7172"'
+          new_type = '''\t\t\t\t\tif [[ "$IMAGE_PARTITION_TABLE" != "gpt" ]]; then
+          \t\t\t\t\t\tif [[ "$BOARD" == "aml-s9xx-box" && "$bootfs" == "fat" ]]; then
+          \t\t\t\t\t\t\tlocal type="0c"
+          \t\t\t\t\t\telse
+          \t\t\t\t\t\t\tlocal type="ea"
+          \t\t\t\t\t\tfi
+          \t\t\t\t\telse
+          \t\t\t\t\t\tlocal type="BC13C2FF-59E6-4262-A352-B275FD6F7172"
+          \t\t\t\t\tfi'''
+          if old_type in s:
+              s = s.replace(old_type, new_type, 1)
+          elif 'local type="0c"' not in s:
+              raise SystemExit("Could not find Armbian MBR boot partition type line")
+          old_mkfs = '\t\trun_host_command_logged "mkfs.${mkfs[$bootfs]}" ${mkopts[$bootfs]} ${mkopts_label[$bootfs]:+${mkopts_label[$bootfs]}"$BOOT_FS_LABEL"} "${LOOP}p${bootpart}"'
+          new_mkfs = '''\t\tif [[ "$BOARD" == "aml-s9xx-box" && "$bootfs" == "fat" ]]; then
+          \t\t\trun_host_command_logged "mkfs.${mkfs[$bootfs]}" -F32 ${mkopts_label[$bootfs]:+${mkopts_label[$bootfs]}"$BOOT_FS_LABEL"} "${LOOP}p${bootpart}"
+          \t\telse
+          \t\t\trun_host_command_logged "mkfs.${mkfs[$bootfs]}" ${mkopts[$bootfs]} ${mkopts_label[$bootfs]:+${mkopts_label[$bootfs]}"$BOOT_FS_LABEL"} "${LOOP}p${bootpart}"
+          \t\tfi'''
+          if old_mkfs in s:
+              s = s.replace(old_mkfs, new_mkfs, 1)
+          elif '-F32' not in s[s.find('display_alert "Creating /boot"'):s.find("##\\n\\t## EFI PARTITION")]:
+              raise SystemExit("Could not find Armbian /boot mkfs line")
+          p.write_text(s, encoding="utf-8")
+          print("Applied aml-s9xx-box FAT32 and MBR type 0x0C patch.")
+          PY
+          fi
 
       - name: Build firmware image
         shell: bash
