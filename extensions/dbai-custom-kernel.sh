@@ -2,6 +2,35 @@
 # Optional custom kernel bundle overlay. One outer tar contains four inner archives.
 # Inner archive paths are rooted at the target filesystem (boot/, lib/, usr/).
 
+# Shared classifier used by the installer and the workflow's preflight check.
+# UAPI-only archives contain just include/ and are NOT kernel build headers.
+function dbai_detect_kernel_headers_layout() {
+	local listing_file="${1:-}"
+	[[ -n "${listing_file}" && -f "${listing_file}" ]] || return 1
+
+	if grep -Eq '^([.]/)?(usr/src/|lib/modules/[^/]+/build)' "${listing_file}"; then
+		printf 'target-root\n'
+		return 0
+	fi
+	if grep -Eq '^([.]/)?include/' "${listing_file}" && grep -Eq '^([.]/)?Makefile$' "${listing_file}"; then
+		printf 'header-root\n'
+		return 0
+	fi
+	if grep -Eq '^([.]/)?include/' "${listing_file}" && ! grep -Eq '^([.]/)?Makefile$' "${listing_file}" && awk '
+		{
+			path=$0
+			sub(/^\.\//, "", path)
+			if (path=="." || path=="" || path=="include" || path ~ /^include\//) next
+			bad=1
+		}
+		END { exit bad }
+	' "${listing_file}"; then
+		printf 'uapi-root\n'
+		return 0
+	fi
+	return 1
+}
+
 function extension_prepare_config__dbai_custom_kernel() {
 	if [[ "${DBAI_KERNEL_MODE:-}" != "Custom Kernel" ]]; then
 		exit_with_error "dbai-custom-kernel extension was enabled while DBAI_KERNEL_MODE is not Custom Kernel"
@@ -68,26 +97,12 @@ function pre_customize_image__dbai_overlay_kernel_bundle() {
 	fi
 	local headers_listing="${cache_dir}/headers-list.txt"
 	tar -tf "${cache_dir}/headers.tar" > "${headers_listing}" || exit_with_error "Unable to read headers archive file list"
-	local headers_layout="target-root"
-	if ! grep -Eq '^([.]/)?(usr/src/|lib/modules/[^/]+/build)' "${headers_listing}"; then
-		if grep -Eq '^([.]/)?include/' "${headers_listing}" && grep -Eq '^([.]/)?Makefile$' "${headers_listing}"; then
-			headers_layout="header-root"
-		elif grep -Eq '^([.]/)?include/' "${headers_listing}" && ! grep -Eq '^([.]/)?Makefile$' "${headers_listing}" && awk '
-			{
-				path=$0
-				sub(/^\.\//, "", path)
-				if (path=="." || path=="" || path=="include" || path ~ /^include\//) next
-				bad=1
-			}
-			END { exit bad }
-		' "${headers_listing}"; then
-			headers_layout="uapi-root"
-		else
-			echo "First headers archive entries:"
-			sed -n '1,40p' "${headers_listing}"
-			exit_with_error "header-<version> archive must contain a kernel build tree or only a root include/ UAPI tree"
-		fi
-	fi
+	local headers_layout
+	headers_layout="$(dbai_detect_kernel_headers_layout "${headers_listing}")" || {
+		echo "First headers archive entries:"
+		sed -n '1,40p' "${headers_listing}"
+		exit_with_error "header-<version> archive must contain a kernel build tree or only a root include/ UAPI tree"
+	}
 	local modules_release=""
 	if [[ "${modules_layout}" == "release-root" ]]; then
 		modules_release="$(sed -nE 's#^([.]/)?([^/]+)/modules[.]dep$#\2#p' "${modules_listing}" | head -n 1)"
@@ -150,7 +165,11 @@ function pre_customize_image__dbai_overlay_kernel_bundle() {
 			;;
 	esac
 	mkdir -p "${SDCARD}/lib/modules/${modules_release}" "${SDCARD}/usr/src"
-	if [[ -d "${SDCARD}/usr/src/linux-headers-${modules_release}" ]]; then
+	if [[ "${headers_layout}" == "uapi-root" ]]; then
+		# The module archive can include dangling links to a missing build tree.
+		[[ ! -L "${SDCARD}/lib/modules/${modules_release}/build" ]] || rm -f "${SDCARD}/lib/modules/${modules_release}/build"
+		[[ ! -L "${SDCARD}/lib/modules/${modules_release}/source" ]] || rm -f "${SDCARD}/lib/modules/${modules_release}/source"
+	elif [[ -d "${SDCARD}/usr/src/linux-headers-${modules_release}" ]]; then
 		ln -sfn "/usr/src/linux-headers-${modules_release}" "${SDCARD}/lib/modules/${modules_release}/build"
 		ln -sfn "/usr/src/linux-headers-${modules_release}" "${SDCARD}/lib/modules/${modules_release}/source"
 	fi
