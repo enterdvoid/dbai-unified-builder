@@ -39,5 +39,16 @@ jobs:
           "$(go env GOPATH)/bin/actionlint" -color
       - name: Lint shell scripts
         run: shellcheck scripts/*.sh extensions/*.sh tests/*.sh
+      - name: Validate Docker Compose app configuration
+        run: |
+          docker compose version
+          awk '/cat >.*docker-compose.yml.*<<.COMPOSE./ {capture=1; next} /^COMPOSE$/ {capture=0} capture {print}' extensions/dbai-apps.sh > "$RUNNER_TEMP/docker-compose.yml"
+          cat > "$RUNNER_TEMP/.env" <<'EOF'
+          JWT_SECRET=validation-secret
+          INITIAL_PASSWORD=validation-password
+          API_KEY_SECRET=validation-api-key
+          MACHINE_ID_SALT=validation-machine-salt
+          EOF
+          docker compose --project-directory "$RUNNER_TEMP" --profile hermes-9router --profile lightnvr-go2rtc -f "$RUNNER_TEMP/docker-compose.yml" config --quiet
       - name: Test input validator
         run: bash tests/test-validate-inputs.sh

@@ -33,4 +33,17 @@ if [[ ",$profiles_compact," == *",application,"* && "$app_profile" == "none" ]];
   exit 2
 fi
 [[ "$app_profile" =~ ^(none|homeassistant|openmediavault|casaos|hermes-9router|lightnvr-go2rtc|hermes-9router-lightnvr)$ ]] || { echo "Unsupported app profile: $app_profile" >&2; exit 2; }
+if [[ ",$profiles_compact," == *",application,"* ]]; then
+  for item in "${release_list[@]}"; do
+    item="$(xargs <<< "$item")"
+    case "$app_profile" in
+      homeassistant)
+        [[ "$item" =~ ^(bullseye|bookworm|trixie)$ ]] || { echo "Home Assistant application profile does not support $item" >&2; exit 2; }
+        ;;
+      openmediavault|casaos|hermes-9router|lightnvr-go2rtc|hermes-9router-lightnvr)
+        [[ "$item" =~ ^(bookworm|trixie)$ ]] || { echo "$app_profile application profile currently supports bookworm/trixie only; got $item" >&2; exit 2; }
+        ;;
+    esac
+  done
+fi
 echo "Validated: board=$board releases=$releases profiles=$profiles filesystem=$filesystem kernel=$kernel_mode app=$app_profile"

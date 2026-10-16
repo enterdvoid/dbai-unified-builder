@@ -13,11 +13,12 @@ function extension_prepare_config__dbai_apps() {
 			exit_with_error "DBAI Docker app profiles currently support bookworm and trixie only; got ${RELEASE}"
 			;;
 	esac
-	case "${ARCH}" in
-		arm64|armhf|amd64)
+	case "${DBAI_APP_PROFILE:-}" in
+		hermes-9router|hermes-9router-lightnvr)
+			case "${ARCH}" in arm64|amd64) ;; *) exit_with_error "Hermes + 9Router profiles require arm64 or amd64; got ${ARCH}" ;; esac
 			;;
-		*)
-			exit_with_error "DBAI Docker app profiles require arm64, armhf, or amd64; got ${ARCH}"
+		lightnvr-go2rtc)
+			case "${ARCH}" in arm64|armhf|amd64) ;; *) exit_with_error "LightNVR profile requires arm64, armhf, or amd64; got ${ARCH}" ;; esac
 			;;
 	esac
 	case "${DBAI_APP_PROFILE:-}" in
