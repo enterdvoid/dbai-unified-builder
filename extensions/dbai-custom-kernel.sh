@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 # Optional DBAI four-part kernel overlay.
 # Inputs are HTTPS URLs to tar archives with paths rooted at the target filesystem.
 

@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 # Experimental CasaOS installer extension.
 # Use only on supported Debian/Armbian images and validate the result on hardware.
 
