@@ -5,6 +5,7 @@ set -Eeuo pipefail
 IFS=$'\n\t'
 
 APP_NAME="DBAI VM Image Importer"
+UI_BACKTITLE="DBAI  |  PROXMOX VIRTUALIZATION TOOLKIT"
 LOG_FILE="/var/log/dbai-vm-import.log"
 WORKDIR=""
 TMP_SOURCE=""
@@ -67,12 +68,14 @@ require_core_commands() {
 ui_input() {
   local title="$1" prompt="$2" default="${3-}" answer
   if has_cmd whiptail && [[ -t 0 && -e /dev/tty ]]; then
-    answer="$(whiptail --title "$title" --inputbox "$prompt" 10 78 "$default" </dev/tty 3>&1 1>/dev/tty 2>&3)" || return 1
+    answer="$(whiptail --backtitle "$UI_BACKTITLE" --title "$title" --ok-button "Lanjut" --cancel-button "Batal" --inputbox "$prompt" 12 82 "$default" </dev/tty 3>&1 1>/dev/tty 2>&3)" || return 1
     # Whiptail can return an empty value if the user clears the pre-filled field.
     # Restore the displayed default rather than turning the VM name into "dbai-vm".
     answer="${answer:-$default}"
   else
-    printf '%s [%s]: ' "$prompt" "$default" >&2
+    printf '\n+-- %s ---------------------------------------------------------------+\n' "$title" >&2
+    printf '%s\n\n' "$prompt" >&2
+    printf 'Nilai [%s]: ' "$default" >&2
     IFS= read -r answer || return 1
     answer="${answer:-$default}"
   fi
@@ -83,9 +86,9 @@ ui_yesno() {
   local title="$1" prompt="$2" default="${3:-no}" answer
   if has_cmd whiptail && [[ -t 0 && -e /dev/tty ]]; then
     if [[ "$default" == yes ]]; then
-      whiptail --title "$title" --yesno "$prompt" 12 78 </dev/tty >/dev/tty 2>&1
+      whiptail --backtitle "$UI_BACKTITLE" --title "$title" --yes-button "Ya, jalankan" --no-button "Tidak, nanti" --yesno "$prompt" 12 82 </dev/tty >/dev/tty 2>&1
     else
-      whiptail --defaultno --title "$title" --yesno "$prompt" 12 78 </dev/tty >/dev/tty 2>&1
+      whiptail --defaultno --backtitle "$UI_BACKTITLE" --title "$title" --yes-button "Ya, jalankan" --no-button "Tidak, nanti" --yesno "$prompt" 12 82 </dev/tty >/dev/tty 2>&1
     fi
   else
     if [[ "$default" == yes ]]; then
@@ -102,15 +105,18 @@ ui_menu() {
   local title="$1" prompt="$2"
   shift 2
   if has_cmd whiptail && [[ -t 0 && -e /dev/tty ]]; then
-    whiptail --title "$title" --menu "$prompt" 20 84 12 "$@" </dev/tty 3>&1 1>/dev/tty 2>&3
+    whiptail --backtitle "$UI_BACKTITLE" --title "$title" --ok-button "Pilih" --cancel-button "Kembali" --menu "$prompt" 22 90 10 "$@" </dev/tty 3>&1 1>/dev/tty 2>&3
   else
     local -a opts=("$@")
     local i choice
-    printf '\n%s\n%s\n' "$title" "$prompt" >&2
+    printf '\n+----------------------------------------------------------------------+\n' >&2
+    printf '| %-68s |\n' "$title" >&2
+    printf '+----------------------------------------------------------------------+\n' >&2
+    printf '%s\n\n' "$prompt" >&2
     for ((i=0; i<${#opts[@]}; i+=2)); do
-      printf '  %d) %s\n' "$((i/2+1))" "${opts[i+1]}" >&2
+      printf '  [%2d] %-12s %s\n' "$((i/2+1))" "${opts[i]}" "${opts[i+1]}" >&2
     done
-    printf 'Pilih nomor: ' >&2
+    printf '\nPilih nomor lalu tekan Enter: ' >&2
     read -r choice || return 1
     [[ "$choice" =~ ^[0-9]+$ ]] || return 1
     ((choice >= 1 && choice <= ${#opts[@]}/2)) || return 1
@@ -348,7 +354,7 @@ select_local_image() {
   fi
 
   info "Image yang cocok ditemukan di $directory: ${#candidates[@]}"
-  selected_index="$(ui_menu "$APP_NAME" "Pilih SATU file image yang akan diimpor:" "${options[@]}")" || die "Pemilihan image lokal dibatalkan."
+  selected_index="$(ui_menu "$APP_NAME" $'LANGKAH 2  /  PILIH IMAGE\n\nPilih satu file. Format dan ukuran ditampilkan di samping nama:' "${options[@]}")" || die "Pemilihan image lokal dibatalkan."
   [[ "$selected_index" =~ ^[0-9]+$ ]] || die "Nomor pilihan file tidak valid."
   ((selected_index >= 1 && selected_index <= ${#candidates[@]})) || die "Nomor pilihan file di luar rentang."
   selected="${candidates[selected_index-1]}"
@@ -649,19 +655,19 @@ do_import() {
 interactive_wizard() {
   local source_mode source_input source default_name vmid name memory cores start
   local -a menu=(
-    "import" "Impor disk image dan buat VM"
-    "diagnose" "Periksa storage, bridge, KVM, dan versi Proxmox"
-    "quit" "Keluar"
+    "import" "IMPORT IMAGE  -  Buat VM dari disk image"
+    "diagnose" "DIAGNOSTIK   -  Periksa storage, bridge, KVM"
+    "quit" "KELUAR       -  Tutup wizard"
   )
   local -a source_menu=(
-    "local-select" "Pilih dari daftar file lokal (folder default /root)"
-    "local-path" "Masukkan path file tertentu atau folder"
-    "url" "Unduh image dari URL HTTP(S)"
+    "local-select" "FILE LOKAL   -  Jelajahi folder dan pilih image"
+    "local-path" "PATH LOKAL   -  Masukkan path file/folder"
+    "url" "URL REMOTE   -  Unduh dari HTTP(S)"
   )
   local action
 
   info "Membuka menu utama."
-  action="$(ui_menu "$APP_NAME" "Apa yang ingin dilakukan?" "${menu[@]}")" || { warn "Wizard dibatalkan pada menu utama."; return 0; }
+  action="$(ui_menu "$APP_NAME" $'DBAI VM IMPORTER  /  PROXMOX VE\n\nPilih tindakan untuk melanjutkan:' "${menu[@]}")" || { warn "Wizard dibatalkan pada menu utama."; return 0; }
   case "$action" in
     diagnose) check_host; return ;;
     quit) return ;;
@@ -670,11 +676,11 @@ interactive_wizard() {
   esac
 
   info "Membuka pemilihan sumber image."
-  source_mode="$(ui_menu "$APP_NAME" "Pilih sumber image:" "${source_menu[@]}")" || { warn "Wizard dibatalkan pada pemilihan sumber image."; return 0; }
+  source_mode="$(ui_menu "$APP_NAME" $'LANGKAH 1  /  SUMBER IMAGE\n\nPilih lokasi disk virtual yang akan diimpor:' "${source_menu[@]}")" || { warn "Wizard dibatalkan pada pemilihan sumber image."; return 0; }
   case "$source_mode" in
     local-select)
       info "Meminta folder untuk pemilihan image lokal."
-      source_input="$(ui_input "$APP_NAME" "Folder lokal untuk mencari image yang didukung:" "/root")" || { warn "Wizard dibatalkan saat meminta folder lokal."; return 0; }
+      source_input="$(ui_input "$APP_NAME" $'SUMBER IMAGE  /  FILE LOKAL\n\nFolder yang akan dipindai (hanya satu tingkat):' "/root")" || { warn "Wizard dibatalkan saat meminta folder lokal."; return 0; }
       source_input="${source_input:-/root}"
       info "Menampilkan daftar image di folder lokal."
       source="$(select_local_image "$source_input")"
@@ -682,14 +688,14 @@ interactive_wizard() {
       ;;
     local-path)
       info "Meminta path file/folder lokal."
-      source_input="$(ui_input "$APP_NAME" "Masukkan path file image atau folder lokal:" "/root")" || { warn "Wizard dibatalkan saat meminta path lokal."; return 0; }
+      source_input="$(ui_input "$APP_NAME" $'SUMBER IMAGE  /  PATH LOKAL\n\nMasukkan path absolut file image atau folder:' "/root")" || { warn "Wizard dibatalkan saat meminta path lokal."; return 0; }
       [[ -n "$source_input" ]] || source_input="/root"
       source="$(resolve_local_input "$source_input")"
       info "Sumber lokal dipilih: $(basename -- "$source")"
       ;;
     url)
       info "Meminta URL image HTTP(S)."
-      source="$(ui_input "$APP_NAME" "Masukkan URL langsung file image HTTP(S):" "")" || { warn "Wizard dibatalkan saat meminta URL."; return 0; }
+      source="$(ui_input "$APP_NAME" $'SUMBER IMAGE  /  URL REMOTE\n\nMasukkan URL langsung file image HTTP(S):' "")" || { warn "Wizard dibatalkan saat meminta URL."; return 0; }
       [[ "$source" =~ ^https?:// ]] || die "URL harus dimulai dengan http:// atau https://."
       info "Sumber URL dipilih; URL lengkap tidak ditulis ke log."
       ;;
@@ -700,14 +706,14 @@ interactive_wizard() {
 
   default_name="$(default_name_from_source "$source")"
   info "Meminta VMID."
-  vmid="$(ui_input "$APP_NAME" "VMID yang akan digunakan:" "$(next_vmid)")" || { warn "Wizard dibatalkan pada input VMID."; return 0; }
+  vmid="$(ui_input "$APP_NAME" $'LANGKAH 3  /  IDENTITAS VM\n\nVMID harus unik dan berada pada rentang 100–999999999:' "$(next_vmid)")" || { warn "Wizard dibatalkan pada input VMID."; return 0; }
   info "VMID yang dipilih: $vmid."
   info "Meminta nama VM."
-  name="$(ui_input "$APP_NAME" "Nama VM (1–63 karakter; awali huruf/angka; . _ - diizinkan; karakter lain diganti '-'):" "$default_name")" || { warn "Wizard dibatalkan pada input nama VM."; return 0; }
+  name="$(ui_input "$APP_NAME" $'NAMA VM\n\nGunakan 1–63 karakter. Huruf/angka di awal; titik, _ dan - diizinkan.\nKarakter lain akan dinormalisasi otomatis. Nama awal diambil dari nama image:' "$default_name")" || { warn "Wizard dibatalkan pada input nama VM."; return 0; }
   info "Meminta ukuran RAM guest."
-  memory="$(ui_input "$APP_NAME" "RAM guest (MiB):" "1024")" || { warn "Wizard dibatalkan pada input RAM."; return 0; }
+  memory="$(ui_input "$APP_NAME" $'SUMBER DAYA  /  RAM\n\nAlokasi RAM guest dalam MiB (contoh: 1024 = 1 GiB):' "1024")" || { warn "Wizard dibatalkan pada input RAM."; return 0; }
   info "Meminta jumlah vCPU."
-  cores="$(ui_input "$APP_NAME" "Jumlah vCPU:" "1")" || { warn "Wizard dibatalkan pada input vCPU."; return 0; }
+  cores="$(ui_input "$APP_NAME" $'SUMBER DAYA  /  CPU\n\nJumlah vCPU untuk guest:' "1")" || { warn "Wizard dibatalkan pada input vCPU."; return 0; }
   info "Membuka pemilihan storage tujuan."
   choose_storage
   info "Storage tujuan dipilih: $SELECTED_STORAGE."
@@ -715,7 +721,7 @@ interactive_wizard() {
   choose_bridge
   info "Bridge dipilih: ${SELECTED_BRIDGE:-tidak menggunakan NIC}."
   info "Meminta konfirmasi untuk langsung menjalankan VM."
-  if ui_yesno "$APP_NAME" "Jalankan VM segera setelah impor? Disarankan memilih Tidak untuk memeriksa hardware/console lebih dahulu." no; then start=yes; else start=no; fi
+  if ui_yesno "$APP_NAME" $'LANGKAH TERAKHIR  /  START VM\n\nJalankan VM segera setelah impor selesai?\n\nRekomendasi: pilih Tidak untuk memeriksa hardware dan console terlebih dahulu.' no; then start=yes; else start=no; fi
   info "Semua parameter wizard lengkap; memulai tahap impor."
   do_import "$source" "$vmid" "$name" "$SELECTED_STORAGE" "$memory" "$cores" "$SELECTED_BRIDGE" "$start"
 }
