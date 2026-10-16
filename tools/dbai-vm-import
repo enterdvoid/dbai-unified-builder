@@ -1,0 +1,753 @@
+#!/usr/bin/env bash
+# DBAI VM Image Importer — interactive image-to-Proxmox VM wizard.
+# Supports disk formats understood by qemu-img and common compressed archives.
+set -Eeuo pipefail
+IFS=$'\n\t'
+
+APP_NAME="DBAI VM Image Importer"
+LOG_FILE="/var/log/dbai-vm-import.log"
+WORKDIR=""
+TMP_SOURCE=""
+SELECTED_BRIDGE=""
+
+usage() {
+  cat <<'USAGE'
+DBAI VM Image Importer
+
+Usage:
+  dbai-vm-import          Open the interactive wizard
+  dbai-vm-import --check  Check Proxmox commands, image storage, bridges and KVM
+  dbai-vm-import --list   List image-capable storage and existing Linux bridges
+  dbai-vm-import --help   Show this help
+
+The wizard can browse supported files in a local folder (default /root),
+accept an exact local file path, or download from an HTTP(S) URL. For local
+browsing it shows only recognized disk/container suffixes, the filename, suffix,
+and file size before asking for VM settings.
+
+Recognized disk formats: RAW/IMG, QCOW2, VDI, VMDK, VHD, VHDX, with .gz/.xz/.zst/.bz2 compression.
+Recognized containers: .img.gz, .img.xz, .img.zst, .img.bz2, .zip, .ova, .ovf.
+ISO installers are not disk images and are not imported by this tool.
+
+Important:
+  - Run as root on the Proxmox host.
+  - Disk image format does not prove guest CPU architecture or boot compatibility.
+  - Existing bridges are detected; the tool never rewrites host network config.
+  - OVA/OVF import extracts/uses the first referenced disk; appliance CPU/RAM/NIC
+    metadata is not imported. Select and review those settings in the wizard.
+USAGE
+}
+
+log_init() {
+  mkdir -p "$(dirname "$LOG_FILE")"
+  touch "$LOG_FILE"
+  chmod 0600 "$LOG_FILE"
+  exec > >(tee -a "$LOG_FILE") 2>&1
+}
+
+die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
+warn() { printf 'WARNING: %s\n' "$*" >&2; }
+info() { printf '\n==> %s\n' "$*" >&2; }
+
+has_cmd() { command -v "$1" >/dev/null 2>&1; }
+
+require_root() {
+  [[ ${EUID:-$(id -u)} -eq 0 ]] || die "Jalankan sebagai root, misalnya: sudo dbai-vm-import"
+}
+
+require_core_commands() {
+  local missing=()
+  local cmd
+  for cmd in qm pvesm qemu-img ip awk sed grep; do
+    has_cmd "$cmd" || missing+=("$cmd")
+  done
+  (("${#missing[@]}" == 0)) || die "Perintah penting tidak tersedia: ${missing[*]}. Pastikan ini host Proxmox dan paket pve-qemu-kvm menyediakan qemu-img."
+}
+
+ui_input() {
+  local title="$1" prompt="$2" default="${3-}" answer
+  if has_cmd whiptail && [[ -t 0 && -e /dev/tty ]]; then
+    answer="$(whiptail --title "$title" --inputbox "$prompt" 10 78 "$default" </dev/tty 3>&1 1>/dev/tty 2>&3)" || return 1
+    # Whiptail can return an empty value if the user clears the pre-filled field.
+    # Restore the displayed default rather than turning the VM name into "dbai-vm".
+    answer="${answer:-$default}"
+  else
+    printf '%s [%s]: ' "$prompt" "$default" >&2
+    IFS= read -r answer || return 1
+    answer="${answer:-$default}"
+  fi
+  printf '%s' "$answer"
+}
+
+ui_yesno() {
+  local title="$1" prompt="$2" default="${3:-no}" answer
+  if has_cmd whiptail && [[ -t 0 && -e /dev/tty ]]; then
+    if [[ "$default" == yes ]]; then
+      whiptail --title "$title" --yesno "$prompt" 12 78 </dev/tty >/dev/tty 2>&1
+    else
+      whiptail --defaultno --title "$title" --yesno "$prompt" 12 78 </dev/tty >/dev/tty 2>&1
+    fi
+  else
+    if [[ "$default" == yes ]]; then
+      read -r -p "$prompt [Y/n]: " answer || return 1
+      [[ ! "$answer" =~ ^[Nn]$ ]]
+    else
+      read -r -p "$prompt [y/N]: " answer || return 1
+      [[ "$answer" =~ ^[Yy]$ ]]
+    fi
+  fi
+}
+
+ui_menu() {
+  local title="$1" prompt="$2"
+  shift 2
+  if has_cmd whiptail && [[ -t 0 && -e /dev/tty ]]; then
+    whiptail --title "$title" --menu "$prompt" 20 84 12 "$@" </dev/tty 3>&1 1>/dev/tty 2>&3
+  else
+    local -a opts=("$@")
+    local i choice
+    printf '\n%s\n%s\n' "$title" "$prompt" >&2
+    for ((i=0; i<${#opts[@]}; i+=2)); do
+      printf '  %d) %s\n' "$((i/2+1))" "${opts[i+1]}" >&2
+    done
+    printf 'Pilih nomor: ' >&2
+    read -r choice || return 1
+    [[ "$choice" =~ ^[0-9]+$ ]] || return 1
+    ((choice >= 1 && choice <= ${#opts[@]}/2)) || return 1
+    printf '%s' "${opts[(choice-1)*2]}"
+  fi
+}
+
+format_gib() {
+  # qemu-img info reports virtual-size in bytes.
+  awk -v n="${1:-0}" 'BEGIN { if (n ~ /^[0-9]+$/) printf "%.2f GiB", n/1073741824; else printf "unknown" }'
+}
+
+format_storage_gib() {
+  # Proxmox pvesm status reports Total/Used/Available in KiB.
+  awk -v n="${1:-0}" 'BEGIN { if (n ~ /^[0-9]+$/) printf "%.2f GiB", n/1048576; else printf "unknown" }'
+}
+
+get_storage_rows() {
+  pvesm status --content images 2>/dev/null | awk '
+    NR==1 { next }
+    NF >= 6 && $3=="active" { print $1 "|" $2 "|" $6 }
+  '
+}
+
+list_storages() {
+  local rows
+  rows="$(get_storage_rows || true)"
+  if [[ -z "$rows" ]]; then
+    echo "Storage aktif dengan content 'images': tidak ditemukan."
+    echo "Periksa Datacenter > Storage dan pastikan content Disk image diaktifkan."
+    return 1
+  fi
+  printf '%-20s %-12s %s\n' "STORAGE" "TYPE" "AVAILABLE"
+  while IFS='|' read -r name type available; do
+    printf '%-20s %-12s %s\n' "$name" "$type" "$(format_storage_gib "$available")"
+  done <<< "$rows"
+}
+
+get_bridge_names() {
+  ip -d -o link show type bridge 2>/dev/null |
+    awk '{name=$2; sub(/:$/, "", name); sub(/@.*/, "", name); if (name!="") print name}'
+}
+
+list_bridges() {
+  local bridges
+  bridges="$(get_bridge_names || true)"
+  if [[ -z "$bridges" ]]; then
+    echo "Bridge Linux tidak ditemukan."
+    echo "Wizard tidak akan mengubah konfigurasi jaringan host secara otomatis."
+    return 0
+  fi
+  printf '%s\n' "$bridges"
+}
+
+check_host() {
+  local arch
+  arch="$(uname -m)"
+  echo "Host architecture: $arch"
+  echo "Proxmox version: $(pveversion 2>/dev/null | head -n 1 || echo unknown)"
+  echo
+  echo "[Storage yang menerima disk image]"
+  list_storages || true
+  echo
+  echo "[Bridge Linux yang sudah ada]"
+  list_bridges
+  echo
+  if [[ -e /dev/kvm ]]; then
+    echo "KVM: /dev/kvm tersedia"
+  else
+    warn "KVM: /dev/kvm tidak ditemukan. Guest VM bisa gagal start atau berjalan sangat lambat; periksa dukungan virtualisasi CPU/kernel."
+  fi
+  echo "Catatan: pemeriksaan ini tidak menjamin setiap guest OS/arsitektur bisa boot."
+}
+
+next_vmid() {
+  local id
+  id="$(pvesh get /cluster/nextid 2>/dev/null | tr -cd '0-9' | head -c 12 || true)"
+  if [[ "$id" =~ ^[0-9]{3,9}$ ]] && ! qm status "$id" >/dev/null 2>&1; then
+    printf '%s' "$id"
+    return
+  fi
+  for ((id=100; id<100000; id++)); do
+    if ! qm status "$id" >/dev/null 2>&1; then
+      printf '%s' "$id"
+      return
+    fi
+  done
+  die "Tidak menemukan VMID kosong."
+}
+
+default_name_from_source() {
+  local base="$1"
+  base="${base%%\?*}"
+  base="${base##*/}"
+  base="${base%.gz}"; base="${base%.xz}"; base="${base%.zst}"; base="${base%.bz2}"
+  base="${base%.*}"
+  base="$(printf '%s' "$base" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9._-]+/-/g; s/^-+//; s/-+$//')"
+
+  # Keep recognisable product/version names instead of the long firmware target.
+  # Example: openwrt-25.12.5-armsr-armv8-generic-ext4-combined-efi -> openwrt-25.12.5
+  if [[ "$base" =~ ^(openwrt-[0-9]+(\.[0-9]+)*)(-|$) ]]; then
+    base="${BASH_REMATCH[1]}"
+  elif [[ "$base" =~ ^(chr-[0-9]+(\.[0-9]+)*)(-|$) ]]; then
+    base="${BASH_REMATCH[1]}"
+  else
+    base="$(printf '%s' "$base" | sed -E 's/-(arm64|aarch64|armv[0-9]+|armsr|x86_64|amd64|generic|ext4|squashfs|combined|efi|uefi|rootfs|disk|image)(-|$).*//')"
+  fi
+
+  base="${base:0:63}"
+  base="$(printf '%s' "$base" | sed -E 's/[-_.]+$//')"
+  [[ "$base" =~ ^[a-z0-9] ]] || base="dbai-vm-$base"
+  printf '%s' "${base:-dbai-vm}"
+}
+
+choose_storage() {
+  local rows name type available
+  local -a options=()
+  rows="$(get_storage_rows || true)"
+  [[ -n "$rows" ]] || die "Tidak ada storage aktif untuk disk image. Buka Datacenter > Storage dan aktifkan content 'Disk image'."
+  while IFS='|' read -r name type available; do
+    [[ -n "$name" ]] || continue
+    options+=("$name" "$type — tersedia $(format_storage_gib "$available")")
+  done <<< "$rows"
+  SELECTED_STORAGE="$(ui_menu "DBAI VM Import" "Pilih storage tujuan disk VM:" "${options[@]}")" || die "Pemilihan storage dibatalkan."
+}
+
+choose_bridge() {
+  local bridges
+  local -a options=()
+  bridges="$(get_bridge_names || true)"
+  options+=("none" "Buat VM tanpa NIC; atur jaringan setelahnya")
+  while IFS= read -r name; do
+    [[ -n "$name" ]] && options+=("$name" "Bridge yang sudah ada")
+  done <<< "$bridges"
+  SELECTED_BRIDGE="$(ui_menu "DBAI VM Import" "Pilih bridge yang sudah ada. Host network tidak akan diubah:" "${options[@]}")" || die "Pemilihan bridge dibatalkan."
+  if [[ "$SELECTED_BRIDGE" == none ]]; then
+    SELECTED_BRIDGE=""
+  fi
+}
+
+safe_extract_archive() {
+  local archive="$1" destination="$2" entry
+  mkdir -p "$destination"
+  while IFS= read -r entry; do
+    [[ "$entry" != /* ]] || die "Arsip berisi path absolut yang ditolak: $entry"
+    [[ "/$entry/" != *"/../"* ]] || die "Arsip berisi path traversal yang ditolak: $entry"
+  done < <(tar -tf "$archive")
+  tar --no-same-owner --no-same-permissions -xf "$archive" -C "$destination"
+}
+
+safe_extract_zip() {
+  local archive="$1" destination="$2" entry
+  mkdir -p "$destination"
+  while IFS= read -r entry; do
+    [[ "$entry" != /* ]] || die "ZIP berisi path absolut yang ditolak: $entry"
+    [[ "/$entry/" != *"/../"* ]] || die "ZIP berisi path traversal yang ditolak: $entry"
+  done < <(unzip -Z1 "$archive")
+  unzip -q "$archive" -d "$destination"
+}
+
+is_disk_candidate() {
+  local name="${1,,}"
+  case "$name" in
+    *.img|*.raw|*.qcow2|*.vdi|*.vmdk|*.vhd|*.vhdx) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# Return the recognized input suffix, including compression when present.
+# Empty output means the file is not a supported disk/container type.
+supported_suffix() {
+  local name="${1##*/}" lower core compression="" disk_suffix=""
+  lower="${name,,}"
+  core="$lower"
+  case "$core" in
+    *.gz|*.xz|*.zst|*.bz2)
+      compression=".${core##*.}"
+      core="${core%.*}"
+      ;;
+  esac
+  case "$core" in
+    *.img) disk_suffix=".img" ;;
+    *.raw) disk_suffix=".raw" ;;
+    *.qcow2) disk_suffix=".qcow2" ;;
+    *.vdi) disk_suffix=".vdi" ;;
+    *.vmdk) disk_suffix=".vmdk" ;;
+    *.vhd) disk_suffix=".vhd" ;;
+    *.vhdx) disk_suffix=".vhdx" ;;
+  esac
+  if [[ -n "$disk_suffix" ]]; then
+    printf '%s%s' "$disk_suffix" "$compression"
+    return 0
+  fi
+  case "$lower" in
+    *.zip) printf '.zip'; return 0 ;;
+    *.ova) printf '.ova'; return 0 ;;
+    *.ovf) printf '.ovf'; return 0 ;;
+  esac
+  return 1
+}
+
+is_supported_input() {
+  local suffix
+  suffix="$(supported_suffix "$1" 2>/dev/null || true)"
+  [[ -n "$suffix" ]]
+}
+
+format_file_size() {
+  awk -v n="${1:-0}" 'BEGIN {
+    split("B KiB MiB GiB TiB", u, " ");
+    i=1;
+    while (n>=1024 && i<5) { n/=1024; i++ }
+    printf "%.1f %s", n, u[i]
+  }'
+}
+
+select_local_image() {
+  local directory="${1:-/root}" file suffix size_bytes name selected selected_index
+  local -a candidates=() options=()
+
+  [[ -d "$directory" ]] || die "Folder tidak ditemukan: $directory"
+  directory="$(readlink -f -- "$directory")"
+
+  while IFS= read -r -d '' file; do
+    suffix="$(supported_suffix "$file" 2>/dev/null || true)"
+    [[ -n "$suffix" ]] || continue
+    size_bytes="$(stat -c '%s' -- "$file" 2>/dev/null || printf '0')"
+    name="$(basename -- "$file")"
+    candidates+=("$file")
+    options+=("$(( ${#candidates[@]} ))" "$name  |  $suffix  |  $(format_file_size "$size_bytes")")
+  done < <(find "$directory" -maxdepth 1 -type f -print0 | sort -z)
+
+  if (("${#candidates[@]}" == 0)); then
+    die "Tidak ada image yang didukung di '$directory'. Dicari: .img/.raw/.qcow2/.vdi/.vmdk/.vhd/.vhdx, kompresi .gz/.xz/.zst/.bz2, serta .zip/.ova/.ovf."
+  fi
+
+  info "Image yang cocok ditemukan di $directory: ${#candidates[@]}"
+  selected_index="$(ui_menu "$APP_NAME" "Pilih SATU file image yang akan diimpor:" "${options[@]}")" || die "Pemilihan image lokal dibatalkan."
+  [[ "$selected_index" =~ ^[0-9]+$ ]] || die "Nomor pilihan file tidak valid."
+  ((selected_index >= 1 && selected_index <= ${#candidates[@]})) || die "Nomor pilihan file di luar rentang."
+  selected="${candidates[selected_index-1]}"
+  [[ -f "$selected" && -r "$selected" ]] || die "File yang dipilih tidak tersedia atau tidak bisa dibaca: $selected"
+  is_supported_input "$selected" || die "Ekstensi file tidak didukung: $selected"
+  printf '%s' "$selected"
+}
+
+resolve_local_input() {
+  local value="$1"
+  if [[ -d "$value" ]]; then
+    select_local_image "$value"
+    return
+  fi
+  [[ -f "$value" && -r "$value" ]] || die "File/folder tidak ditemukan atau tidak bisa dibaca: $value"
+  is_supported_input "$value" || die "Jenis file '$value' tidak didukung. Gunakan .img/.img.gz/.img.xz/.vdi/.vdi.xz/.qcow2/.vmdk/.vhdx, arsip yang didukung, atau pilih unduh via URL."
+  readlink -f -- "$value"
+}
+
+select_candidate() {
+  local -a candidates=("$@")
+  local -a options=()
+  local file
+  if (("${#candidates[@]}" == 0)); then
+    die "Arsip tidak berisi disk RAW/IMG, QCOW2, VDI, VMDK, VHD atau VHDX yang dikenal."
+  elif (("${#candidates[@]}" == 1)); then
+    printf '%s' "${candidates[0]}"
+    return
+  fi
+  for file in "${candidates[@]}"; do options+=("$file" "Pilih file disk ini"); done
+  ui_menu "DBAI VM Import" "Lebih dari satu disk ditemukan. Pilih disk yang akan diimpor:" "${options[@]}"
+}
+
+ovf_disk_references() {
+  local ovf="$1"
+  python3 - "$ovf" <<'PY'
+import os, sys, xml.etree.ElementTree as ET
+path = os.path.abspath(sys.argv[1])
+root = ET.parse(path).getroot()
+seen = set()
+base = os.path.dirname(path)
+for node in root.iter():
+    if node.tag.rsplit("}", 1)[-1] != "File":
+        continue
+    href = node.attrib.get("href", "")
+    if not href or os.path.isabs(href) or ".." in href.replace("\\", "/").split("/"):
+        continue
+    full = os.path.abspath(os.path.join(base, href))
+    if os.path.commonpath([base, full]) != base or not os.path.isfile(full):
+        continue
+    if full not in seen:
+        seen.add(full)
+        print(full)
+PY
+}
+
+prepare_input() {
+  local source="$1" basename path lower suffix outdir ovf candidates=()
+  if [[ "$source" =~ ^https?:// ]]; then
+    basename="${source%%\?*}"
+    basename="${basename##*/}"
+    [[ -n "$basename" ]] || basename="downloaded-image"
+    path="$WORKDIR/$basename"
+    info "Mengunduh image ke $path"
+    curl --fail --location --show-error --retry 2 --connect-timeout 15 "$source" -o "$path"
+  else
+    [[ -f "$source" ]] || die "File tidak ditemukan: $source"
+    path="$(readlink -f -- "$source")"
+    basename="$(basename "$path")"
+  fi
+
+  lower="${basename,,}"
+  if [[ "$lower" == *.img.xz || "$lower" == *.raw.xz || "$lower" == *.qcow2.xz || "$lower" == *.vdi.xz || "$lower" == *.vmdk.xz || "$lower" == *.vhd.xz || "$lower" == *.vhdx.xz ]]; then
+    outdir="$WORKDIR/unpacked"; mkdir -p "$outdir"; path="$outdir/${basename%.*}"
+    info "Mengekstrak XZ..."
+    xz -dc -- "$TMP_SOURCE" > "$path"
+  elif [[ "$lower" == *.gz ]]; then
+    outdir="$WORKDIR/unpacked"; mkdir -p "$outdir"; path="$outdir/${basename%.gz}"
+    info "Mengekstrak GZIP..."
+    gzip -dc -- "$TMP_SOURCE" > "$path"
+  elif [[ "$lower" == *.zst ]]; then
+    outdir="$WORKDIR/unpacked"; mkdir -p "$outdir"; path="$outdir/${basename%.zst}"
+    info "Mengekstrak Zstandard..."
+    zstd -dc -- "$TMP_SOURCE" > "$path"
+  elif [[ "$lower" == *.bz2 ]]; then
+    outdir="$WORKDIR/unpacked"; mkdir -p "$outdir"; path="$outdir/${basename%.bz2}"
+    info "Mengekstrak BZIP2..."
+    bzip2 -dc -- "$TMP_SOURCE" > "$path"
+  elif [[ "$lower" == *.zip ]]; then
+    outdir="$WORKDIR/unpacked"
+    safe_extract_zip "$TMP_SOURCE" "$outdir"
+    while IFS= read -r -d '' file; do is_disk_candidate "$file" && candidates+=("$file"); done < <(find "$outdir" -type f -print0)
+    path="$(select_candidate "${candidates[@]}")"
+  elif [[ "$lower" == *.ova ]]; then
+    outdir="$WORKDIR/ova"
+    safe_extract_archive "$TMP_SOURCE" "$outdir"
+    while IFS= read -r -d '' file; do [[ "${file,,}" == *.ovf ]] && candidates+=("$file"); done < <(find "$outdir" -type f -print0)
+    (("${#candidates[@]}" > 0)) || die "OVA tidak berisi file OVF."
+    ovf="$(select_candidate "${candidates[@]}")"
+    mapfile -t candidates < <(ovf_disk_references "$ovf" | while IFS= read -r file; do is_disk_candidate "$file" && printf '%s\n' "$file"; done)
+    path="$(select_candidate "${candidates[@]}")"
+    warn "OVA: hanya disk terpilih yang diimpor. CPU/RAM/NIC dari metadata appliance tidak disalin."
+  elif [[ "$lower" == *.ovf ]]; then
+    mapfile -t candidates < <(ovf_disk_references "$path" | while IFS= read -r file; do is_disk_candidate "$file" && printf '%s\n' "$file"; done)
+    path="$(select_candidate "${candidates[@]}")"
+    warn "OVF: hanya disk terpilih yang diimpor. CPU/RAM/NIC dari metadata appliance tidak disalin."
+  fi
+
+  [[ -s "$path" ]] || die "Input image kosong atau tidak tersedia setelah diekstrak."
+  [[ "${path,,}" != *.iso ]] || die "ISO adalah media installer, bukan disk virtual. Buat VM installer lewat antarmuka Proxmox."
+  is_disk_candidate "$path" || die "Ekstensi disk tidak dikenali: $(basename "$path"). Format didukung: IMG/RAW, QCOW2, VDI, VMDK, VHD/VHDX."
+  printf '%s' "$path"
+}
+
+sanitize_vm_name() {
+  local name="$1"
+  # Replace characters that Proxmox rejects and prevent leading/trailing separators.
+  name="$(printf '%s' "$name" | sed -E 's/[^A-Za-z0-9._-]+/-/g; s/^[^A-Za-z0-9]+//; s/[-_.]+$//')"
+  name="${name:0:63}"
+  name="$(printf '%s' "$name" | sed -E 's/[-_.]+$//')"
+  printf '%s' "${name:-dbai-vm}"
+}
+
+check_vm_name() {
+  [[ "$1" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$ ]] || die "Nama VM tidak valid setelah normalisasi. Gunakan 1–63 karakter: huruf, angka, titik, garis bawah, atau tanda hubung."
+}
+
+vm_bridges_valid() {
+  local vmid="$1" bridge
+  while IFS= read -r bridge; do
+    [[ -n "$bridge" ]] || continue
+    ip link show dev "$bridge" >/dev/null 2>&1 || {
+      warn "VM mengacu pada bridge '$bridge' yang tidak ada. VM tidak akan dijalankan."
+      return 1
+    }
+  done < <(qm config "$vmid" | sed -nE 's/^net[0-9]+:.*bridge=([^,]+).*/\1/p')
+  return 0
+}
+
+rollback_empty_vm() {
+  local vmid="$1"
+  if qm status "$vmid" >/dev/null 2>&1; then
+    warn "Pembersihan VM sementara $vmid setelah kegagalan impor."
+    qm destroy "$vmid" --purge 1 --destroy-unreferenced-disks 1 >/dev/null 2>&1 || \
+      warn "Tidak bisa membersihkan VM sementara otomatis; periksa qm config $vmid dan storage secara manual."
+  fi
+}
+
+do_import() {
+  local source="$1" vmid="$2" name="$3" storage="$4" memory="$5" cores="$6" bridge="$7" start="$8"
+  local requested_name="$3"
+  local image_path info_json image_format virtual_size disk_ref remote_name local_download unused create_help
+  local vmid_decimal
+  local -a create_args=() import_cmd=()
+
+  # Reject bad settings before downloading or extracting a large image.
+  [[ "$vmid" =~ ^[0-9]{3,9}$ ]] || die "VMID harus berupa angka 100 sampai 999999999."
+  vmid_decimal=$((10#$vmid))
+  ((vmid_decimal >= 100 && vmid_decimal <= 999999999)) || die "VMID harus berada pada rentang 100 sampai 999999999."
+  if qm status "$vmid" >/dev/null 2>&1; then die "VMID $vmid sudah digunakan."; fi
+  name="$(sanitize_vm_name "$name")"
+  if [[ "$name" != "$requested_name" ]]; then
+    info "Nama VM disesuaikan dari '$requested_name' menjadi '$name' agar sesuai aturan Proxmox."
+  fi
+  check_vm_name "$name"
+  [[ "$memory" =~ ^[0-9]+$ && "$memory" -ge 128 && "$memory" -le 1048576 ]] || die "RAM tidak valid (MiB; rentang 128–1048576)."
+  [[ "$cores" =~ ^[0-9]+$ && "$cores" -ge 1 && "$cores" -le 512 ]] || die "Jumlah CPU tidak valid (1–512)."
+  [[ -n "$storage" ]] || die "Storage tidak dipilih."
+  pvesm status --content images 2>/dev/null | awk -v s="$storage" 'NR>1 && $1==s && $3=="active" {found=1} END {exit !found}' || die "Storage '$storage' tidak aktif atau tidak menerima content images."
+  if [[ -n "$bridge" ]]; then
+    printf '%s\n' "$(get_bridge_names)" | grep -Fxq -- "$bridge" || die "Bridge '$bridge' tidak ditemukan; host network tidak akan diubah."
+  fi
+
+  WORKDIR="$(mktemp -d "${TMPDIR:-/var/tmp}/dbai-vm-import.XXXXXX")"
+  chmod 0700 "$WORKDIR"
+  trap '[[ -n "$WORKDIR" && -d "$WORKDIR" ]] && rm -rf -- "$WORKDIR"' EXIT
+  TMP_SOURCE="$source"
+  echo "Kapasitas filesystem untuk file sementara:" >&2
+  df -h "$WORKDIR" >&2 2>/dev/null || true
+  warn "Image terkompresi perlu ruang tambahan saat diekstrak. Pastikan storage sementara cukup sebelum melanjutkan."
+
+  if [[ "$source" =~ ^https?:// ]]; then
+    remote_name="${source%%\?*}"
+    remote_name="${remote_name##*/}"
+    [[ -n "$remote_name" ]] || remote_name="image-download"
+    local_download="$WORKDIR/$remote_name"
+    info "Mengunduh image ke staging sementara: $local_download"
+    curl --fail --location --show-error --retry 2 --connect-timeout 15 "$source" -o "$local_download"
+    TMP_SOURCE="$local_download"
+    source="$local_download"
+  fi
+
+  info "Memvalidasi image dan menyiapkan disk"
+  image_path="$(prepare_input "$source")"
+  info_json="$(qemu-img info --output=json "$image_path")" || die "qemu-img tidak dapat membaca image ini."
+  image_format="$(python3 -c 'import json,sys; print(json.load(sys.stdin).get("format","unknown"))' <<< "$info_json")"
+  virtual_size="$(python3 -c 'import json,sys; print(json.load(sys.stdin).get("virtual-size",0))' <<< "$info_json")"
+  case "$image_format" in
+    raw|qcow2|vdi|vmdk|vpc|vhdx) ;;
+    *) die "Format qemu-img '$image_format' tidak didukung untuk impor otomatis." ;;
+  esac
+  echo "Format terdeteksi : $image_format"
+  echo "Ukuran virtual disk: $(format_gib "$virtual_size")"
+  echo "Host architecture : $(uname -m)"
+  warn "qemu-img mengidentifikasi format disk, bukan arsitektur CPU, firmware boot, atau kompatibilitas guest."
+  if [[ "$(uname -m)" == aarch64 || "$(uname -m)" == arm64 ]]; then
+    warn "Host ini ARM64. Pastikan image guest juga ARM64/aarch64. Image x86_64 tidak dapat berjalan sebagai guest ARM64 biasa."
+    ui_yesno "$APP_NAME" "Saya sudah memastikan arsitektur dan kebutuhan boot image ini kompatibel dengan host ARM64." no || die "Impor dibatalkan sebelum perubahan VM."
+  fi
+
+  if [[ "$(uname -m)" == aarch64 || "$(uname -m)" == arm64 ]]; then
+    create_args+=(--machine virt --bios ovmf)
+    # Newer Proxmox qemu-server exposes an explicit guest architecture option.
+    # Older PXVIRT builds may infer it from their host architecture instead.
+    create_help="$(qm create --help 2>&1 || true)"
+    if grep -qE -- '(^|[[:space:]])--arch([[:space:]]|$)' <<< "$create_help"; then
+      create_args+=(--arch aarch64)
+    fi
+    if [[ -e /dev/kvm ]]; then
+      create_args+=(--cpu host)
+    else
+      # TCG fallback for low-cost SBCs without a usable KVM device.
+      create_args+=(--cpu cortex-a53 --kvm 0)
+    fi
+  elif [[ ! -e /dev/kvm ]]; then
+    create_args+=(--kvm 0)
+  fi
+  create_args+=(--name "$name" --memory "$memory" --cores "$cores" --ostype l26 --scsihw virtio-scsi-single)
+  if [[ -n "$bridge" ]]; then create_args+=(--net0 "virtio,bridge=$bridge"); fi
+
+  info "Membuat konfigurasi VM $vmid ($name)"
+  qm create "$vmid" "${create_args[@]}"
+
+  if [[ "$(uname -m)" == aarch64 || "$(uname -m)" == arm64 ]]; then
+    # Persist UEFI variables (boot entries/settings) instead of letting QEMU
+    # create a temporary efivars file on every start.
+    info "Membuat EFI variables disk persisten pada storage '$storage'."
+    if ! qm set "$vmid" --efidisk0 "$storage:1,format=raw,efitype=4m,pre-enrolled-keys=0"; then
+      rollback_empty_vm "$vmid"
+      die "Gagal membuat EFI disk persisten pada storage '$storage'. Pastikan storage menerima content images dan mendukung format raw."
+    fi
+  fi
+
+  if qm disk import --help >/dev/null 2>&1; then
+    import_cmd=(qm disk import)
+  else
+    import_cmd=(qm importdisk)
+  fi
+  info "Mengimpor disk ke storage '$storage' (format output ditentukan Proxmox/storage)"
+  if ! "${import_cmd[@]}" "$vmid" "$image_path" "$storage"; then
+    rollback_empty_vm "$vmid"
+    die "Impor disk gagal. Lihat log $LOG_FILE dan kapasitas storage."
+  fi
+
+  disk_ref="$(qm config "$vmid" | sed -nE 's/^unused[0-9]+: ([^,]+).*/\1/p' | head -n 1)"
+  if [[ -z "$disk_ref" ]]; then
+    warn "Proxmox tidak menampilkan disk baru sebagai unused*. Mencoba menemukan disk hasil impor."
+    disk_ref="$(pvesm list "$storage" --content images 2>/dev/null | awk -v id="$vmid" '$1 ~ ("vm-" id "-disk-") || $1 ~ (":" id "/vm-" id "-disk-") {print $1}' | tail -n 1)"
+  fi
+  if [[ -z "$disk_ref" ]]; then
+    rollback_empty_vm "$vmid"
+    die "Disk berhasil diproses tetapi referensi volume tidak ditemukan. Periksa storage secara manual."
+  fi
+
+  info "Memasang disk utama: $disk_ref"
+  qm set "$vmid" --scsi0 "$disk_ref" --boot order=scsi0
+  unused="$(qm config "$vmid" | sed -nE 's/^(unused[0-9]+):.*/\1/p' | head -n 1)"
+  [[ -z "$unused" ]] || qm set "$vmid" --delete "$unused"
+
+  if [[ "$(uname -m)" == aarch64 || "$(uname -m)" == arm64 ]]; then
+    warn "VM memakai architecture aarch64, machine type 'virt', dan UEFI (OVMF). Sebagian image ARM memerlukan console serial atau pengaturan boot khusus."
+    if ! find /usr/share -maxdepth 4 -type f \( -iname 'AAVMF_CODE.fd' -o -iname 'QEMU_EFI.fd' -o -iname '*aarch64*code*.fd' \) -print -quit 2>/dev/null | grep -q .; then
+      warn "Firmware ARM64 UEFI tidak terdeteksi di /usr/share. Instal firmware AAVMF/OVMF ARM64 yang cocok sebelum mencoba boot VM."
+    fi
+  fi
+  if [[ ! -e /dev/kvm ]]; then
+    warn "/dev/kvm tidak ditemukan. VM menggunakan emulasi TCG; performa mungkin sangat lambat."
+  fi
+
+  echo
+  echo "VM siap disiapkan:"
+  qm config "$vmid"
+  echo
+  if [[ "$start" == yes ]]; then
+    if ! vm_bridges_valid "$vmid"; then
+      warn "VM dibuat, tetapi tidak dijalankan karena bridge tidak valid."
+      return 0
+    fi
+    info "Menjalankan VM $vmid"
+    qm start "$vmid"
+  else
+    echo "VM belum dijalankan. Cek konfigurasi lewat Web UI sebelum menekan Start."
+  fi
+  echo
+  echo "Selesai. VMID=$vmid; log=$LOG_FILE"
+}
+
+interactive_wizard() {
+  local source_mode source_input source default_name vmid name memory cores start
+  local -a menu=(
+    "import" "Impor disk image dan buat VM"
+    "diagnose" "Periksa storage, bridge, KVM, dan versi Proxmox"
+    "quit" "Keluar"
+  )
+  local -a source_menu=(
+    "local-select" "Pilih dari daftar file lokal (folder default /root)"
+    "local-path" "Masukkan path file tertentu atau folder"
+    "url" "Unduh image dari URL HTTP(S)"
+  )
+  local action
+
+  info "Membuka menu utama."
+  action="$(ui_menu "$APP_NAME" "Apa yang ingin dilakukan?" "${menu[@]}")" || { warn "Wizard dibatalkan pada menu utama."; return 0; }
+  case "$action" in
+    diagnose) check_host; return ;;
+    quit) return ;;
+    import) ;;
+    *) die "Menu tidak dikenal." ;;
+  esac
+
+  info "Membuka pemilihan sumber image."
+  source_mode="$(ui_menu "$APP_NAME" "Pilih sumber image:" "${source_menu[@]}")" || { warn "Wizard dibatalkan pada pemilihan sumber image."; return 0; }
+  case "$source_mode" in
+    local-select)
+      info "Meminta folder untuk pemilihan image lokal."
+      source_input="$(ui_input "$APP_NAME" "Folder lokal untuk mencari image yang didukung:" "/root")" || { warn "Wizard dibatalkan saat meminta folder lokal."; return 0; }
+      source_input="${source_input:-/root}"
+      info "Menampilkan daftar image di folder lokal."
+      source="$(select_local_image "$source_input")"
+      info "File lokal dipilih: $(basename -- "$source")"
+      ;;
+    local-path)
+      info "Meminta path file/folder lokal."
+      source_input="$(ui_input "$APP_NAME" "Masukkan path file image atau folder lokal:" "/root")" || { warn "Wizard dibatalkan saat meminta path lokal."; return 0; }
+      [[ -n "$source_input" ]] || source_input="/root"
+      source="$(resolve_local_input "$source_input")"
+      info "Sumber lokal dipilih: $(basename -- "$source")"
+      ;;
+    url)
+      info "Meminta URL image HTTP(S)."
+      source="$(ui_input "$APP_NAME" "Masukkan URL langsung file image HTTP(S):" "")" || { warn "Wizard dibatalkan saat meminta URL."; return 0; }
+      [[ "$source" =~ ^https?:// ]] || die "URL harus dimulai dengan http:// atau https://."
+      info "Sumber URL dipilih; URL lengkap tidak ditulis ke log."
+      ;;
+    *)
+      die "Pilihan sumber image tidak dikenal."
+      ;;
+  esac
+
+  default_name="$(default_name_from_source "$source")"
+  info "Meminta VMID."
+  vmid="$(ui_input "$APP_NAME" "VMID yang akan digunakan:" "$(next_vmid)")" || { warn "Wizard dibatalkan pada input VMID."; return 0; }
+  info "VMID yang dipilih: $vmid."
+  info "Meminta nama VM."
+  name="$(ui_input "$APP_NAME" "Nama VM (1–63 karakter; awali huruf/angka; . _ - diizinkan; karakter lain diganti '-'):" "$default_name")" || { warn "Wizard dibatalkan pada input nama VM."; return 0; }
+  info "Meminta ukuran RAM guest."
+  memory="$(ui_input "$APP_NAME" "RAM guest (MiB):" "1024")" || { warn "Wizard dibatalkan pada input RAM."; return 0; }
+  info "Meminta jumlah vCPU."
+  cores="$(ui_input "$APP_NAME" "Jumlah vCPU:" "1")" || { warn "Wizard dibatalkan pada input vCPU."; return 0; }
+  info "Membuka pemilihan storage tujuan."
+  choose_storage
+  info "Storage tujuan dipilih: $SELECTED_STORAGE."
+  info "Membuka pemilihan bridge jaringan."
+  choose_bridge
+  info "Bridge dipilih: ${SELECTED_BRIDGE:-tidak menggunakan NIC}."
+  info "Meminta konfirmasi untuk langsung menjalankan VM."
+  if ui_yesno "$APP_NAME" "Jalankan VM segera setelah impor? Disarankan memilih Tidak untuk memeriksa hardware/console lebih dahulu." no; then start=yes; else start=no; fi
+  info "Semua parameter wizard lengkap; memulai tahap impor."
+  do_import "$source" "$vmid" "$name" "$SELECTED_STORAGE" "$memory" "$cores" "$SELECTED_BRIDGE" "$start"
+}
+
+main() {
+  case "${1-}" in
+    --help|-h) usage; exit 0 ;;
+    --check)
+      require_root
+      require_core_commands
+      check_host
+      exit 0
+      ;;
+    --list)
+      require_root
+      require_core_commands
+      list_storages || true
+      echo
+      list_bridges
+      exit 0
+      ;;
+    "") ;;
+    *) usage >&2; die "Argumen tidak dikenal: $1" ;;
+  esac
+
+  require_root
+  require_core_commands
+  has_cmd curl || die "curl tidak tersedia. Pasang paket curl terlebih dahulu."
+  has_cmd python3 || die "python3 tidak tersedia; diperlukan untuk membaca metadata qemu-img dan OVF."
+  log_init
+  echo "===== $(date -Is) ====="
+  interactive_wizard
+}
+
+main "$@"

@@ -238,6 +238,10 @@ jobs:
           cp extensions/dbai-apps.sh armbian-source/userpatches/extensions/
           cp extensions/dbai-proxmox.sh armbian-source/userpatches/extensions/
           cp extensions/dbai-custom-kernel.sh armbian-source/userpatches/extensions/
+          mkdir -p armbian-source/extensions armbian-source/tools
+          cp extensions/proxmox-official.sh armbian-source/extensions/
+          cp extensions/proxmox-community.sh armbian-source/extensions/
+          cp tools/dbai-vm-import armbian-source/tools/
 
       - name: Build firmware image
         shell: bash
@@ -266,12 +270,15 @@ jobs:
             EXTENSIONS+=(dbai-proxmox)
             export DBAI_PROXMOX_MODE="$PROXMOX_MODE"
             case "$PROXMOX_MODE:$RELEASE" in
-              official:trixie|community:bookworm|both:bookworm|both:trixie) ;;
+              official:trixie|both:trixie)
+                PROXMOX_VARIANT=official
+                EXTENSIONS+=(proxmox-official)
+                ;;
+              community:bookworm|both:bookworm)
+                PROXMOX_VARIANT=community
+                EXTENSIONS+=(proxmox-community)
+                ;;
               *) echo "::error::Proxmox mode $PROXMOX_MODE is incompatible with release $RELEASE"; exit 2 ;;
-            esac
-            case "$PROXMOX_MODE:$RELEASE" in
-              official:trixie|both:trixie) PROXMOX_VARIANT=official ;;
-              community:bookworm|both:bookworm) PROXMOX_VARIANT=community ;;
             esac
           elif [[ "$PROFILE" == "application" ]]; then
             case "$APP_PROFILE" in
