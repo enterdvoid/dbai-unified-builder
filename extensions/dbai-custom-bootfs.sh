@@ -43,8 +43,8 @@ function pre_customize_image__dbai_replace_bootfs_for_recompile() {
 	# Keep compiled kernel and DTB artifacts while replacing the other boot files.
 	while IFS= read -r -d '' path; do
 		cp -a "$path" "$preserve/"
-	done < <(find "$boot_dir" -mindepth 1 -maxdepth 1 \(
-		-type f \( -name 'Image' -o -name 'Image-*' -o -name 'vmlinuz*' -o -name 'uImage' -o -name 'zImage' -o -name 'initrd*' -o -name 'uInitrd*' -o -name '*.dtb' -o -name 'config-*' -o -name 'System.map-*' \) \
+	done < <(find "$boot_dir" -mindepth 1 -maxdepth 1 \
+		\( -type f \( -name 'Image' -o -name 'Image-*' -o -name 'vmlinuz*' -o -name 'uImage' -o -name 'zImage' -o -name 'initrd*' -o -name 'uInitrd*' -o -name '*.dtb' -o -name 'config-*' -o -name 'System.map-*' \) \
 		-o -type d \( -name 'dtb' -o -name 'dtbs' \) \) -print0)
 
 	dbai_replace_bootfs_files
