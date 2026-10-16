@@ -257,7 +257,7 @@ jobs:
           case "$PROFILE" in
             minimal) BUILD_MINIMAL=yes; IMAGE_SIZE=4096 ;;
             server) BUILD_MINIMAL=no; IMAGE_SIZE=4096 ;;
-            application) BUILD_MINIMAL=no; IMAGE_SIZE=6144 ;;
+            application) BUILD_MINIMAL=no; IMAGE_SIZE=8192 ;;
             desktop) BUILD_MINIMAL=no; BUILD_DESKTOP=yes; IMAGE_SIZE=8192 ;;
             *) echo "::error::Unknown profile $PROFILE"; exit 2 ;;
           esac

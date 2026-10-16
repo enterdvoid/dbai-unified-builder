@@ -19,7 +19,7 @@ The workflow expands comma-separated releases and profiles into matrix jobs. Fil
 | `application` | no | no | Server base plus selected application extension |
 | `desktop` | no | yes | Desktop image |
 
-Target image sizes are 4096 MiB for minimal/server, 6144 MiB for application, and 8192 MiB for desktop. These are total image targets, not guarantees that every board or filesystem will fit every package combination.
+Target image sizes are 4096 MiB for minimal/server and 8192 MiB for application/desktop. Proxmox application images also use 8192 MiB. These are total image targets, not guarantees that every board or filesystem will fit every package combination.
 
 ## Release lifecycle
 
