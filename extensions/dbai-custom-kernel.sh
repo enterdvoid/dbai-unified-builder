@@ -96,7 +96,7 @@ function pre_customize_image__dbai_overlay_kernel_bundle() {
 	while IFS= read -r -d '' dtb_file; do
 		dtb_rel="${dtb_file#"${dtb_stage}/"}"
 		case "/${dtb_rel}" in
-			*/boot/*) dtb_target="${SDCARD}/${dtb_rel#boot/}" ;;
+			*/boot/*) dtb_target="${SDCARD}/${dtb_rel}" ;;
 			*/dtb/*) dtb_target="${SDCARD}/boot/dtb/${dtb_rel#dtb/}" ;;
 			*/amlogic/*) dtb_target="${SDCARD}/boot/dtb/${dtb_rel#./}" ;;
 			*) dtb_target="${SDCARD}/boot/dtb/amlogic/${dtb_rel##*/}" ;;
