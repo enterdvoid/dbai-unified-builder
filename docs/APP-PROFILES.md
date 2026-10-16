@@ -40,20 +40,17 @@ Upstream references: [LightNVR Docker guide](https://github.com/opensensor/light
 
 CasaOS is staged as a first-boot service so the installer detects the actual target architecture rather than the GitHub runner architecture. First boot requires working network access and can take several minutes. Check `/var/log/dbai-casaos-firstboot.log` if installation fails. The upstream installer is mutable, so treat this profile as experimental until tested on the exact board and Debian release.
 
-## Proxmox package mode
-
-The separate `proxmox_mode` input has `none`, `official`, `community`, and `both`:
-
-- `official`: Trixie packages from the official Proxmox repository.
-- `community`: Bookworm packages from the PXVIRT community repository, with mirror fallback.
-- `both`: adds a separate Proxmox profile on Bookworm using community PXVIRT and another on Trixie using the official package repository.
-
-Proxmox mode creates additional `proxmox` profile jobs separate from the application profile, so the selected app profile can still produce its own application image. Proxmox-specific jobs always use the official Armbian kernel and freeze BSP/kernel package updates. The workflow reuses the DBAI Proxmox extensions and VM-import helper from `enterdvoid/build`. This is a package-based experiment that retains the Armbian kernel, not the official Proxmox ISO or a guarantee of full Proxmox VE compatibility on an Amlogic TV box. Official Proxmox VE 9.2 ARM64 requires UEFI/ACPI for supported systems; device-tree-only SBCs are not supported by the official ARM64 release.
-
-See [Proxmox official ARM64 platform statement](https://forum.proxmox.com/threads/proxmox-virtual-environment-now-available-for-64-bit-arm-arm64.185527/).
-
-
 ## Proxmox application variants
+
+Proxmox is selected from the same application dropdown as CasaOS and the other application profiles:
+
+- `proxmox-official`: uses the official Proxmox package repository on Trixie.
+- `proxmox-community`: uses community PXVIRT packages on Bookworm, with mirror fallback.
+- `proxmox-both`: creates both variants and requires Bookworm and Trixie in the selected release set.
+
+These are application-profile jobs, not a separate `proxmox` profile. The workflow uses the existing DBAI Proxmox extensions and VM-import helper from `enterdvoid/build`, and freezes BSP/kernel package updates for these variants. This is a package-based experiment that retains the Armbian kernel, not the official Proxmox ISO or a guarantee of full Proxmox VE compatibility on an Amlogic TV box. Official Proxmox VE 9.2 ARM64 requires UEFI/ACPI for supported systems; device-tree-only SBCs are not supported by the official ARM64 release.
+
+See [Proxmox official ARM64 platform statement](https://forum.proxmox.com/threads/proxmox-virtual-environment-now-available-for-64-bit-arm-arm64.185527/).## Proxmox application variants
 
 Proxmox options live in the same application selector as CasaOS and the other applications:
 
