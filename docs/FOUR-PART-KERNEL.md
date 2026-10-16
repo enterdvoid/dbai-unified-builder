@@ -45,7 +45,7 @@ The workflow validates the outer archive, each inner archive, safe relative path
 
 Set:
 - `custom_kernel_repo_url`: Git URL of the kernel source repository.
-- `custom_kernel_repo_ref`: branch or tag to compile (default `main`).
+- `custom_kernel_repo_ref`: branch or tag to compile (default `main`). Use `tag:v6.1.66` to select a tag explicitly; plain values are treated as branch names.
 
 The workflow passes the repository URL and branch/ref to Armbian's build pipeline and bypasses artifact caches. The repository must be compatible with the selected board's kernel family, toolchain, and expected kernel configuration. Validate this source override with a small single-profile build before a large matrix.
 
