@@ -37,7 +37,7 @@ The default batch can produce many images. Start with one release, one profile, 
 ## Important limitations
 
 - The `aml-s9xx-box` target is community/DBAI-specific, not an official Armbian SBC target.
-- Custom kernel modes require `bootfs-custom-kernel/bootfs_custom_kernel.tar.gz`. Custom Kernel also requires one bundle URL containing four matching inner archives. See [custom kernel and recompile guide](docs/FOUR-PART-KERNEL.md).
+- Custom kernel modes require `platform/bootfs_custom_kernel.tar.gz`. Custom Kernel also requires one bundle URL containing four matching inner archives. See [custom kernel and recompile guide](docs/FOUR-PART-KERNEL.md).
 - The current workflow is an initial production-oriented scaffold. Each new board/app combination still requires a successful build and boot test before it should be advertised as supported.
 - Never put tokens in workflow inputs, source files, or build artifacts. Configure `DBAI_RELEASE_TOKEN` as a repository Actions secret for release publication.
 
