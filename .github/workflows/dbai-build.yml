@@ -269,7 +269,7 @@ jobs:
           os.replace(tmp, path)
           PY
           sudo systemctl start docker
-          for i in {1..30}; do
+          for _ in {1..30}; do
             if docker info >/dev/null 2>&1; then break; fi
             sleep 2
           done
