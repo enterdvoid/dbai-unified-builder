@@ -227,9 +227,11 @@ jobs:
               done
             done
           done
-          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
-          echo "board=$BOARD" >> "$GITHUB_OUTPUT"
-          echo "releases=$RELEASES_INPUT" >> "$GITHUB_OUTPUT"
+          {
+            echo "matrix=$matrix"
+            echo "board=$BOARD"
+            echo "releases=$RELEASES_INPUT"
+          } >> "$GITHUB_OUTPUT"
           echo "Resolved board: $BOARD"
           echo "Planned combinations: $(jq '.include | length' <<< "$matrix")"
           jq . <<< "$matrix"
