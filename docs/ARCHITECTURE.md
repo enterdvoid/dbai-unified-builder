@@ -1,6 +1,6 @@
 # Architecture and Support Boundaries
 
-Published image assets use the `DBAI2K26-Armbian_...` filename prefix. The workflow owns the published filename; extension-provided application suffixes are normalized so an application label is not repeated.
+Published image assets use the `DBAI2K26-Armbian_...` filename prefix. The `dbai-branding` extension sets `VENDOR` and `VENDORPRETTYNAME` to `DBAI2K26` in the generated `/etc/armbian-release`. The workflow owns the published filename and strips an application label accidentally appended to the parsed kernel version.
 
 ## Source selection
 
