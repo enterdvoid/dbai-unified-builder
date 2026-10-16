@@ -77,7 +77,7 @@ on:
         required: false
         default: ""
       proxmox_mode:
-        description: "Optional package-based Proxmox/PXVIRT mode; requires application profile and app_profile=none"
+        description: "Add separate Proxmox profile jobs: official=Trixie, community=Bookworm, both=both releases"
         type: choice
         required: true
         default: none
@@ -165,8 +165,8 @@ jobs:
           has_trixie=false
           for release in "${releases[@]}"; do
             release="$(xargs <<< "$release")"
-            [[ "$release" == "bookworm" ]] && has_bookworm=true
-            [[ "$release" == "trixie" ]] && has_trixie=true
+            if [[ "$release" == "bookworm" ]]; then has_bookworm=true; fi
+            if [[ "$release" == "trixie" ]]; then has_trixie=true; fi
             for profile in "${profiles[@]}"; do
               profile="$(xargs <<< "$profile")"
               for fs in "${filesystems[@]}"; do
