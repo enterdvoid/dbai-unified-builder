@@ -1,12 +1,14 @@
 # Architecture and Support Boundaries
 
+Published image assets use the `DBAI2K26-Armbian_...` filename prefix. The workflow owns the published filename; extension-provided application suffixes are normalized so an application label is not repeated.
+
 ## Source selection
 
 - `aml-s9xx-box`: use `enterdvoid/build`, where `config/boards/aml-s9xx-box.tvb` and board-specific BSP files are present.
 - Curated official SBCs: use `armbian/build`.
 - `custom`: validate the supplied board ID; prefer an official config, then try the DBAI fork. A board is accepted only if a matching `config/boards/<id>.*` definition exists in the chosen source checkout.
 
-The workflow records the resolved source URL, commit SHA, board ID, release, image profile, filesystem, kernel mode, and app profile in a per-image manifest.
+The workflow reports the resolved source URL, commit SHA, board ID, release, image profile, filesystem, kernel mode, and app profile in the build logs/release notes.
 
 ## Build combinations
 
@@ -24,7 +26,7 @@ Target image sizes are 4096 MiB for minimal/server and 8192 MiB for application/
 ## Release lifecycle
 
 1. Every matrix job builds one combination on a clean runner.
-2. Each job verifies that at least one image exists, generates a manifest and checksum, then uploads a uniquely named Actions artifact.
+2. Each job verifies that at least one image exists and uploads its canonical firmware asset as a uniquely named Actions artifact.
 3. The publish job downloads all artifacts, checks every checksum, and creates a prerelease with a timestamped tag.
 4. It downloads the release assets back and verifies checksums.
 5. Only after successful verification does it delete older releases tagged `dbai-build-*` if cleanup is enabled.
