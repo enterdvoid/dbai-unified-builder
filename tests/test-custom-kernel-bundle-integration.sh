@@ -19,6 +19,24 @@ fi
 mkdir "${tmp}/bundle"
 tar --no-same-owner --no-same-permissions -xf "${tmp}/bundle.tar" -C "${tmp}/bundle"
 
+mapfile -t module_archives < <(find "${tmp}/bundle" -type f \( -name 'modules-*.tar.gz' -o -name 'modules-*.tar.xz' \) -print)
+if [[ "${#module_archives[@]}" -ne 1 ]]; then
+  echo "FAIL: expected exactly one modules-*.tar.gz/.tar.xz archive, got ${#module_archives[@]}" >&2
+  find "${tmp}/bundle" -type f -print | sort >&2
+  exit 1
+fi
+tar -tf "${module_archives[0]}" > "${tmp}/modules-list.txt"
+if ! awk ' /^\// { bad=1 } /(^|\/)\.\.(\/|$)/ { bad=1 } END { exit bad }' "${tmp}/modules-list.txt"; then
+  echo "FAIL: unsafe path in module archive" >&2
+  exit 1
+fi
+module_release="$(dbai_detect_kernel_modules_release "${tmp}/modules-list.txt")" || {
+  echo "FAIL: cannot determine release from the actual published modules archive" >&2
+  sed -n '1,80p' "${tmp}/modules-list.txt" >&2
+  exit 1
+}
+echo "Detected actual kernel module release from published bundle: ${module_release}"
+
 mapfile -t header_archives < <(find "${tmp}/bundle" -type f \( -name 'header-*.tar.gz' -o -name 'header-*.tar.xz' \) -print)
 if [[ "${#header_archives[@]}" -ne 1 ]]; then
   echo "FAIL: expected exactly one header-*.tar.gz/.tar.xz archive, got ${#header_archives[@]}" >&2
