@@ -11,11 +11,11 @@ if [[ -z "${GH_TOKEN:-}" && -n "${GITHUB_TOKEN:-}" ]]; then export GH_TOKEN="$GI
 [[ -n "${GH_TOKEN:-}" ]] || { echo "GH_TOKEN/GITHUB_TOKEN is required." >&2; exit 2; }
 
 echo "Repository: $GITHUB_REPOSITORY"
-echo "Deleting workflow runs except the current run $GITHUB_RUN_ID."
+echo "Deleting completed workflow runs except the current run $GITHUB_RUN_ID."
 echo "The current cleanup run cannot reliably delete itself while it is executing."
 
 while true; do
-  run_list="$(gh run list --repo "$GITHUB_REPOSITORY" --limit 1000 --json databaseId --jq '.[].databaseId')"
+  run_list="$(gh run list --repo "$GITHUB_REPOSITORY" --status completed --limit 1000 --json databaseId --jq '.[].databaseId')"
   listed_ids=()
   if [[ -n "$run_list" ]]; then mapfile -t listed_ids <<< "$run_list"; fi
   pending=()
@@ -31,7 +31,7 @@ while true; do
   failed=0
   echo "Found ${#pending[@]} run(s) to delete in this batch."
   for run_id in "${pending[@]}"; do
-    if gh run delete "$run_id" --repo "$GITHUB_REPOSITORY" --yes; then
+    if gh api --silent --method DELETE "/repos/$GITHUB_REPOSITORY/actions/runs/$run_id"; then
       deleted=$((deleted + 1))
     else
       echo "::warning::Could not delete workflow run $run_id"
