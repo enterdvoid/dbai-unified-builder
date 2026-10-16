@@ -8,7 +8,7 @@ A GitHub Actions frontend for building ready-to-use Armbian-based firmware for A
 - Amlogic TV-box builds use the DBAI Armbian fork; official SBCs use the official `armbian/build` source.
 - Release dropdown supports all listed Debian releases, Ubuntu LTS releases, Debian-only, Ubuntu-only, or a custom comma-separated list.
 - Kernel mode is selectable per run: **Kernel Official**, **Recompile Kernel Official**, **Custom Kernel** (one URL containing four kernel archives), or **Recompile Custom Kernel** (build from a custom Git source URL/ref). Optional patches live in `kernel-patches/meson64-current/`.
-- App integration starts with Armbian-maintained Home Assistant and OpenMediaVault extensions plus an experimental CasaOS extension. Select `app_profile=none` to build a generic application image without a bundled app.
+- Four independent checkbox inputs select Minimal, Server, Application, and Desktop images. The application selector only affects Application images; choose `none` for a generic image without an extra app. Application jobs are skipped on OS releases the selected app does not support.
 - Release publication happens only after all matrix jobs succeed and every image has a manifest and SHA-256 checksum. Partial releases are removed on publication failure.
 
 ## Run
@@ -16,14 +16,17 @@ A GitHub Actions frontend for building ready-to-use Armbian-based firmware for A
 1. Open [Actions](../../actions/workflows/dbai-build.yml).
 2. Select **Run workflow**.
 3. Choose a board. If `custom` is selected, enter the exact board ID in `custom_board_name`.
-4. Choose **Armbian Version Release**: **All** (`bullseye,bookworm,trixie,forky,jammy,noble,resolute`), **Ubuntu Only** (`jammy,noble,resolute`), **Debian Only** (`bullseye,bookworm,trixie,forky`), or **Custom**. For Custom, enter comma-separated codenames; default is `trixie,resolute`. Select profiles separately.
-5. Select `both` to build ext4 and btrfs variants.
-6. Select a kernel mode: **Kernel Official** uses the configured Armbian/DBAI kernel and may reuse matching artifacts; **Recompile Kernel Official** bypasses artifact caches and rebuilds from source; **Custom Kernel** requires one HTTPS bundle URL containing the four matching inner archives; **Recompile Custom Kernel** uses the same `kernel_custom_input` field with a Git URL optionally followed by `#branch:<name>` or `#tag:<name>`. Optional patch files are placed under `kernel-patches/meson64-current/`.
-7. Choose an application variant for the `application` profile. Proxmox Official is built as an application variant on Trixie; Proxmox Community on Bookworm; Proxmox Both builds both variants when both releases are selected. If a normal application is unsupported on a selected release, the workflow creates a generic application image for that release.
-8. Ensure the repository Actions secret `DBAI_RELEASE_TOKEN` is configured before starting; the plan job checks this before expensive builds.
-9. Start the run and inspect each matrix job. The release is created only after all build jobs pass.
+4. Choose **Armbian Version Release**: **All** (`bullseye,bookworm,trixie,forky,jammy,noble,resolute`), **Ubuntu Only** (`jammy,noble,resolute`), **Debian Only** (`bullseye,bookworm,trixie,forky`), or **Custom**. For Custom, enter comma-separated codenames; default is `trixie,resolute`.
+5. Tick the image types you want: **Minimal**, **Server**, **Application**, and/or **Desktop**. Select at least one. These are independent checkboxes, not a comma-separated text field.
+6. Choose **Application to install**. This affects only Application images. Choose `none` for a generic Application image without a bundled app. Incompatible release/application combinations are skipped; other selected image types for those releases still build.
+7. Select `both` to build ext4 and btrfs variants.
+8. Select a kernel mode: **Kernel Official** uses the configured Armbian/DBAI kernel and may reuse matching artifacts; **Recompile Kernel Official** bypasses artifact caches and rebuilds from source; **Custom Kernel** requires one HTTPS bundle URL containing the four matching inner archives; **Recompile Custom Kernel** uses the same `kernel_custom_input` field with a Git URL optionally followed by `#branch:<name>` or `#tag:<name>`. Optional patch files are placed under `kernel-patches/meson64-current/`.
+9. Ensure the repository Actions secret `DBAI_RELEASE_TOKEN` is configured before starting; the plan job checks this before expensive builds.
+10. Start the run and inspect each matrix job. The release is created only after all build jobs pass.
 
-The default batch can produce many images. Start with one release, one profile, and ext4 when testing a new board.
+Compatibility rules: Proxmox Community uses Bookworm; Proxmox Official uses Trixie; Proxmox Both maps Bookworm to Community and Trixie to Official. Home Assistant uses Debian Bullseye/Bookworm/Trixie. OpenMediaVault, CasaOS, Hermes, and LightNVR variants use Bookworm/Trixie. Incompatible Application rows are skipped rather than replaced with generic images.
+
+The default batch can produce many images. Start with one release, one image type, and ext4 when testing a new board.
 
 ## Application status
 
