@@ -27,7 +27,7 @@ for item in "${profile_list[@]}"; do
   item="$(xargs <<< "$item")"
   [[ "$item" =~ ^(minimal|server|application|desktop)$ ]] || { echo "Unsupported profile token: $item" >&2; exit 2; }
 done
-if printf '%s\n' "${profile_list[@]}" | grep -qx 'application' && [[ "$app_profile" == "none" ]]; then
+if [[ ",$profiles," == *",application,"* && "$app_profile" == "none" ]]; then
   echo "The application profile requires an app_profile selection." >&2
   exit 2
 fi

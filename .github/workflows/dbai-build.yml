@@ -413,7 +413,7 @@ jobs:
             gh release list --repo "$GITHUB_REPOSITORY" --limit 1000 --json tagName               | jq -r --arg current "$TAG" '.[] | select(.tagName | startswith("dbai-build-")) | select(.tagName != $current) | .tagName'               | while IFS= read -r old_tag; do
                   [[ -n "$old_tag" ]] || continue
                   echo "Removing previously verified DBAI build release: $old_tag"
-                  gh release delete "$old_tag" --repo "$GITHUB_REPOSITORY" --cleanup-tag --yes
+                  gh release delete "$old_tag" --repo "$GITHUB_REPOSITORY" --cleanup-tag --yes || echo "::warning::Could not delete old release $old_tag"
                 done
           fi
           echo "Verified release: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/tag/$TAG"

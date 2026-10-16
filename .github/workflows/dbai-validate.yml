@@ -1,0 +1,43 @@
+name: DBAI Builder Validation
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/**"
+      - "extensions/**"
+      - "scripts/**"
+      - "tests/**"
+      - "config/**"
+      - "docs/**"
+  pull_request:
+    paths:
+      - ".github/workflows/**"
+      - "extensions/**"
+      - "scripts/**"
+      - "tests/**"
+      - "config/**"
+      - "docs/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  static-validation:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install ShellCheck
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y shellcheck
+      - name: Validate workflow syntax
+        run: |
+          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+          "$(go env GOPATH)/bin/actionlint" -color
+      - name: Lint shell scripts
+        run: shellcheck scripts/*.sh extensions/*.sh tests/*.sh
+      - name: Test input validator
+        run: bash tests/test-validate-inputs.sh
