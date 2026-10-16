@@ -542,10 +542,10 @@ jobs:
 
             armbian_version_filename="${armbian_version%-trunk}"
             case "$base" in
-              *.img.xz) suffix=".img.xz"; source_txt="${image%.xz}.txt" ;;
-              *.img.gz) suffix=".img.gz"; source_txt="${image%.gz}.txt" ;;
-              *.img.zst) suffix=".img.zst"; source_txt="${image%.zst}.txt" ;;
-              *.img) suffix=".img"; source_txt="${image}.txt" ;;
+              *.img.xz) suffix=".img.xz" ;;
+              *.img.gz) suffix=".img.gz" ;;
+              *.img.zst) suffix=".img.zst" ;;
+              *.img) suffix=".img" ;;
               *) echo "::error::Unrecognized image format: $base"; exit 1 ;;
             esac
 
@@ -553,63 +553,13 @@ jobs:
             stage_image="$GITHUB_WORKSPACE/stage/$safe_base"
             cp "$image" "$stage_image"
 
-            if [[ ! -f "$source_txt" ]]; then
-              echo "::error::Armbian build information file is missing: $source_txt"
-              exit 1
-            fi
-            metadata_base="$safe_base"
-            metadata_base="${metadata_base%.xz}"
-            metadata_base="${metadata_base%.gz}"
-            metadata_base="${metadata_base%.zst}"
-            metadata_base="${metadata_base}.txt"
-            metadata_path="$GITHUB_WORKSPACE/stage/$metadata_base"
-            cp "$source_txt" "$metadata_path"
-
-            # Make the upstream information file refer to the renamed release asset.
-            python3 - "$metadata_path" "$base" "$safe_base" <<'PY'
-          import pathlib, sys
-          path = pathlib.Path(sys.argv[1])
-          old_name, new_name = sys.argv[2], sys.argv[3]
-          text = path.read_text(encoding="utf-8", errors="replace")
-          path.write_text(text.replace(old_name, new_name), encoding="utf-8")
-          PY
-
             image_size="$(stat -c '%s' "$stage_image")"
             if (( image_size > 1900000000 )); then
               echo "::error::Asset $safe_base is larger than 1.9 GB; split/compress it before publishing to GitHub Releases."
               exit 1
             fi
             image_sha="$(sha256sum "$stage_image" | awk '{print $1}')"
-
-            cat >> "$metadata_path" <<EOF
-
-          ================================================================================
-          DBAI UNIFIED FIRMWARE BUILDER
-          ================================================================================
-          Release asset: $safe_base
-          Board ID: $BOARD
-          Armbian image version: $armbian_version
-          OS release: $RELEASE
-          Kernel version: $kernel_version
-          Kernel branch: $image_branch
-          Armbian source profile: $source_profile
-          DBAI image profile: $PROFILE
-          Application variant: $APP_PROFILE_EFFECTIVE
-          Root filesystem: $FILESYSTEM
-          Kernel mode: $BUILD_KERNEL_MODE
-          Kernel patch series: $KERNEL_PATCH_SERIES
-          Armbian source repository: $SOURCE_REPO
-          Armbian source ref: $SOURCE_REF
-          Armbian source commit: $SOURCE_SHA
-          DBAI builder repository: $GITHUB_REPOSITORY
-          DBAI builder commit: $GITHUB_SHA
-          Workflow run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID
-          Image size in bytes: $image_size
-          Image SHA-256: $image_sha
-          ================================================================================
-          EOF
-            echo "Staged image: $safe_base (Armbian $armbian_version; kernel $kernel_version)"
-            echo "Staged build information: $metadata_base"
+            echo "Staged image: $safe_base (Armbian $armbian_version; kernel $kernel_version; SHA-256 $image_sha)"
           done
 
       - name: Upload image artifact
@@ -733,7 +683,8 @@ jobs:
           } > "$NOTES_FILE"
 
           TAG="dbai-build-$(date -u +'%Y%m%d-%H%M%S')-$GITHUB_RUN_ID"
-          TITLE="DBAI Armbian ${BOARD} ${RELEASES_INPUT} [${PROFILES_INPUT}] [${FILESYSTEM_INPUT}] app-${APP_PROFILE} $(date -u +'%Y-%m-%d_%H-%M')"
+          PROFILE_TITLE="$(printf '%s' "$PROFILES_INPUT" | tr ',' ' ' | sed -E 's/(^| )minimal( |$)/\1Minimal\2/g; s/(^| )server( |$)/\1Server\2/g; s/(^| )application( |$)/\1Application\2/g; s/(^| )desktop( |$)/\1Desktop\2/g' | xargs)"
+          TITLE="DBAI Armbian ${PROFILE_TITLE} Build $(date -u +'%Y-%m-%d_%H-%M')"
           {
             echo "tag=$TAG"
             echo "title=$TITLE"
