@@ -83,8 +83,9 @@ on:
         description: "Application installed into Application images only. Incompatible OS releases are skipped; choose none for a generic image."
         type: choice
         required: true
-        default: casaos
+        default: none
         options:
+          - all
           - none
           - homeassistant
           - openmediavault
@@ -223,19 +224,31 @@ jobs:
             release="$(xargs <<< "$release")"
             for profile in "${profiles[@]}"; do
               profile="$(xargs <<< "$profile")"
-              app_variant="none"
+              app_candidates=("none")
               if [[ "$profile" == "application" ]]; then
-                if ! app_variant="$(bash scripts/resolve-app-variant.sh "$APP_PROFILE" "$release")"; then
-                  echo "::error::Could not resolve application '$APP_PROFILE' for release '$release'."
-                  exit 2
-                fi
-                if [[ -z "$app_variant" ]]; then
-                  echo "::notice::Skipping Application image for '$release': app '$APP_PROFILE' is not compatible with this release."
-                  continue
+                if [[ "$APP_PROFILE" == "all" ]]; then
+                  # Expand all concrete app variants; Proxmox Both is represented by
+                  # its OS-specific Community/Official variants to avoid duplicate builds.
+                  app_candidates=(homeassistant openmediavault casaos hermes-9router lightnvr-go2rtc hermes-9router-lightnvr proxmox-community proxmox-official)
+                else
+                  app_candidates=("$APP_PROFILE")
                 fi
               fi
-              for fs in "${filesystems[@]}"; do
-                matrix="$(jq -c --arg release "$release" --arg profile "$profile" --arg filesystem "$fs" --arg app_variant "$app_variant" '.include += [{release:$release,profile:$profile,filesystem:$filesystem,app_variant:$app_variant}]' <<< "$matrix")"
+              for app_candidate in "${app_candidates[@]}"; do
+                app_variant="$app_candidate"
+                if [[ "$profile" == "application" ]]; then
+                  if ! app_variant="$(bash scripts/resolve-app-variant.sh "$app_candidate" "$release")"; then
+                    echo "::error::Could not resolve application '$app_candidate' for release '$release'."
+                    exit 2
+                  fi
+                  if [[ -z "$app_variant" ]]; then
+                    echo "::notice::Skipping Application image for '$release': app '$app_candidate' is not compatible with this release."
+                    continue
+                  fi
+                fi
+                for fs in "${filesystems[@]}"; do
+                  matrix="$(jq -c --arg release "$release" --arg profile "$profile" --arg filesystem "$fs" --arg app_variant "$app_variant" '.include += [{release:$release,profile:$profile,filesystem:$filesystem,app_variant:$app_variant}]' <<< "$matrix")"
+                done
               done
             done
           done
@@ -472,6 +485,10 @@ jobs:
           PY
           fi
 
+      - name: Report runner resources before firmware build
+        shell: bash
+        run: bash "$GITHUB_WORKSPACE/scripts/report-runner-resources.sh" "before-build"
+
       - name: Build firmware image
         shell: bash
         env:
@@ -542,7 +559,7 @@ jobs:
           if [[ "$BOARD" == "aml-s9xx-box" ]]; then
             export BOOTFS_TYPE=fat
           fi
-          ./compile.sh build             BOARD="$BOARD"             BRANCH=current             RELEASE="$RELEASE"             BUILD_MINIMAL="$BUILD_MINIMAL"             BUILD_DESKTOP="$BUILD_DESKTOP"             ROOTFS_TYPE="$FILESYSTEM"             FIXED_IMAGE_SIZE="$IMAGE_SIZE"             BOOTSIZE=512             COMPRESS_OUTPUTIMAGE=sha,xz             IMAGE_XZ_COMPRESSION_RATIO=0             KERNEL_CONFIGURE=no             ARTIFACT_IGNORE_CACHE="$ARTIFACT_IGNORE_CACHE"             ENABLE_EXTENSIONS="$ENABLE_EXTENSIONS" \
+          ./compile.sh build             BOARD="$BOARD"             BRANCH=current             RELEASE="$RELEASE"             BUILD_MINIMAL="$BUILD_MINIMAL"             BUILD_DESKTOP="$BUILD_DESKTOP"             ROOTFS_TYPE="$FILESYSTEM"             FIXED_IMAGE_SIZE="$IMAGE_SIZE"             BOOTSIZE=256             COMPRESS_OUTPUTIMAGE=sha,xz             IMAGE_XZ_COMPRESSION_RATIO=0             KERNEL_CONFIGURE=no             ARTIFACT_IGNORE_CACHE="$ARTIFACT_IGNORE_CACHE"             ENABLE_EXTENSIONS="$ENABLE_EXTENSIONS" \
             "${KERNELSOURCE_ARG[@]}" "${KERNELBRANCH_ARG[@]}" "${BSPFREEZE_ARG[@]}"
 
           mkdir -p "$GITHUB_WORKSPACE/stage"
@@ -600,6 +617,11 @@ jobs:
             image_sha="$(sha256sum "$stage_image" | awk '{print $1}')"
             echo "Staged image: $safe_base (Armbian $armbian_version; kernel $kernel_version; SHA-256 $image_sha)"
           done
+
+      - name: Report runner resources after firmware build
+        if: always()
+        shell: bash
+        run: bash "$GITHUB_WORKSPACE/scripts/report-runner-resources.sh" "after-build"
 
       - name: Upload image artifact
         uses: actions/upload-artifact@v4
