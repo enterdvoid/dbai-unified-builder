@@ -596,14 +596,9 @@ jobs:
 
             # Canonical DBAI2K26 name: include the selected application exactly once.
             safe_base="DBAI2K26-Armbian_${armbian_version_filename}-${SHORT_BOARD}-${RELEASE}-k${kernel_version}-${PROFILE_VARIANT}-${FILESYSTEM}${suffix}"
-            # Publish the application's profile token only once even if the
-            # extension has already appended it to the upstream image name.
+            # Always publish one canonical profile token, independent of the upstream suffix.
             if [[ "$PROFILE" == "application" ]]; then
-              upstream_stem="${base%$suffix}"
-              upstream_duplicate="-${PROFILE_VARIANT}-${PROFILE_VARIANT}"
-              if [[ "$upstream_stem" == *"$upstream_duplicate" ]]; then
-                safe_base="${safe_base//-${PROFILE_VARIANT}-${PROFILE_VARIANT}-${FILESYSTEM}/-${PROFILE_VARIANT}-${FILESYSTEM}}"
-              fi
+              safe_base="${safe_base//-${PROFILE_VARIANT}-${PROFILE_VARIANT}-/-${PROFILE_VARIANT}-}"
             fi
             stage_image="$GITHUB_WORKSPACE/stage/$safe_base"
             cp "$image" "$stage_image"
