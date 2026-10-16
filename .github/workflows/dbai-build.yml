@@ -78,26 +78,11 @@ on:
           - Recompile Kernel Official
           - Custom Kernel
           - Recompile Custom Kernel
-      custom_kernel_bundle_url:
-        description: "Custom Kernel only: HTTPS URL to one .tar.gz or .tar.xz bundle containing boot-<version>.tar.gz, dtb-amlogic-<version>.tar.gz, header-<version>.tar.gz, and modules-<version>.tar.gz"
+      kernel_custom_input:
+        description: "Custom Kernel: one HTTPS bundle URL. Recompile Custom Kernel: HTTPS Git URL optionally followed by #branch:<name> or #tag:<name>."
         type: string
         required: false
         default: ""
-      custom_kernel_repo_url:
-        description: "Recompile Custom Kernel only: public HTTPS Git URL of the kernel source repository"
-        type: string
-        required: false
-        default: ""
-      custom_kernel_repo_ref:
-        description: "Branch or tag to compile from in the custom kernel repository (use tag:<name> for tags)"
-        type: string
-        required: false
-        default: main
-      kernel_patch_series:
-        description: "Patch directory under kernel-patches/; for aml-s9xx-box use meson64-current"
-        type: string
-        required: false
-        default: meson64-current
       proxmox_mode:
         description: "Add separate Proxmox profile jobs: official=Trixie, community=Bookworm, both=both releases"
         type: choice
@@ -137,10 +122,8 @@ jobs:
           FILESYSTEM_INPUT: ${{ inputs.filesystem || 'ext4' }}
           KERNEL_MODE: ${{ inputs.kernel_mode || 'Kernel Official' }}
           APP_PROFILE: ${{ inputs.app_profile || 'none' }}
-          CUSTOM_KERNEL_BUNDLE_URL: ${{ inputs.custom_kernel_bundle_url || '' }}
-          CUSTOM_KERNEL_REPO_URL: ${{ inputs.custom_kernel_repo_url || '' }}
-          CUSTOM_KERNEL_REPO_REF: ${{ inputs.custom_kernel_repo_ref || 'main' }}
-          KERNEL_PATCH_SERIES: ${{ inputs.kernel_patch_series || 'meson64-current' }}
+          KERNEL_CUSTOM_INPUT: ${{ inputs.kernel_custom_input || '' }}
+          KERNEL_PATCH_SERIES: meson64-current
           PROXMOX_MODE: ${{ inputs.proxmox_mode || 'official' }}
           RELEASE_TOKEN_PRESENT: ${{ secrets.DBAI_RELEASE_TOKEN != '' }}
         run: |
@@ -156,9 +139,9 @@ jobs:
           bash scripts/validate-inputs.sh "$BOARD" "" "$RELEASES_INPUT" "$PROFILES_INPUT" "$FILESYSTEM_INPUT" "$KERNEL_MODE" "$APP_PROFILE" "$PROXMOX_MODE"
 
           if [[ "$KERNEL_MODE" == "Custom Kernel" ]]; then
-            [[ "$CUSTOM_KERNEL_BUNDLE_URL" =~ ^https:// ]] || { echo "::error::Custom Kernel requires one HTTPS URL to a .tar.gz/.tar.xz bundle."; exit 2; }
+            [[ "$KERNEL_CUSTOM_INPUT" =~ ^https:// ]] || { echo "::error::Custom Kernel requires one HTTPS URL to a .tar.gz/.tar.xz bundle."; exit 2; }
             temp_dir="$(mktemp -d)"
-            curl --fail --location --silent --show-error --retry 3 "$CUSTOM_KERNEL_BUNDLE_URL" --output "$temp_dir/kernel-bundle.tar"
+            curl --fail --location --silent --show-error --retry 3 "$KERNEL_CUSTOM_INPUT" --output "$temp_dir/kernel-bundle.tar"
             tar -tf "$temp_dir/kernel-bundle.tar" >/dev/null || { echo "::error::Custom kernel bundle is not a valid tar archive"; exit 2; }
             if ! tar -tf "$temp_dir/kernel-bundle.tar" | awk ' /^\// { bad=1 } /(^|\/)\.\.(\/|$)/ { bad=1 } END { exit bad }'; then
               echo "::error::Unsafe path in custom kernel bundle"; exit 2
@@ -181,7 +164,10 @@ jobs:
             tar -tf "$temp_dir/headers.tar" | grep -Eq '^(usr/src/|lib/modules/[^/]+/build)' || { echo "::error::Headers archive needs usr/src/ or matching modules build paths"; exit 2; }
             rm -rf "$temp_dir"
           elif [[ "$KERNEL_MODE" == "Recompile Custom Kernel" ]]; then
-            [[ "$CUSTOM_KERNEL_REPO_URL" =~ ^https:// ]] || { echo "::error::Recompile Custom Kernel requires a public HTTPS Git repository URL."; exit 2; }
+            CUSTOM_KERNEL_REPO_URL="${KERNEL_CUSTOM_INPUT%%#*}"
+            CUSTOM_KERNEL_REPO_REF="main"
+            if [[ "$KERNEL_CUSTOM_INPUT" == *#* ]]; then CUSTOM_KERNEL_REPO_REF="${KERNEL_CUSTOM_INPUT#*#}"; fi
+            [[ "$CUSTOM_KERNEL_REPO_URL" =~ ^https:// ]] || { echo "::error::Recompile Custom Kernel needs an HTTPS Git URL, optionally followed by #branch:<name> or #tag:<name>."; exit 2; }
             [[ "$CUSTOM_KERNEL_REPO_REF" =~ ^(branch:|tag:)?[A-Za-z0-9._/-]+$ ]] || { echo "::error::Custom kernel repo ref must be a branch name or tag (optionally prefixed with branch: or tag:)."; exit 2; }
           fi
 
@@ -246,10 +232,8 @@ jobs:
       APP_PROFILE: ${{ inputs.app_profile || 'none' }}
       PROXMOX_MODE: ${{ inputs.proxmox_mode || 'official' }}
       PROXMOX_VARIANT: ${{ matrix.proxmox_variant }}
-      CUSTOM_KERNEL_BUNDLE_URL: ${{ inputs.custom_kernel_bundle_url || '' }}
-      CUSTOM_KERNEL_REPO_URL: ${{ inputs.custom_kernel_repo_url || '' }}
-      CUSTOM_KERNEL_REPO_REF: ${{ inputs.custom_kernel_repo_ref || 'main' }}
-      KERNEL_PATCH_SERIES: ${{ inputs.kernel_patch_series || 'meson64-current' }}
+      KERNEL_CUSTOM_INPUT: ${{ inputs.kernel_custom_input || '' }}
+      KERNEL_PATCH_SERIES: meson64-current
     steps:
       - name: Report runner resources before disk setup
         shell: bash
@@ -470,10 +454,13 @@ jobs:
           KERNELSOURCE_ARG=()
           KERNELBRANCH_ARG=()
           if [[ "$BUILD_KERNEL_MODE" == "Custom Kernel" ]]; then
-            export DBAI_KERNEL_BUNDLE_URL="$CUSTOM_KERNEL_BUNDLE_URL"
+            export DBAI_KERNEL_BUNDLE_URL="$KERNEL_CUSTOM_INPUT"
             EXTENSIONS+=(dbai-custom-kernel)
             export DBAI_KERNEL_MODE="Custom Kernel"
           elif [[ "$BUILD_KERNEL_MODE" == "Recompile Custom Kernel" ]]; then
+            CUSTOM_KERNEL_REPO_URL="${KERNEL_CUSTOM_INPUT%%#*}"
+            CUSTOM_KERNEL_REPO_REF="main"
+            if [[ "$KERNEL_CUSTOM_INPUT" == *#* ]]; then CUSTOM_KERNEL_REPO_REF="${KERNEL_CUSTOM_INPUT#*#}"; fi
             KERNELSOURCE_ARG=("KERNELSOURCE=$CUSTOM_KERNEL_REPO_URL")
             if [[ "$CUSTOM_KERNEL_REPO_REF" == branch:* || "$CUSTOM_KERNEL_REPO_REF" == tag:* ]]; then
               KERNELBRANCH_ARG=("KERNELBRANCH=$CUSTOM_KERNEL_REPO_REF")
@@ -527,8 +514,8 @@ jobs:
             "profile": "$PROFILE",
             "filesystem": "$FILESYSTEM",
             "kernel_mode": "$BUILD_KERNEL_MODE",
-            "kernel_source_repository": "$CUSTOM_KERNEL_REPO_URL",
-            "kernel_source_ref": "$CUSTOM_KERNEL_REPO_REF",
+            "kernel_source_repository": "${CUSTOM_KERNEL_REPO_URL:-}",
+            "kernel_source_ref": "${CUSTOM_KERNEL_REPO_REF:-}",
             "kernel_patch_series": "$KERNEL_PATCH_SERIES",
             "application": "$APP_PROFILE_EFFECTIVE",
             "proxmox_mode": "$PROXMOX_MODE",
