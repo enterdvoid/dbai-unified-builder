@@ -60,4 +60,11 @@ fi
 if bash "$VALIDATOR" "aml-s9xx-box" "" "sid" "server" "ext4" "Kernel Official" "none"; then
   echo "Expected unsupported release to fail" >&2; exit 1
 fi
-echo "All input, checkbox, and application compatibility tests passed."
+# Canonical published image naming removes repeated app labels.
+PROFILE_VARIANT=proxmox-official
+safe_base="DBAI2K26-Armbian_26.11.0-aml-s9xx-trixie-k6.18.57-${PROFILE_VARIANT}-${PROFILE_VARIANT}-ext4.img.xz"
+duplicate_profile="-${PROFILE_VARIANT}-${PROFILE_VARIANT}-"
+safe_base="${safe_base//"$duplicate_profile"/-${PROFILE_VARIANT}-}"
+[[ "$safe_base" == "DBAI2K26-Armbian_26.11.0-aml-s9xx-trixie-k6.18.57-proxmox-official-ext4.img.xz" ]]
+
+echo "All input, checkbox, naming, and application compatibility tests passed."
