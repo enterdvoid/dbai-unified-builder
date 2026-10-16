@@ -286,6 +286,28 @@ jobs:
           available_gb="$(df -BG --output=avail "$GITHUB_WORKSPACE" | tail -n 1 | tr -dc '0-9')"
           (( available_gb >= 35 )) || { echo "::error::Only ${available_gb} GB free in build workspace; at least 35 GB is required."; exit 1; }
 
+      - name: Register ARM64 QEMU binfmt on runner host
+        shell: bash
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          # Armbian builds ARM root filesystems inside Docker. Register QEMU on
+          # the runner host first; enabling binfmt only inside the build container
+          # fails because that container cannot update the host kernel registry.
+          docker run --privileged --rm tonistiigi/binfmt:latest --install arm64
+          if ! sudo test -r /proc/sys/fs/binfmt_misc/qemu-aarch64; then
+            sudo mount -t binfmt_misc binfmt_misc /proc/sys/fs/binfmt_misc || true
+          fi
+          if ! sudo test -r /proc/sys/fs/binfmt_misc/qemu-aarch64; then
+            echo "::error::QEMU ARM64 binfmt registration did not create qemu-aarch64 on the runner host."
+            exit 1
+          fi
+          sudo cat /proc/sys/fs/binfmt_misc/qemu-aarch64
+          sudo grep -q '^enabled' /proc/sys/fs/binfmt_misc/qemu-aarch64 || {
+            echo "::error::QEMU ARM64 binfmt exists but is not enabled."
+            exit 1
+          }
+
       - name: Resolve source and verify board ID
         id: source
         shell: bash
