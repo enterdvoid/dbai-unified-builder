@@ -397,7 +397,6 @@ jobs:
           if [[ "$BUILD_KERNEL_MODE" == "recompile" ]]; then
             # Bypass Armbian local/remote artifact caches and rebuild artifacts from source.
             ARTIFACT_IGNORE_CACHE=yes
-            BUILD_KERNEL_MODE=official
           fi
 
           if [[ "$PROFILE" == "proxmox" ]]; then
