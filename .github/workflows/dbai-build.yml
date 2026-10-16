@@ -160,7 +160,7 @@ jobs:
             ext4|btrfs) filesystems=("$FILESYSTEM_INPUT") ;;
           esac
 
-          matrix='[]'
+          matrix='{"include":[]}'
           has_bookworm=false
           has_trixie=false
           for release in "${releases[@]}"; do
@@ -170,7 +170,7 @@ jobs:
             for profile in "${profiles[@]}"; do
               profile="$(xargs <<< "$profile")"
               for fs in "${filesystems[@]}"; do
-                matrix="$(jq -c --arg release "$release" --arg profile "$profile" --arg filesystem "$fs" '. + [{release:$release,profile:$profile,filesystem:$filesystem,proxmox_variant:"none"}]' <<< "$matrix")"
+                matrix="$(jq -c --arg release "$release" --arg profile "$profile" --arg filesystem "$fs" '.include += [{release:$release,profile:$profile,filesystem:$filesystem,proxmox_variant:"none"}]' <<< "$matrix")"
               done
             done
           done
@@ -179,19 +179,19 @@ jobs:
           if [[ "$PROXMOX_MODE" == "official" || "$PROXMOX_MODE" == "both" ]]; then
             [[ "$has_trixie" == "true" ]] || { echo "::error::Official Proxmox mode needs trixie in releases"; exit 2; }
             for fs in "${filesystems[@]}"; do
-              matrix="$(jq -c --arg filesystem "$fs" '. + [{release:"trixie",profile:"proxmox",filesystem:$filesystem,proxmox_variant:"official"}]' <<< "$matrix")"
+              matrix="$(jq -c --arg filesystem "$fs" '.include += [{release:"trixie",profile:"proxmox",filesystem:$filesystem,proxmox_variant:"official"}]' <<< "$matrix")"
             done
           fi
           if [[ "$PROXMOX_MODE" == "community" || "$PROXMOX_MODE" == "both" ]]; then
             [[ "$has_bookworm" == "true" ]] || { echo "::error::Community Proxmox mode needs bookworm in releases"; exit 2; }
             for fs in "${filesystems[@]}"; do
-              matrix="$(jq -c --arg filesystem "$fs" '. + [{release:"bookworm",profile:"proxmox",filesystem:$filesystem,proxmox_variant:"community"}]' <<< "$matrix")"
+              matrix="$(jq -c --arg filesystem "$fs" '.include += [{release:"bookworm",profile:"proxmox",filesystem:$filesystem,proxmox_variant:"community"}]' <<< "$matrix")"
             done
           fi
           echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
           echo "board=$BOARD" >> "$GITHUB_OUTPUT"
           echo "Resolved board: $BOARD"
-          echo "Planned combinations: $(jq 'length' <<< "$matrix")"
+          echo "Planned combinations: $(jq '.include | length' <<< "$matrix")"
           jq . <<< "$matrix"
 
   build:
