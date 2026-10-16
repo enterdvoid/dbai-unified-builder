@@ -50,5 +50,7 @@ jobs:
           MACHINE_ID_SALT=validation-machine-salt
           EOF
           docker compose --project-directory "$RUNNER_TEMP" --profile hermes-9router --profile lightnvr-go2rtc -f "$RUNNER_TEMP/docker-compose.yml" config --quiet
-      - name: Test input validator
-        run: bash tests/test-validate-inputs.sh
+      - name: Test input validator and kernel header layouts
+        run: |
+          bash tests/test-validate-inputs.sh
+          bash tests/test-custom-kernel-headers-layout.sh
