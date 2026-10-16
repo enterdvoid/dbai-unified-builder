@@ -1,6 +1,6 @@
 # Application Profiles
 
-These profiles are applied only to the `application` image variant. Other requested profiles remain normal Armbian images.
+The application selector is used only when the **Application** image checkbox is enabled. Minimal, Server, and Desktop images remain normal Armbian images. Incompatible Application/release pairs are omitted from the matrix; other image types for those releases still build. If every requested matrix row is incompatible, planning stops with a clear error.
 
 | Workflow selection | What is staged/installed | Release and architecture constraints |
 |---|---|---|
