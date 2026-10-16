@@ -594,12 +594,11 @@ jobs:
               *) echo "::error::Unrecognized image format: $base"; exit 1 ;;
             esac
 
+            # Canonical DBAI2K26 name: include the selected application exactly once.
             safe_base="DBAI2K26-Armbian_${armbian_version_filename}-${SHORT_BOARD}-${RELEASE}-k${kernel_version}-${PROFILE_VARIANT}-${FILESYSTEM}${suffix}"
-            # Extensions can append the application suffix themselves; avoid duplicates in published assets.
-            duplicate_app_suffix="-${PROFILE_VARIANT}-${PROFILE_VARIANT}-${FILESYSTEM}${suffix}"
-            canonical_app_suffix="-${PROFILE_VARIANT}-${FILESYSTEM}${suffix}"
-            if [[ "$PROFILE" == "application" && "$safe_base" == *"$duplicate_app_suffix" ]]; then
-              safe_base="${safe_base%"$duplicate_app_suffix"}${canonical_app_suffix}"
+            if [[ "$PROFILE" == "application" ]]; then
+              duplicate_profile="-${PROFILE_VARIANT}-${PROFILE_VARIANT}-"
+              safe_base="${safe_base//"$duplicate_profile"/-${PROFILE_VARIANT}-}"
             fi
             stage_image="$GITHUB_WORKSPACE/stage/$safe_base"
             cp "$image" "$stage_image"
