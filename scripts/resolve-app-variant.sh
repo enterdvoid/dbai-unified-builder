@@ -9,10 +9,10 @@ case "$app_profile" in
     printf 'none\n'
     ;;
   proxmox-official)
-    [[ "$release" == "trixie" ]] && printf 'proxmox-official\n'
+    if [[ "$release" == "trixie" ]]; then printf 'proxmox-official\n'; fi
     ;;
   proxmox-community)
-    [[ "$release" == "bookworm" ]] && printf 'proxmox-community\n'
+    if [[ "$release" == "bookworm" ]]; then printf 'proxmox-community\n'; fi
     ;;
   proxmox-both)
     case "$release" in
@@ -21,13 +21,17 @@ case "$app_profile" in
     esac
     ;;
   homeassistant)
-    [[ "$release" =~ ^(bullseye|bookworm|trixie)$ ]] && printf 'homeassistant\n'
+    if [[ "$release" =~ ^(bullseye|bookworm|trixie)$ ]]; then printf 'homeassistant\n'; fi
     ;;
   openmediavault|casaos|hermes-9router|lightnvr-go2rtc|hermes-9router-lightnvr)
-    [[ "$release" =~ ^(bookworm|trixie)$ ]] && printf '%s\n' "$app_profile"
+    if [[ "$release" =~ ^(bookworm|trixie)$ ]]; then printf '%s\n' "$app_profile"; fi
     ;;
   *)
     echo "Unsupported application profile: $app_profile" >&2
     exit 2
     ;;
 esac
+
+# Empty stdout with exit status 0 means this application is not compatible
+# with the requested release, so the workflow can skip just this matrix row.
+exit 0
