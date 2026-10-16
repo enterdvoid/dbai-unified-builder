@@ -48,7 +48,9 @@ function pre_customize_image__dbai_overlay_kernel_bundle() {
 	if ! tar -tf "${cache_dir}/boot.tar" | grep -Eq '^(boot/.*|(\./)?(Image[^/]*|vmlinuz[^/]*|uImage|zImage|initrd[^/]*|uInitrd)(/|$))'; then
 		exit_with_error "boot-<version> archive must contain files under boot/ or a recognizable kernel image at its archive root"
 	fi
-	tar -tf "${cache_dir}/dtb.tar" | grep -Eq '(^|/)[^/]+[.]dtb' || exit_with_error "dtb-amlogic-<version> archive must contain at least one .dtb file"
+	local dtb_listing="${cache_dir}/dtb-list.txt"
+	tar -tf "${cache_dir}/dtb.tar" > "${dtb_listing}" || exit_with_error "Unable to read DTB archive file list"
+	grep -Eq '(^|/)[^/]+[.]dtb' "${dtb_listing}" || exit_with_error "dtb-amlogic-<version> archive must contain at least one .dtb file"
 	tar -tf "${cache_dir}/modules.tar" | grep -Eq '^lib/modules/[^/]+/' || exit_with_error "modules-<version> archive must contain lib/modules/<kernel-release>/"
 	tar -tf "${cache_dir}/headers.tar" | grep -Eq '^(usr/src/|lib/modules/[^/]+/build)' || exit_with_error "header-<version> archive must contain usr/src/ or matching modules build paths"
 
