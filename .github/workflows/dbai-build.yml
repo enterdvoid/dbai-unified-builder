@@ -711,7 +711,7 @@ jobs:
                   found_image=true
                   name="$(basename "$asset")"
                   size="$(stat -c '%s' "$asset")"
-                  echo "- `$name` — $size bytes"
+                  echo "- \`$name\` — $size bytes"
                   ;;
               esac
             done
@@ -719,8 +719,8 @@ jobs:
             echo
             echo "## Integrity"
             echo
-            echo "- `SHA256SUMS` contains SHA-256 checksums for every uploaded image and information file."
-            echo "- Verify downloads with: `sha256sum -c SHA256SUMS`"
+            echo "- \`SHA256SUMS\` contains SHA-256 checksums for every uploaded image and information file."
+            echo "- Verify downloads with: \`sha256sum -c SHA256SUMS\`"
             echo
             echo "## Notes"
             echo
@@ -730,9 +730,11 @@ jobs:
 
           TAG="dbai-build-$(date -u +'%Y%m%d-%H%M%S')-$GITHUB_RUN_ID"
           TITLE="DBAI Armbian ${BOARD} ${RELEASES_INPUT} [${PROFILES_INPUT}] [${FILESYSTEM_INPUT}] app-${APP_PROFILE} $(date -u +'%Y-%m-%d_%H-%M')"
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-          echo "title=$TITLE" >> "$GITHUB_OUTPUT"
-          echo "notes_file=$NOTES_FILE" >> "$GITHUB_OUTPUT"
+          {
+            echo "tag=$TAG"
+            echo "title=$TITLE"
+            echo "notes_file=$NOTES_FILE"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Publish release and verify remote assets
         shell: bash
