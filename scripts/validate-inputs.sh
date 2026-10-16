@@ -25,7 +25,7 @@ for item in "${profile_list[@]}"; do
   item="$(xargs <<< "$item")"
   [[ "$item" =~ ^(minimal|server|application|desktop)$ ]] || { echo "Unsupported profile token: $item" >&2; exit 2; }
 done
-[[ "$app_profile" =~ ^(none|homeassistant|openmediavault|casaos|hermes-9router|lightnvr-go2rtc|hermes-9router-lightnvr|proxmox-official|proxmox-community|proxmox-both)$ ]] || { echo "Unsupported application profile: $app_profile" >&2; exit 2; }
+[[ "$app_profile" =~ ^(all|none|homeassistant|openmediavault|casaos|hermes-9router|lightnvr-go2rtc|hermes-9router-lightnvr|proxmox-official|proxmox-community|proxmox-both)$ ]] || { echo "Unsupported application profile: $app_profile" >&2; exit 2; }
 
 # Release compatibility is handled per matrix row by resolve-app-variant.sh.
 # This deliberately allows mixed OS batches: incompatible Application rows are skipped,
