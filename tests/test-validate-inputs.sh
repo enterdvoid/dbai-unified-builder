@@ -10,6 +10,7 @@ bash "$VALIDATOR" "aml-s9xx-box" "" "bookworm,trixie,jammy,noble,resolute" "mini
 bash "$VALIDATOR" "aml-s9xx-box" "" "bullseye,bookworm,trixie,forky" "minimal,server" "ext4" "Kernel Official" "none"
 bash "$VALIDATOR" "aml-s9xx-box" "" "jammy,noble,resolute" "minimal,server" "ext4" "Kernel Official" "none"
 bash "$VALIDATOR" "aml-s9xx-box" "" "trixie,resolute" "minimal,server,application" "ext4" "Custom Kernel" "casaos"
+bash "$VALIDATOR" "aml-s9xx-box" "" "bookworm,trixie" "application" "both" "Kernel Official" "all"
 bash "$VALIDATOR" "aml-s9xx-box" "" "trixie,resolute" "minimal,server" "ext4" "Recompile Custom Kernel" "none"
 bash "$VALIDATOR" "aml-s9xx-box" "" "bookworm,trixie" "application" "ext4" "Kernel Official" "proxmox-both"
 
@@ -30,6 +31,12 @@ fi
 if bash "$PROFILE_RESOLVER" true yes false true; then
   echo "Expected invalid checkbox boolean to fail" >&2; exit 1
 fi
+
+ALL_RESOLVER="$ROOT/scripts/resolve-app-variants.sh"
+[[ "$(bash "$ALL_RESOLVER" all bookworm | sort | tr '\n' ',')" == "casaos,hermes-9router,hermes-9router-lightnvr,lightnvr-go2rtc,openmediavault,proxmox-community," ]]
+[[ "$(bash "$ALL_RESOLVER" all trixie | sort | tr '\n' ',')" == "casaos,hermes-9router,hermes-9router-lightnvr,lightnvr-go2rtc,openmediavault,proxmox-official," ]]
+[[ "$(bash "$ALL_RESOLVER" all bullseye)" == "homeassistant" ]]
+[[ "$(bash "$ALL_RESOLVER" none resolute)" == "none" ]]
 
 RESOLVER="$ROOT/scripts/resolve-app-variant.sh"
 [[ "$(bash "$RESOLVER" proxmox-community bookworm)" == "proxmox-community" ]]
