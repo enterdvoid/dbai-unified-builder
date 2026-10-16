@@ -19,7 +19,7 @@ A GitHub Actions frontend for building ready-to-use Armbian-based firmware for A
 4. Enter comma-separated release and profile lists. Example: `bookworm,trixie` and `minimal,server,application,desktop`.
 5. Select `both` to build ext4 and btrfs variants.
 6. Keep `kernel_mode=official` unless all four custom-kernel archives are ready.
-7. Choose an application profile for the `application` image profile. The app is installed only in the application variant.
+7. Choose an application profile for the `application` image profile. The app is installed only in the application variant. For Proxmox, choose `proxmox_mode=official` with `releases=trixie`, `community` with `releases=bookworm`, or `both` with `releases=bookworm,trixie`; set `app_profile=none`. Proxmox mode currently requires the official kernel option.
 8. Ensure the repository Actions secret `DBAI_RELEASE_TOKEN` is configured before starting; the plan job checks this before expensive builds.
 9. Start the run and inspect each matrix job. The release is created only after all build jobs pass.
 

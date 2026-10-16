@@ -19,6 +19,10 @@ if bash "$VALIDATOR" "orangepi5" "" "bookworm" "application" "ext4" "official" "
   echo "Expected official Proxmox on Bookworm to fail" >&2
   exit 1
 fi
+if bash "$VALIDATOR" "aml-s9xx-box" "" "bookworm,trixie" "application" "both" "custom-four-part" "none" "both"; then
+  echo "Expected custom kernel plus Proxmox mode to fail preflight" >&2
+  exit 1
+fi
 if bash "$VALIDATOR" "orangepi5" "" "bookworm" "unknown" "ext4" "official" "none"; then
   echo "Expected unknown profile to fail" >&2
   exit 1
