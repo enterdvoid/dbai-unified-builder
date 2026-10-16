@@ -596,13 +596,12 @@ jobs:
 
             # Canonical DBAI2K26 name: include the selected application exactly once.
             asset_profile="$PROFILE_VARIANT"
+            asset_kernel_version="$kernel_version"
             if [[ "$PROFILE" == "application" ]]; then
-              case "$base" in
-                *"-${PROFILE_VARIANT}-${PROFILE_VARIANT}.img"*) asset_profile="$PROFILE_VARIANT" ;;
-                *"-${PROFILE_VARIANT}.img"*) asset_profile="$PROFILE_VARIANT" ;;
-              esac
+              # Armbian extensions can append the app name to the kernel field in the output filename.
+              asset_kernel_version="${asset_kernel_version%-${PROFILE_VARIANT}}"
             fi
-            safe_base="DBAI2K26-Armbian_${armbian_version_filename}-${SHORT_BOARD}-${RELEASE}-k${kernel_version}-${asset_profile}-${FILESYSTEM}${suffix}"
+            safe_base="DBAI2K26-Armbian_${armbian_version_filename}-${SHORT_BOARD}-${RELEASE}-k${asset_kernel_version}-${asset_profile}-${FILESYSTEM}${suffix}"
             stage_image="$GITHUB_WORKSPACE/stage/$safe_base"
             cp "$image" "$stage_image"
 
