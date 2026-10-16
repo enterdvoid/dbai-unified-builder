@@ -480,6 +480,11 @@ jobs:
     env:
       GH_TOKEN: ${{ secrets.DBAI_RELEASE_TOKEN }}
       BOARD: ${{ needs.plan.outputs.board }}
+      RELEASES_INPUT: ${{ inputs.releases }}
+      PROFILES_INPUT: ${{ inputs.profiles }}
+      FILESYSTEM_INPUT: ${{ inputs.filesystem }}
+      APP_PROFILE: ${{ inputs.app_profile }}
+      PROXMOX_MODE: ${{ inputs.proxmox_mode }}
       DELETE_OLD: "true"
     steps:
       - name: Report release assembly runner resources
