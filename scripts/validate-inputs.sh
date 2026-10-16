@@ -16,7 +16,7 @@ fi
 [[ "$board" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "Invalid board ID: $board" >&2; exit 2; }
 [[ -n "$releases" && -n "$profiles" ]] || { echo "Releases and profiles cannot be empty" >&2; exit 2; }
 [[ "$filesystem" =~ ^(ext4|btrfs|both)$ ]] || { echo "Filesystem must be ext4, btrfs, or both" >&2; exit 2; }
-[[ "$kernel_mode" =~ ^(official|custom-four-part)$ ]] || { echo "Invalid kernel mode" >&2; exit 2; }
+[[ "$kernel_mode" =~ ^(official|recompile|custom-four-part)$ ]] || { echo "Invalid kernel mode" >&2; exit 2; }
 
 IFS=',' read -r -a release_list <<< "$releases"
 IFS=',' read -r -a profile_list <<< "$profiles"
