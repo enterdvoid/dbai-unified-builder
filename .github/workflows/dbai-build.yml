@@ -143,16 +143,16 @@ jobs:
         env:
           BOARD_INPUT: ${{ inputs.board || 'aml-s9xx-box' }}
           CUSTOM_BOARD: ${{ inputs.custom_board_name || '' }}
-          RELEASE_GROUP: ${{ inputs.armbian_version_release || 'Custom' }}
+          RELEASE_GROUP: ${{ (github.event_name == 'push' && contains(github.event.head_commit.message, '[dbai-smoke]')) && 'Custom' || inputs.armbian_version_release || 'Custom' }}
           CUSTOM_RELEASES: ${{ inputs.custom_releases || 'trixie,resolute' }}
-          BUILD_MINIMAL_INPUT: ${{ github.event_name == 'workflow_dispatch' && inputs.build_minimal || github.event_name != 'workflow_dispatch' }}
-          BUILD_SERVER_INPUT: ${{ github.event_name == 'workflow_dispatch' && inputs.build_server || github.event_name != 'workflow_dispatch' }}
-          BUILD_APPLICATION_INPUT: ${{ github.event_name == 'workflow_dispatch' && inputs.build_application || github.event_name != 'workflow_dispatch' }}
-          BUILD_DESKTOP_INPUT: ${{ github.event_name == 'workflow_dispatch' && inputs.build_desktop || github.event_name != 'workflow_dispatch' }}
-          FILESYSTEM_INPUT: ${{ inputs.filesystem || 'ext4' }}
-          KERNEL_MODE: ${{ inputs.kernel_mode || 'Kernel Official' }}
+          BUILD_MINIMAL_INPUT: ${{ github.event_name == 'workflow_dispatch' && inputs.build_minimal || (github.event_name == 'push' && !contains(github.event.head_commit.message, '[dbai-smoke]')) }}
+          BUILD_SERVER_INPUT: ${{ github.event_name == 'workflow_dispatch' && inputs.build_server || (github.event_name == 'push' && contains(github.event.head_commit.message, '[dbai-smoke]')) }}
+          BUILD_APPLICATION_INPUT: ${{ github.event_name == 'workflow_dispatch' && inputs.build_application || (github.event_name == 'push' && !contains(github.event.head_commit.message, '[dbai-smoke]')) }}
+          BUILD_DESKTOP_INPUT: ${{ github.event_name == 'workflow_dispatch' && inputs.build_desktop || (github.event_name == 'push' && !contains(github.event.head_commit.message, '[dbai-smoke]')) }}
+          FILESYSTEM_INPUT: ${{ (github.event_name == 'push' && contains(github.event.head_commit.message, '[dbai-smoke]')) && 'ext4' || inputs.filesystem || 'ext4' }}
+          KERNEL_MODE: ${{ (github.event_name == 'push' && contains(github.event.head_commit.message, '[dbai-smoke]')) && 'Custom Kernel' || inputs.kernel_mode || 'Kernel Official' }}
           APP_PROFILE: ${{ inputs.app_profile || 'none' }}
-          KERNEL_CUSTOM_INPUT: ${{ inputs.kernel_custom_input || '' }}
+          KERNEL_CUSTOM_INPUT: ${{ (github.event_name == 'push' && contains(github.event.head_commit.message, '[dbai-smoke]')) && 'https://github.com/armarchindo/kernel/releases/download/kernel_dbai/6.1.66-DBAI.tar.gz' || inputs.kernel_custom_input || '' }}
           KERNEL_PATCH_SERIES: meson64-current
         run: |
           set -euo pipefail
@@ -314,10 +314,10 @@ jobs:
       PROFILE: ${{ matrix.profile }}
       FILESYSTEM: ${{ matrix.filesystem }}
       SOURCE_REF: ${{ inputs.source_ref || 'main' }}
-      KERNEL_MODE: ${{ inputs.kernel_mode || 'Kernel Official' }}
+      KERNEL_MODE: ${{ (github.event_name == 'push' && contains(github.event.head_commit.message, '[dbai-smoke]')) && 'Custom Kernel' || inputs.kernel_mode || 'Kernel Official' }}
       APP_PROFILE: ${{ inputs.app_profile || 'none' }}
       APP_VARIANT: ${{ matrix.app_variant }}
-      KERNEL_CUSTOM_INPUT: ${{ inputs.kernel_custom_input || '' }}
+      KERNEL_CUSTOM_INPUT: ${{ (github.event_name == 'push' && contains(github.event.head_commit.message, '[dbai-smoke]')) && 'https://github.com/armarchindo/kernel/releases/download/kernel_dbai/6.1.66-DBAI.tar.gz' || inputs.kernel_custom_input || '' }}
       KERNEL_PATCH_SERIES: meson64-current
     steps:
       - name: Report runner resources before disk setup
@@ -593,8 +593,12 @@ jobs:
           if [[ "$BOARD" == "aml-s9xx-box" ]]; then
             export BOOTFS_TYPE=fat
           fi
-          ./compile.sh build             BOARD="$BOARD"             BRANCH=current             RELEASE="$RELEASE"             BUILD_MINIMAL="$BUILD_MINIMAL"             BUILD_DESKTOP="$BUILD_DESKTOP"             ROOTFS_TYPE="$FILESYSTEM"             FIXED_IMAGE_SIZE="$IMAGE_SIZE"             BOOTSIZE=256             COMPRESS_OUTPUTIMAGE=sha,xz             IMAGE_XZ_COMPRESSION_RATIO=0             KERNEL_CONFIGURE=no             ARTIFACT_IGNORE_CACHE="$ARTIFACT_IGNORE_CACHE"             ENABLE_EXTENSIONS="$ENABLE_EXTENSIONS" \
-            "${KERNELSOURCE_ARG[@]}" "${KERNELBRANCH_ARG[@]}" "${BSPFREEZE_ARG[@]}"
+          DBAI_KERNEL_BUNDLE_ARG=()
+          if [[ "$BUILD_KERNEL_MODE" == "Custom Kernel" ]]; then
+            DBAI_KERNEL_BUNDLE_ARG=("DBAI_KERNEL_BUNDLE_URL=$KERNEL_CUSTOM_INPUT")
+          fi
+          ./compile.sh build             BOARD="$BOARD"             BRANCH=current             RELEASE="$RELEASE"             BUILD_MINIMAL="$BUILD_MINIMAL"             BUILD_DESKTOP="$BUILD_DESKTOP"             ROOTFS_TYPE="$FILESYSTEM"             FIXED_IMAGE_SIZE="$IMAGE_SIZE"             BOOTSIZE=256             COMPRESS_OUTPUTIMAGE=sha,xz             IMAGE_XZ_COMPRESSION_RATIO=0             KERNEL_CONFIGURE=no             ARTIFACT_IGNORE_CACHE="$ARTIFACT_IGNORE_CACHE"             ENABLE_EXTENSIONS="$ENABLE_EXTENSIONS"             "DBAI_KERNEL_MODE=$BUILD_KERNEL_MODE" \
+            "${DBAI_KERNEL_BUNDLE_ARG[@]}" "${KERNELSOURCE_ARG[@]}" "${KERNELBRANCH_ARG[@]}" "${BSPFREEZE_ARG[@]}"
 
           mkdir -p "$GITHUB_WORKSPACE/stage"
           shopt -s nullglob
