@@ -204,7 +204,9 @@ jobs:
             if ! tar -tf "$temp_dir/boot.tar" | grep -Eq '^(boot/.*|(\./)?(Image[^/]*|vmlinuz[^/]*|uImage|zImage|initrd[^/]*|uInitrd)(/|$))'; then
               echo "::error::Boot archive must contain files under boot/ or a recognizable kernel image at its archive root."; exit 2
             fi
-            tar -tf "$temp_dir/dtb.tar" | grep -Eq '(^|/)[^/]+[.]dtb' || { echo "::error::DTB archive contains no .dtb files."; exit 2; }
+            dtb_listing="$temp_dir/dtb-list.txt"
+            tar -tf "$temp_dir/dtb.tar" > "$dtb_listing" || { echo "::error::Unable to read DTB archive file list."; exit 2; }
+            grep -Eq '(^|/)[^/]+[.]dtb' "$dtb_listing" || { echo "::error::DTB archive contains no .dtb files."; exit 2; }
             tar -tf "$temp_dir/modules.tar" | grep -Eq '^lib/modules/[^/]+/' || { echo "::error::Modules archive needs lib/modules/<release>/"; exit 2; }
             tar -tf "$temp_dir/headers.tar" | grep -Eq '^(usr/src/|lib/modules/[^/]+/build)' || { echo "::error::Headers archive needs usr/src/ or matching modules build paths"; exit 2; }
             rm -rf "$temp_dir"
