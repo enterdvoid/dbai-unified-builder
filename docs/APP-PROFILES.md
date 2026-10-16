@@ -46,7 +46,7 @@ The separate `proxmox_mode` input has `none`, `official`, `community`, and `both
 
 - `official`: Trixie packages from the official Proxmox repository.
 - `community`: Bookworm packages from the PXVIRT community repository, with mirror fallback.
-- `both`: the application variant on Bookworm uses community PXVIRT; the application variant on Trixie uses the official package repository.
+- `both`: adds a separate Proxmox profile on Bookworm using community PXVIRT and another on Trixie using the official package repository.
 
 Proxmox mode creates additional `proxmox` profile jobs separate from the application profile, so the selected app profile can still produce its own application image. Proxmox-specific jobs always use the official Armbian kernel and freeze BSP/kernel package updates. The workflow reuses the DBAI Proxmox extensions and VM-import helper from `enterdvoid/build`. This is a package-based experiment that retains the Armbian kernel, not the official Proxmox ISO or a guarantee of full Proxmox VE compatibility on an Amlogic TV box. Official Proxmox VE 9.2 ARM64 requires UEFI/ACPI for supported systems; device-tree-only SBCs are not supported by the official ARM64 release.
 

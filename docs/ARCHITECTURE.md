@@ -32,7 +32,7 @@ Target image sizes are 4096 MiB for minimal/server and 8192 MiB for application/
 
 ## Proxmox modes
 
-The `proxmox_mode` selector accepts `none`, `official`, `community`, or `both`. Official mode builds the Trixie package variant; community mode builds the Bookworm PXVIRT variant; `both` requires both releases and creates the corresponding variant per release. Select `app_profile=none` when Proxmox mode is enabled. The workflow applies `BSPFREEZE=yes` to Proxmox image builds and currently requires the official Armbian kernel mode; custom-kernel overlays are not combined with the Proxmox package stack until KVM compatibility is validated.
+The `proxmox_mode` selector accepts `none`, `official`, `community`, or `both` and adds separate `proxmox` profile jobs. Official mode adds a Trixie package variant; community mode adds a Bookworm PXVIRT variant; `both` adds one of each. Proxmox jobs are independent of the application profile, always use the official Armbian kernel, and pass `BSPFREEZE=yes`. Other requested images may still use the optional custom kernel.
 
 The Proxmox extensions and VM image-import helper are reused from the existing DBAI Armbian fork, including the PXVIRT mirror fallback, valid Deb822 source configuration, `/tmp` mode 1777, kernel package pinning, and first-boot hostname service. This remains an experimental ARM64 package integration, not official certification of an Amlogic TV box.
 
