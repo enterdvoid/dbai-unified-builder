@@ -49,6 +49,7 @@ The default batch can produce many images. Start with one release, one image typ
 ## Documents
 
 - [Architecture and board policy](docs/ARCHITECTURE.md)
+- [Validation and custom-kernel build troubleshooting](docs/TESTING.md)
 - [Application profiles and Proxmox constraints](docs/APP-PROFILES.md)
 - [Custom kernel and recompile guide](docs/FOUR-PART-KERNEL.md)
 - [Backup and release recovery](docs/BACKUP-AND-RELEASE.md)
