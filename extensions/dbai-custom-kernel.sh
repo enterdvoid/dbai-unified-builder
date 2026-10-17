@@ -41,7 +41,26 @@ function dbai_prune_noncustom_kernel_artifacts() {
 	[[ "$custom_release" =~ ^[A-Za-z0-9._+-]+$ ]] || return 1
 
 	for modules_root in "$target_root/lib/modules" "$target_root/usr/lib/modules"; do
-		# Never follow an absolute /usr/lib/modules symlink out of the image root.
+		# Do not follow absolute parent symlinks (for example /lib -> /usr/lib)
+		# because path resolution would escape the target image and reach the host.
+		case "$modules_root" in
+			"$target_root/lib/modules")
+				if [[ -L "$target_root/lib" ]] && [[ "$(readlink "$target_root/lib")" == /* ]]; then
+					echo "Skipping module root through absolute image /lib symlink: $modules_root" >&2
+					continue
+				fi
+				;;
+			"$target_root/usr/lib/modules")
+				if [[ -L "$target_root/usr" ]] && [[ "$(readlink "$target_root/usr")" == /* ]]; then
+					echo "Skipping module root through absolute image /usr symlink: $modules_root" >&2
+					continue
+				fi
+				if [[ -L "$target_root/usr/lib" ]] && [[ "$(readlink "$target_root/usr/lib")" == /* ]]; then
+					echo "Skipping module root through absolute image /usr/lib symlink: $modules_root" >&2
+					continue
+				fi
+				;;
+		esac
 		[[ -L "$modules_root" ]] && continue
 		[[ -d "$modules_root" ]] || continue
 		for entry in "$modules_root"/*; do
@@ -98,6 +117,17 @@ function dbai_detect_kernel_modules_release() {
 	[[ -n "${release}" && "${release}" =~ ^[A-Za-z0-9._+-]+$ ]] || return 1
 	printf '%s\n' "${release}"
 }
+function pre_umount_final_image__dbai_prune_noncustom_kernel_artifacts() {
+	[[ "${DBAI_KERNEL_MODE:-}" == "Custom Kernel" ]] || return 0
+	local target_root="${MOUNT:-}" custom_release="${DBAI_CUSTOM_KERNEL_RELEASE:-}"
+	[[ -n "$target_root" && -d "$target_root" ]] || exit_with_error "Final image root mount is unavailable for custom-kernel cleanup"
+	[[ "$custom_release" =~ ^[A-Za-z0-9._+-]+$ ]] || exit_with_error "Custom kernel release was not retained for final-image cleanup"
+	[[ -d "$target_root/lib/modules/$custom_release" ]] || exit_with_error "Custom kernel modules are missing from final image root: /lib/modules/$custom_release"
+
+	display_alert "DBAI custom kernel" "Removing distro kernel artifacts after Armbian initramfs generation" "info"
+	dbai_prune_noncustom_kernel_artifacts "$target_root" "$custom_release" || exit_with_error "Unable to clean non-custom kernel artifacts from the final image"
+}
+
 function extension_prepare_config__dbai_custom_kernel() {
 	if [[ "${DBAI_KERNEL_MODE:-}" != "Custom Kernel" ]]; then
 		exit_with_error "dbai-custom-kernel extension was enabled while DBAI_KERNEL_MODE is not Custom Kernel"
@@ -245,8 +275,10 @@ function pre_customize_image__dbai_overlay_kernel_bundle() {
 		find "${SDCARD}/usr/src" -type f -name 'Makefile' -print -quit | grep -q . || exit_with_error "No kernel header Makefile found under target /usr/src after overlay"
 	fi
 
-	# Purge official-kernel leftovers only after the custom modules were overlaid.
-	dbai_prune_noncustom_kernel_artifacts "$SDCARD" "$modules_release" || exit_with_error "Unable to clean non-custom kernel artifacts from the image"
+	# The Armbian image finalizer still runs update_initramfs for IMAGE_INSTALLED_KERNEL_VERSION.
+	# Keep its modules present until that step has finished; cleanup is deferred to
+	# pre_umount_final_image__dbai_prune_noncustom_kernel_artifacts.
+	DBAI_CUSTOM_KERNEL_RELEASE="${modules_release}"
 
 	local manifest="${SDCARD}/etc/dbai-custom-kernel-manifest.txt"
 	mkdir -p "${SDCARD}/etc"
