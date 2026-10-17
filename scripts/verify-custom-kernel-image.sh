@@ -136,22 +136,62 @@ grep -Fqx "Kernel release: $expected_release" "$manifest" || {
   exit 1
 }
 
+
+# A Custom Kernel image must not retain distro kernel trees or the stray root
+# directory created by some archive layouts.
+if [[ -e "$root_mount/$expected_release" || -L "$root_mount/$expected_release" ]]; then
+  echo "::error::Unexpected kernel-release directory exists at image root: /$expected_release."
+  exit 1
+fi
+for modules_root in "$root_mount/lib/modules" "$root_mount/usr/lib/modules"; do
+  [[ -d "$modules_root" ]] || continue
+  for entry in "$modules_root"/*; do
+    [[ -e "$entry" || -L "$entry" ]] || continue
+    [[ "$(basename "$entry")" == "$expected_release" ]] || {
+      echo "::error::Non-custom kernel module tree remains in Custom Kernel image: $(realpath --relative-to="$root_mount" "$entry")."
+      exit 1
+    }
+  done
+done
+for entry in "$root_mount/usr/lib"/linux-image-*; do
+  [[ -e "$entry" || -L "$entry" ]] || continue
+  [[ "$(basename "$entry")" == "linux-image-$expected_release" ]] || {
+    echo "::error::Distro kernel image payload remains in Custom Kernel image: $(realpath --relative-to="$root_mount" "$entry")."
+    exit 1
+  }
+done
+
 headers_layout="$(sed -n 's/^Headers archive layout: //p' "$manifest" | head -n 1)"
 case "$headers_layout" in
   uapi-root)
-    uapi_dir="${root_mount}/usr/src/linux-uapi-headers-${expected_release}/include"
-    [[ -d "$uapi_dir" ]] || { echo "::error::Image is missing separately staged UAPI headers for $expected_release."; exit 1; }
-    [[ -n "$(find "$uapi_dir" -type f -print -quit)" ]] || { echo "::error::UAPI headers directory is empty."; exit 1; }
-    if [[ -L "${modules_dir}/build" || -L "${modules_dir}/source" ]]; then
-      echo "::error::UAPI-only bundle left misleading build/source symlinks in /lib/modules/$expected_release."
-      exit 1
-    fi
+    echo "::error::The supplied header archive contains UAPI headers only, not kernel build headers. A Custom Kernel image cannot pass verification until the bundle provides full headers matching $expected_release."
+    exit 1
     ;;
   header-root|target-root)
-    if [[ ! -f "${modules_dir}/build/Makefile" ]] && [[ -z "$(find "${root_mount}/usr/src" -type f -name Makefile -print -quit 2>/dev/null)" ]]; then
-      echo "::error::Image manifest claims build headers, but no matching kernel Makefile is present."
+    headers_dir="${root_mount}/usr/src/linux-headers-${expected_release}"
+    [[ -f "${headers_dir}/Makefile" ]] || {
+      echo "::error::Custom kernel build headers are missing at /usr/src/linux-headers-${expected_release}/Makefile."
       exit 1
-    fi
+    }
+    [[ -f "${headers_dir}/include/config/kernel.release" ]] || {
+      echo "::error::Custom kernel headers lack include/config/kernel.release; cannot prove their release."
+      exit 1
+    }
+    header_release="$(tr -d '\r\n' < "${headers_dir}/include/config/kernel.release")"
+    [[ "$header_release" == "$expected_release" ]] || {
+      echo "::error::Header release mismatch: modules use $expected_release but headers declare $header_release."
+      exit 1
+    }
+    [[ -L "${modules_dir}/build" ]] || {
+      echo "::error::/lib/modules/${expected_release}/build does not point to the custom kernel headers."
+      exit 1
+    }
+    build_target="$(readlink "${modules_dir}/build")"
+    [[ "$build_target" == "/usr/src/linux-headers-${expected_release}" ]] || {
+      echo "::error::Kernel modules build symlink points to unexpected headers: $build_target."
+      exit 1
+    }
+    echo "VERIFY: custom kernel headers release matches modules: $header_release"
     ;;
   *)
     echo "::error::Unknown headers archive layout recorded in image manifest: ${headers_layout:-missing}"
