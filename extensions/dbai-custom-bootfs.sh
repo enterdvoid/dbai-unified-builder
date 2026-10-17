@@ -13,8 +13,11 @@ function extension_prepare_config__dbai_custom_bootfs() {
 }
 
 function dbai_replace_bootfs_files() {
-	: "${SDCARD:?Armbian did not set SDCARD for custom bootfs replacement}"
-	local boot_dir="${SDCARD}/boot"
+	# An explicit root is required when restoring files into the final image.
+	# Armbian may declare SDCARD readonly, so never try to override it inline.
+	local target_root="${1:-${SDCARD:-}}"
+	[[ -n "$target_root" ]] || exit_with_error "Armbian did not set SDCARD for custom bootfs replacement"
+	local boot_dir="${target_root}/boot"
 	local archive="${SRC}/userpatches/platform/bootfs_custom_kernel.tar.gz"
 	mkdir -p "$boot_dir"
 	tar -tzf "$archive" >/dev/null 2>&1 || exit_with_error "Custom bootfs archive is invalid"
