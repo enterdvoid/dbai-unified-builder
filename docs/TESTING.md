@@ -44,6 +44,12 @@ For any custom-kernel image, inspect the build log and resulting image to verify
 
 Record the failing workflow URL, failed step, decisive error line, corrective commit, static test result, and full-build result in the follow-up. Do not mark a bug resolved based only on lint or unit tests.
 
-## 4. Known shell-variable failure class
+## 4. Reproduce the Proxmox custom-kernel failure
+
+A commit to `.github/workflows/dbai-build.yml` with a subject containing `[dbai-smoke-app]` launches the targeted regression build: `aml-s9xx-box`, Debian Trixie, Application profile, Proxmox Official extension, ext4, and the published DBAI custom-kernel bundle. This smoke run uses the workflow's APT workaround and must not publish or clean up releases. Use it to validate the actual final-image hooks after the static tests pass.
+
+The existing `[dbai-smoke]` tag continues to exercise a smaller server-image custom-kernel build; `[dbai-smoke-desktop]` exercises the desktop path. All smoke modes select Trixie/ext4 and skip release publication.
+
+## 5. Known shell-variable failure class
 
 Armbian extension hooks run inside a shell with upstream variables already populated. Bash reports errors such as `local: NAME: readonly variable` when a function declares a local variable with the same name as an existing readonly global. Fix this by renaming the local variable to a descriptive, extension-specific identifier and add a regression test with that global explicitly marked readonly.
