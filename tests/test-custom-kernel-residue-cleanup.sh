@@ -15,8 +15,11 @@ display_alert() { :; }
 SRC="$tmp/src"
 readonly SDCARD="$tmp/readonly-sdcard"
 # Armbian exposes some generic globals as readonly; cleanup helpers must not
-# shadow or assign these names with local variables.
+# shadow or assign these names with local variables. This value is intentionally
+# only read by the test assertion below to silence ShellCheck's unused-global warning.
+# shellcheck disable=SC2034
 readonly version="Armbian-global-version"
+[[ "$version" == "Armbian-global-version" ]]
 target_root="$tmp/final-image"
 mkdir -p "$SRC/userpatches/platform" "$tmp/boot-payload" "$target_root/boot" "$SDCARD/boot"
 printf '%s\n' 'old-default-boot-file' > "$target_root/boot/old-default-file"
