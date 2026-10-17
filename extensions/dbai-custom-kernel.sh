@@ -327,7 +327,7 @@ function dbai_restore_custom_kernel_boot_payload() {
 		echo "ERROR: validated custom-kernel boot/DTB archives are unavailable during final cleanup." >&2
 		return 1
 	}
-	SDCARD="$target_root" dbai_replace_bootfs_files || return 1
+	dbai_replace_bootfs_files "$target_root" || return 1
 	archive="$cache_dir/boot.tar"
 	if tar -tf "$archive" | grep -Eq '^boot/'; then
 		tar --no-same-owner --no-same-permissions -xf "$archive" -C "$target_root"
