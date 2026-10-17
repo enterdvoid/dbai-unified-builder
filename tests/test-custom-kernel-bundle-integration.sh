@@ -70,18 +70,10 @@ stage="${tmp}/target-root"
 mkdir "${stage}"
 case "${layout}" in
   uapi-root)
-    tar --no-same-owner --no-same-permissions --transform='s,^[.]/,,;s,^,usr/src/linux-uapi-headers-test-release/,' -xf "${header_archives[0]}" -C "${stage}"
-    find "${stage}/usr/src/linux-uapi-headers-test-release/include" -type f -print -quit | grep -q . || {
-      echo "FAIL: UAPI headers were not installed at the isolated destination" >&2
-      exit 1
-    }
-    [[ ! -e "${stage}/usr/src/linux-uapi-headers-test-release/Makefile" ]] || {
-      echo "FAIL: test incorrectly classified a Makefile-bearing tree as UAPI-only" >&2
-      exit 1
-    }
-    echo "PASS: UAPI headers can be preserved separately without masquerading as build headers."
-    ;;
-  header-root)
+    echo "FAIL: published Custom Kernel bundle contains UAPI-only headers, not a full kernel build-header tree." >&2
+    echo "The bundle must provide Makefile and include/config/kernel.release matching $module_release." >&2
+    exit 1
+    ;;  header-root)
     tar --no-same-owner --no-same-permissions --transform='s,^[.]/,,;s,^,usr/src/linux-headers-test-release/,' -xf "${header_archives[0]}" -C "${stage}"
     [[ -f "${stage}/usr/src/linux-headers-test-release/Makefile" ]] || {
       echo "FAIL: normalized kernel headers Makefile is missing" >&2
