@@ -43,6 +43,10 @@ grep -Fq 'EXTENSIONS+=(dbai-openbox)' "$workflow" || {
   echo "FAIL: Openbox profile does not enable the standalone Openbox extension." >&2
   exit 1
 }
+grep -Fq 'Start from Armbian Minimal, then add only the standalone Openbox GUI session.' "$workflow" || {
+  echo "FAIL: Openbox profile should use the lightweight Minimal base." >&2
+  exit 1
+}
 grep -Fq "asset_kernel_version=\"\${asset_kernel_version%-openbox}\"" "$workflow" || {
   echo "FAIL: Openbox suffix must not be duplicated in the canonical firmware filename." >&2
   exit 1
