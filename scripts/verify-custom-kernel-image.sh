@@ -165,10 +165,34 @@ for entry in "$root_mount/usr/lib"/linux-image-*; do
 done
 
 headers_layout="$(sed -n 's/^Headers archive layout: //p' "$manifest" | head -n 1)"
+# Ensure no distro header tree remains in /usr/src. UAPI-only and full build
+# headers are kept in distinct, release-specific directories.
+for entry in "$root_mount/usr/src"/linux-headers-* "$root_mount/usr/src"/linux-uapi-headers-*; do
+  [[ -e "$entry" || -L "$entry" ]] || continue
+  name="$(basename "$entry")"
+  case "$headers_layout" in
+    uapi-root) [[ "$name" == "linux-uapi-headers-$expected_release" ]] || {
+      echo "::error::Non-custom or unexpected kernel headers remain: /usr/src/$name."
+      exit 1
+    } ;;
+    header-root|target-root) [[ "$name" == "linux-headers-$expected_release" ]] || {
+      echo "::error::Non-custom or unexpected kernel headers remain: /usr/src/$name."
+      exit 1
+    } ;;
+  esac
+done
+
+
 case "$headers_layout" in
   uapi-root)
-    echo "::error::The supplied header archive contains UAPI headers only, not kernel build headers. A Custom Kernel image cannot pass verification until the bundle provides full headers matching $expected_release."
-    exit 1
+    uapi_dir="$root_mount/usr/src/linux-uapi-headers-$expected_release/include"
+    [[ -d "$uapi_dir" ]] || { echo "::error::Image is missing separately staged UAPI headers for $expected_release."; exit 1; }
+    [[ -n "$(find "$uapi_dir" -type f -print -quit)" ]] || { echo "::error::UAPI headers directory is empty."; exit 1; }
+    if [[ -L "$modules_dir/build" || -L "$modules_dir/source" ]]; then
+      echo "::error::UAPI-only bundle left misleading build/source symlinks in /lib/modules/$expected_release."
+      exit 1
+    fi
+    echo "VERIFY: custom bundle UAPI headers staged for $expected_release (UAPI only; not a full kernel build-header tree)"
     ;;
   header-root|target-root)
     headers_dir="${root_mount}/usr/src/linux-headers-${expected_release}"
