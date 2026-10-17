@@ -31,6 +31,46 @@ function dbai_detect_kernel_headers_layout() {
 	return 1
 }
 
+
+# Remove distro-kernel artifacts left by the Armbian base image after the
+# custom kernel overlay has been installed. Keep only the module tree whose
+# release was derived from the validated custom bundle.
+function dbai_prune_noncustom_kernel_artifacts() {
+	local target_root="$1" custom_release="$2" modules_root entry name stray
+	[[ -n "$target_root" && -d "$target_root" ]] || return 1
+	[[ "$custom_release" =~ ^[A-Za-z0-9._+-]+$ ]] || return 1
+
+	for modules_root in "$target_root/lib/modules" "$target_root/usr/lib/modules"; do
+		[[ -d "$modules_root" ]] || continue
+		for entry in "$modules_root"/*; do
+			[[ -e "$entry" || -L "$entry" ]] || continue
+			name="$(basename "$entry")"
+			[[ "$name" == "$custom_release" ]] && continue
+			echo "Removing non-custom kernel modules: $(realpath --relative-to="$target_root" "$entry")"
+			rm -rf -- "$entry"
+		done
+	done
+
+	for entry in "$target_root/usr/lib"/linux-image-*; do
+		[[ -e "$entry" || -L "$entry" ]] || continue
+		name="$(basename "$entry")"
+		[[ "$name" == "linux-image-$custom_release" ]] && continue
+		echo "Removing distro kernel image payload: $(realpath --relative-to="$target_root" "$entry")"
+		rm -rf -- "$entry"
+	done
+
+	# The release directory belongs under /lib/modules, never at image root.
+	stray="$target_root/$custom_release"
+	if [[ -d "$stray" ]]; then
+		if find "$stray" -mindepth 1 -print -quit | grep -q .; then
+			echo "ERROR: Unexpected non-empty kernel-release directory at image root: /$custom_release" >&2
+			return 1
+		fi
+		rmdir -- "$stray"
+		echo "Removed empty root-level kernel-release directory: /$custom_release"
+	fi
+}
+
 # Resolve the module release from the archive itself. The preflight workflow and
 # installer share this parser so filenames match the modules actually overlaid.
 function dbai_detect_kernel_modules_release() {
@@ -120,6 +160,9 @@ function pre_customize_image__dbai_overlay_kernel_bundle() {
 	}
 	local modules_release=""
 	modules_release="$(dbai_detect_kernel_modules_release "${modules_listing}")" || exit_with_error "Unable to safely determine kernel release from modules archive"
+	if [[ "$headers_layout" == "uapi-root" ]]; then
+		exit_with_error "Custom Kernel bundle headers archive contains exported UAPI headers only, not full build headers. Provide full kernel build headers matching the custom release; refusing to publish an image that claims custom kernel headers."
+	fi
 
 	# Replace default boot scripts/config before applying the kernel bundle's /boot files.
 	dbai_replace_bootfs_files
@@ -192,6 +235,9 @@ function pre_customize_image__dbai_overlay_kernel_bundle() {
 	else
 		find "${SDCARD}/usr/src" -type f -name 'Makefile' -print -quit | grep -q . || exit_with_error "No kernel header Makefile found under target /usr/src after overlay"
 	fi
+
+	# Purge official-kernel leftovers only after the custom modules were overlaid.
+	dbai_prune_noncustom_kernel_artifacts "$SDCARD" "$modules_release" || exit_with_error "Unable to clean non-custom kernel artifacts from the image"
 
 	local manifest="${SDCARD}/etc/dbai-custom-kernel-manifest.txt"
 	mkdir -p "${SDCARD}/etc"
