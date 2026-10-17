@@ -532,7 +532,7 @@ function pre_customize_image__dbai_overlay_kernel_bundle() {
 
 	local manifest="${SDCARD}/etc/dbai-custom-kernel-manifest.txt"
 	local boot_kernel_file boot_kernel_sha
-	boot_kernel_file="$(find "${SDCARD}/boot" -maxdepth 5 -type f \\( -name 'Image' -o -name 'Image-*' -o -name 'vmlinuz*' -o -name 'uImage' -o -name 'zImage' \\) -print -quit)"
+	boot_kernel_file="$(find "${SDCARD}/boot" -maxdepth 5 -type f \( -name 'Image' -o -name 'Image-*' -o -name 'vmlinuz*' -o -name 'uImage' -o -name 'zImage' \) -print -quit)"
 	[[ -n "$boot_kernel_file" ]] || exit_with_error "Cannot identify the custom kernel image while writing its manifest"
 	boot_kernel_sha="$(sha256sum "$boot_kernel_file" | awk '{print $1}')"
 	[[ "$boot_kernel_sha" =~ ^[[:xdigit:]]{64}$ ]] || exit_with_error "Unable to hash the bundled custom kernel image"
