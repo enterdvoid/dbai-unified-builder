@@ -14,6 +14,9 @@ source "$repo_root/extensions/dbai-custom-bootfs.sh"
 display_alert() { :; }
 SRC="$tmp/src"
 readonly SDCARD="$tmp/readonly-sdcard"
+# Armbian exposes some generic globals as readonly; cleanup helpers must not
+# shadow or assign these names with local variables.
+readonly version="Armbian-global-version"
 target_root="$tmp/final-image"
 mkdir -p "$SRC/userpatches/platform" "$tmp/boot-payload" "$target_root/boot" "$SDCARD/boot"
 printf '%s\n' 'old-default-boot-file' > "$target_root/boot/old-default-file"
