@@ -66,7 +66,7 @@ on:
         required: true
         default: true
       build_desktop:
-        description: "Build a Desktop image"
+        description: "Build a Desktop image using XFCE by default"
         type: boolean
         required: true
         default: true
@@ -111,6 +111,10 @@ on:
         type: string
         required: false
         default: ""
+
+# Keep the DBAI product version independent of the upstream Armbian "-trunk" development suffix.
+env:
+  DBAI_IMAGE_VERSION: "26.11.0"
 
 permissions:
   contents: read
@@ -563,11 +567,20 @@ jobs:
           BUILD_MINIMAL=no
           BUILD_DESKTOP=no
           IMAGE_SIZE=4096
+          DESKTOP_ENVIRONMENT_ARG=()
           case "$PROFILE" in
             minimal) BUILD_MINIMAL=yes; IMAGE_SIZE=4096 ;;
             server) BUILD_MINIMAL=no; IMAGE_SIZE=4096 ;;
             application) BUILD_MINIMAL=no; IMAGE_SIZE=8192 ;;
-            desktop) BUILD_MINIMAL=no; BUILD_DESKTOP=yes; IMAGE_SIZE=8192 ;;
+            # Armbian otherwise opens a whiptail/dialog menu when DESKTOP_ENVIRONMENT
+            # is unset; GitHub Actions has no interactive terminal. Use XFCE explicitly.
+            desktop)
+              BUILD_MINIMAL=no
+              BUILD_DESKTOP=yes
+              IMAGE_SIZE=8192
+              DESKTOP_ENVIRONMENT_ARG=("DESKTOP_ENVIRONMENT=xfce")
+              echo "Desktop environment selected non-interactively: XFCE"
+              ;;
             *) echo "::error::Unknown profile $PROFILE"; exit 2 ;;
           esac
 
@@ -638,8 +651,8 @@ jobs:
             echo "Smoke build: skipping the Armbian APT repository after apt.armbian.com connectivity failures."
           fi
 
-          ./compile.sh build BOARD="$BOARD" BRANCH=current RELEASE="$RELEASE" BUILD_MINIMAL="$BUILD_MINIMAL" BUILD_DESKTOP="$BUILD_DESKTOP" ROOTFS_TYPE="$FILESYSTEM" FIXED_IMAGE_SIZE="$IMAGE_SIZE" BOOTSIZE=256 COMPRESS_OUTPUTIMAGE=sha,xz IMAGE_XZ_COMPRESSION_RATIO=0 KERNEL_CONFIGURE=no ARTIFACT_IGNORE_CACHE="$ARTIFACT_IGNORE_CACHE" ENABLE_EXTENSIONS="$ENABLE_EXTENSIONS" "DBAI_KERNEL_MODE=$BUILD_KERNEL_MODE" \
-            "${DBAI_KERNEL_BUNDLE_ARG[@]}" "${KERNELSOURCE_ARG[@]}" "${KERNELBRANCH_ARG[@]}" "${BSPFREEZE_ARG[@]}" "${ARMBIAN_REPO_ARG[@]}"
+          ./compile.sh build BOARD="$BOARD" BRANCH=current RELEASE="$RELEASE" BUILD_MINIMAL="$BUILD_MINIMAL" BUILD_DESKTOP="$BUILD_DESKTOP" REVISION="$DBAI_IMAGE_VERSION" IMAGE_VERSION="$DBAI_IMAGE_VERSION" ROOTFS_TYPE="$FILESYSTEM" FIXED_IMAGE_SIZE="$IMAGE_SIZE" BOOTSIZE=256 COMPRESS_OUTPUTIMAGE=sha,xz IMAGE_XZ_COMPRESSION_RATIO=0 KERNEL_CONFIGURE=no ARTIFACT_IGNORE_CACHE="$ARTIFACT_IGNORE_CACHE" ENABLE_EXTENSIONS="$ENABLE_EXTENSIONS" "DBAI_KERNEL_MODE=$BUILD_KERNEL_MODE" \
+            "${DESKTOP_ENVIRONMENT_ARG[@]}" "${DBAI_KERNEL_BUNDLE_ARG[@]}" "${KERNELSOURCE_ARG[@]}" "${KERNELBRANCH_ARG[@]}" "${BSPFREEZE_ARG[@]}" "${ARMBIAN_REPO_ARG[@]}"
 
           mkdir -p "$GITHUB_WORKSPACE/stage"
           shopt -s nullglob
