@@ -8,22 +8,37 @@ grep -Fq 'DBAI_IMAGE_VERSION: "26.11.0"' "$workflow" || {
   echo "FAIL: workflow does not pin the stable DBAI image version." >&2
   exit 1
 }
-# shellcheck disable=SC2016 # Intentionally match the literal variable expressions in the YAML.
+# shellcheck disable=SC2016 # Intentionally match literal variable references in the workflow YAML.
 stable_version_args='REVISION="$DBAI_IMAGE_VERSION" IMAGE_VERSION="$DBAI_IMAGE_VERSION"'
 grep -Fq "$stable_version_args" "$workflow" || {
   echo "FAIL: compile command must override upstream VERSION/-trunk metadata." >&2
   exit 1
 }
-grep -Fq 'DESKTOP_ENVIRONMENT_ARG=("DESKTOP_ENVIRONMENT=xfce")' "$workflow" || {
-  echo "FAIL: Desktop profile does not select a non-interactive desktop environment." >&2
+grep -Fq "DESKTOP_ENVIRONMENT_ARG=(\"DESKTOP_ENVIRONMENT=\$DESKTOP_ENVIRONMENT\")" "$workflow" || {
+  echo "FAIL: Desktop profile must pass the selected environment explicitly." >&2
   exit 1
 }
-# shellcheck disable=SC2016 # Intentionally match the literal Bash array expansion in the YAML.
-desktop_arg_array='"${DESKTOP_ENVIRONMENT_ARG[@]}"'
-grep -Fq "$desktop_arg_array" "$workflow" || {
-  echo "FAIL: compile command does not pass Desktop environment arguments." >&2
+grep -Fq "DESKTOP_TIER_ARG=(\"DESKTOP_TIER=\$DESKTOP_TIER\")" "$workflow" || {
+  echo "FAIL: Desktop profile must pass the selected package tier explicitly." >&2
+  exit 1
+}
+grep -Fq 'scripts/resolve-desktop-environments.sh "$DESKTOP_ENVIRONMENT_INPUT" "$release"' "$workflow" || {
+  echo "FAIL: build matrix does not resolve release-compatible Desktop environments." >&2
+  exit 1
+}
+grep -Fq 'DESKTOP_OPENBOX=yes' "$workflow" || {
+  echo "FAIL: Openbox must avoid Armbian's standard interactive desktop path." >&2
+  exit 1
+}
+grep -Fq 'EXTENSIONS+=(dbai-openbox)' "$workflow" || {
+  echo "FAIL: Openbox profile does not enable the standalone Openbox extension." >&2
+  exit 1
+}
+grep -Fq 'matrix.desktop_environment' "$workflow" || {
+  echo "FAIL: Desktop environment must be included in the build job identity." >&2
   exit 1
 }
 
 echo "PASS: stable DBAI image version overrides upstream -trunk metadata."
-echo "PASS: Desktop profile selects XFCE without an interactive dialog."
+echo "PASS: all Desktop environments and tiers are explicitly non-interactive."
+echo "PASS: Openbox is dispatched through the standalone extension."
