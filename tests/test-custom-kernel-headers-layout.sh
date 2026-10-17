@@ -162,7 +162,6 @@ exit_with_error() { echo "ERROR: $*" >&2; return 1; }
 dbai_purge_installed_distro_kernel_packages() { :; }
 dbai_restore_custom_kernel_boot_payload() { :; }
 dbai_prune_noncustom_boot_artifacts() { :; }
-dbai_prune_noncustom_kernel_artifacts() { :; }
 dbai_generate_custom_kernel_initramfs() { :; }
 dbai_verify_custom_kernel_boot_payload() { :; }
 MOUNT="$fixture"
