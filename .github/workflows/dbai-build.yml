@@ -467,6 +467,7 @@ jobs:
           cp extensions/dbai-casaos.sh armbian-source/userpatches/extensions/
           cp extensions/dbai-apps.sh armbian-source/userpatches/extensions/
           cp extensions/dbai-custom-kernel.sh armbian-source/userpatches/extensions/
+          # Custom module bundles are staged and normalized before entering the firmware rootfs.
           cp extensions/dbai-custom-bootfs.sh armbian-source/userpatches/extensions/
           cp extensions/dbai-branding.sh armbian-source/userpatches/extensions/
           if [[ "$KERNEL_MODE" == "Custom Kernel" || "$KERNEL_MODE" == "Recompile Custom Kernel" ]]; then

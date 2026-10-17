@@ -80,6 +80,57 @@ if dbai_detect_kernel_modules_release "${tmp}/modules-invalid.txt" >/dev/null; t
 fi
 echo "PASS: invalid modules tree is rejected"
 
+
+# Exercise the production staging/installation helper against both supported
+# module archive layouts. The image root must never receive /<kernel-release>.
+for layout in release-root target-root; do
+  input_root="$tmp/${layout}-input"
+  target_root="$tmp/${layout}-image"
+  release="6.1.66-DBAI"
+  if [[ "$layout" == "release-root" ]]; then
+    module_tree="$input_root/$release"
+  else
+    module_tree="$input_root/lib/modules/$release"
+  fi
+  mkdir -p "$module_tree/kernel/drivers/test"
+  printf 'test module dependency map\n' > "$module_tree/modules.dep"
+  printf 'test kernel module\n' > "$module_tree/kernel/drivers/test/test.ko"
+  mkdir -p "$target_root"
+  tar -czf "$tmp/${layout}-modules.tar.gz" -C "$input_root" .
+  if ! dbai_install_kernel_modules_archive "$tmp/${layout}-modules.tar.gz" "$layout" "$release" "$tmp/${layout}-stage" "$target_root"; then
+    echo "FAIL: ${layout} module archive could not be staged and installed" >&2
+    exit 1
+  fi
+  [[ -f "$target_root/lib/modules/$release/modules.dep" ]] || { echo "FAIL: ${layout} modules.dep missing at canonical destination" >&2; exit 1; }
+  [[ -f "$target_root/lib/modules/$release/kernel/drivers/test/test.ko" ]] || { echo "FAIL: ${layout} .ko file missing at canonical destination" >&2; exit 1; }
+  [[ ! -e "$target_root/$release" && ! -L "$target_root/$release" ]] || { echo "FAIL: ${layout} archive created a root-level /$release directory" >&2; exit 1; }
+  [[ ! -e "$tmp/${layout}-stage" ]] || { echo "FAIL: ${layout} staging directory was not cleaned up" >&2; exit 1; }
+  echo "PASS: ${layout} module archive installs only into /lib/modules/$release"
+done
+
+# A target-root archive containing a second kernel release must fail closed
+# before it can contaminate the image.
+bad_root="$tmp/multi-release-input"
+mkdir -p "$bad_root/lib/modules/6.1.66-DBAI/kernel" "$bad_root/lib/modules/6.1.66-DBAI" \
+  "$bad_root/lib/modules/6.18.57-current-meson64/kernel"
+printf 'dep\n' > "$bad_root/lib/modules/6.1.66-DBAI/modules.dep"
+printf 'module\n' > "$bad_root/lib/modules/6.1.66-DBAI/kernel/test.ko"
+printf 'dep\n' > "$bad_root/lib/modules/6.18.57-current-meson64/modules.dep"
+printf 'module\n' > "$bad_root/lib/modules/6.18.57-current-meson64/kernel/other.ko"
+tar -czf "$tmp/multi-release-modules.tar.gz" -C "$bad_root" .
+bad_target="$tmp/multi-release-image"
+mkdir -p "$bad_target"
+if dbai_install_kernel_modules_archive "$tmp/multi-release-modules.tar.gz" target-root "6.1.66-DBAI" "$tmp/multi-release-stage" "$bad_target" >/dev/null 2>&1; then
+  echo "FAIL: multi-release module archive should have been rejected" >&2
+  exit 1
+fi
+[[ ! -e "$bad_target/lib/modules/6.1.66-DBAI" && ! -e "$bad_target/6.1.66-DBAI" ]] || {
+  echo "FAIL: invalid module archive changed the target image" >&2
+  exit 1
+}
+echo "PASS: multi-release module archive is rejected before target-image mutation"
+
+
 cat > "${tmp}/invalid.txt" <<'EOF'
 ./
 ./include/

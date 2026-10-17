@@ -37,6 +37,27 @@ module_release="$(dbai_detect_kernel_modules_release "${tmp}/modules-list.txt")"
 }
 echo "Detected actual kernel module release from published bundle: ${module_release}"
 
+modules_layout="target-root"
+if ! grep -Eq '^([.]/)?lib/modules/[^/]+/' "${tmp}/modules-list.txt"; then
+  modules_layout="release-root"
+fi
+module_target="${tmp}/module-target-root"
+mkdir -p "${module_target}"
+if ! dbai_install_kernel_modules_archive "${module_archives[0]}" "$modules_layout" "$module_release" "${tmp}/module-staging" "$module_target"; then
+  echo "FAIL: actual published module archive could not be installed from isolated staging" >&2
+  sed -n '1,100p' "${tmp}/modules-list.txt" >&2
+  exit 1
+fi
+[[ -f "${module_target}/lib/modules/${module_release}/modules.dep" ]] || {
+  echo "FAIL: actual bundle did not install modules.dep under the canonical module path" >&2
+  exit 1
+}
+[[ ! -e "${module_target}/${module_release}" && ! -L "${module_target}/${module_release}" ]] || {
+  echo "FAIL: actual module archive created a root-level kernel-release directory" >&2
+  exit 1
+}
+echo "PASS: actual published module archive installed from staging without root-level residue"
+
 mapfile -t header_archives < <(find "${tmp}/bundle" -type f \( -name 'header-*.tar.gz' -o -name 'header-*.tar.xz' \) -print)
 if [[ "${#header_archives[@]}" -ne 1 ]]; then
   echo "FAIL: expected exactly one header-*.tar.gz/.tar.xz archive, got ${#header_archives[@]}" >&2

@@ -117,6 +117,138 @@ function dbai_detect_kernel_modules_release() {
 	[[ -n "${release}" && "${release}" =~ ^[A-Za-z0-9._+-]+$ ]] || return 1
 	printf '%s\n' "${release}"
 }
+
+# Normalize a module archive in disposable staging, then copy only the verified
+# release tree into the target image. This avoids extracting a release-root
+# archive directly into the image with tar path transforms, which can leave
+# a stray /<release> directory behind.
+function dbai_install_kernel_modules_archive() {
+	local archive="$1" layout="$2" release="$3" staging_root="$4" target_root="$5"
+	local unpack_root="$staging_root/unpacked" source_tree="" verified_tree="$staging_root/verified-tree"
+	local listing_file="$staging_root/archive-list.txt" detected_release="" dest
+	local target_abs="" staging_abs="" modules_parent_abs="" dest_abs=""
+
+	[[ -f "$archive" && -d "$target_root" ]] || { echo "ERROR: Module archive or target root is unavailable." >&2; return 1; }
+	[[ "$release" =~ ^[A-Za-z0-9._+-]+$ ]] || { echo "ERROR: Unsafe module release: $release" >&2; return 1; }
+	[[ "$layout" == "release-root" || "$layout" == "target-root" ]] || { echo "ERROR: Unknown module archive layout: $layout" >&2; return 1; }
+	[[ -n "$staging_root" && "$staging_root" != "/" ]] || { echo "ERROR: Unsafe module staging directory." >&2; return 1; }
+
+	target_abs="$(realpath -e "$target_root")" || { echo "ERROR: Cannot resolve target image root." >&2; return 1; }
+	staging_abs="$(realpath -m "$staging_root")" || { echo "ERROR: Cannot resolve staging directory." >&2; return 1; }
+	case "$staging_abs" in
+		"$target_abs"|"$target_abs"/*) echo "ERROR: Staging directory must be outside the target image." >&2; return 1 ;;
+	esac
+	case "$target_abs" in
+		"$staging_abs"|"$staging_abs"/*) echo "ERROR: Target image must be outside the staging directory." >&2; return 1 ;;
+	esac
+
+	# Resolve /lib/modules through any in-image usr-merge symlinks and refuse
+	# paths that would escape the image root onto the builder host filesystem.
+	modules_parent_abs="$(realpath -m "$target_abs/lib/modules")" || { echo "ERROR: Cannot resolve target /lib/modules path." >&2; return 1; }
+	case "$modules_parent_abs" in
+		"$target_abs"/*) ;;
+		*) echo "ERROR: Target /lib/modules path resolves outside the image root: $modules_parent_abs" >&2; return 1 ;;
+	esac
+	if [[ -e "$target_abs/$release" || -L "$target_abs/$release" ]]; then
+		echo "ERROR: Refusing to overlay modules while an unexpected root-level /$release path already exists." >&2
+		return 1
+	fi
+
+	rm -rf -- "$staging_root" || return 1
+	mkdir -p -- "$unpack_root" || return 1
+	tar -tf "$archive" > "$listing_file" || { echo "ERROR: Cannot read module archive: $archive" >&2; return 1; }
+	if ! awk ' /^\// { bad=1 } /(^|\/)\.\.(\/|$)/ { bad=1 } END { exit bad }' "$listing_file"; then
+		echo "ERROR: Unsafe absolute or parent-traversal path in module archive." >&2
+		return 1
+	fi
+	detected_release="$(dbai_detect_kernel_modules_release "$listing_file")" || {
+		echo "ERROR: Cannot determine kernel release from module archive." >&2
+		return 1
+	}
+	[[ "$detected_release" == "$release" ]] || {
+		echo "ERROR: Module archive release mismatch: expected $release, found $detected_release." >&2
+		return 1
+	}
+
+	case "$layout" in
+		release-root)
+			if ! awk -v release="$release" '
+				{
+					path=$0
+					sub(/^\.\//, "", path)
+					sub(/\/$/, "", path)
+					if (path=="" || path=="." || path==release || index(path,release "/")==1) next
+					bad=1
+				}
+				END { exit bad }
+			' "$listing_file"; then
+				echo "ERROR: Release-root module archive contains unexpected paths outside /$release." >&2
+				return 1
+			fi
+			source_tree="$unpack_root/$release"
+			;;
+		target-root)
+			if ! awk -v release="$release" '
+				{
+					path=$0
+					sub(/^\.\//, "", path)
+					sub(/\/$/, "", path)
+					if (path=="" || path=="." || path=="lib" || path=="lib/modules" ||
+					    path=="lib/modules/" release || index(path,"lib/modules/" release "/")==1) next
+					bad=1
+				}
+				END { exit bad }
+			' "$listing_file"; then
+				echo "ERROR: Target-root module archive contains unexpected paths outside lib/modules/$release." >&2
+				return 1
+			fi
+			source_tree="$unpack_root/lib/modules/$release"
+			;;
+	esac
+
+	tar --no-same-owner --no-same-permissions -xf "$archive" -C "$unpack_root" || {
+		echo "ERROR: Failed to extract module archive into staging." >&2
+		return 1
+	}
+	[[ -d "$source_tree" && ! -L "$source_tree" ]] || {
+		echo "ERROR: Expected module tree is missing from staged archive: $source_tree" >&2
+		return 1
+	}
+	[[ -f "$source_tree/modules.dep" && ! -L "$source_tree/modules.dep" ]] || {
+		echo "ERROR: Staged module tree lacks a regular modules.dep file for $release." >&2
+		return 1
+	}
+	[[ -n "$(find "$source_tree" -type f -name '*.ko*' -print -quit)" ]] || {
+		echo "ERROR: Staged module tree contains no .ko module files for $release." >&2
+		return 1
+	}
+
+	mkdir -p -- "$verified_tree" || return 1
+	cp -a -- "$source_tree/." "$verified_tree/" || { echo "ERROR: Could not normalize staged module tree." >&2; return 1; }
+	[[ -f "$verified_tree/modules.dep" && -n "$(find "$verified_tree" -type f -name '*.ko*' -print -quit)" ]] || {
+		echo "ERROR: Normalized staged module tree failed its post-copy checks." >&2
+		return 1
+	}
+
+	dest="$modules_parent_abs/$release"
+	[[ ! -L "$dest" ]] || { echo "ERROR: Refusing symlinked kernel module destination: $dest" >&2; return 1; }
+	mkdir -p -- "$dest" || return 1
+	dest_abs="$(realpath -e "$dest")" || { echo "ERROR: Cannot resolve installed module destination." >&2; return 1; }
+	[[ "$dest_abs" == "$dest" ]] || { echo "ERROR: Kernel module destination resolves unexpectedly: $dest_abs" >&2; return 1; }
+	cp -a -- "$verified_tree/." "$dest/" || { echo "ERROR: Could not copy verified modules into target image." >&2; return 1; }
+	[[ -f "$dest/modules.dep" && -n "$(find "$dest" -type f -name '*.ko*' -print -quit)" ]] || {
+		echo "ERROR: Installed module tree failed its post-install checks for $release." >&2
+		return 1
+	}
+	[[ ! -e "$target_abs/$release" && ! -L "$target_abs/$release" ]] || {
+		echo "ERROR: Unexpected root-level /$release path appeared during module installation." >&2
+		return 1
+	}
+
+	rm -rf -- "$staging_root" || return 1
+	echo "Installed verified module tree at /lib/modules/$release from isolated staging; no root-level release directory created."
+}
+
 function pre_umount_final_image__dbai_prune_noncustom_kernel_artifacts() {
 	[[ "${DBAI_KERNEL_MODE:-}" == "Custom Kernel" ]] || return 0
 	local target_root="${MOUNT:-}" custom_release="${DBAI_CUSTOM_KERNEL_RELEASE:-}"
@@ -202,6 +334,7 @@ function pre_customize_image__dbai_overlay_kernel_bundle() {
 	}
 	local modules_release=""
 	modules_release="$(dbai_detect_kernel_modules_release "${modules_listing}")" || exit_with_error "Unable to safely determine kernel release from modules archive"
+	dbai_install_kernel_modules_archive "${cache_dir}/modules.tar" "${modules_layout}" "${modules_release}" "${cache_dir}/modules-stage" "${SDCARD}" || exit_with_error "Unable to safely stage and install the custom module tree"
 
 	# Replace default boot scripts/config before applying the kernel bundle's /boot files.
 	dbai_replace_bootfs_files
@@ -233,13 +366,7 @@ function pre_customize_image__dbai_overlay_kernel_bundle() {
 		cp -f "${dtb_file}" "${dtb_target}"
 	done < <(find "${dtb_stage}" -type f -name '*.dtb' -print0)
 	find "${SDCARD}/boot" -type f -name '*.dtb' -print -quit | grep -q . || exit_with_error "DTB archive contained .dtb files, but none were installed under target /boot"
-	# The supplied DBAI modules archive stores the kernel-release directory
-	# at archive root. Normalize it into the standard target /lib/modules path.
-	if [[ "${modules_layout}" == "release-root" ]]; then
-		tar --no-same-owner --no-same-permissions --transform='s,^[.]/,,;s,^\([^/][^/]*\)/,lib/modules/\1/,' -xf "${cache_dir}/modules.tar" -C "${SDCARD}"
-	else
-		tar --no-same-owner --no-same-permissions -xf "${cache_dir}/modules.tar" -C "${SDCARD}"
-	fi
+	# The custom module archive was normalized and installed from isolated staging above.
 	case "${headers_layout}" in
 		header-root)
 			mkdir -p "${SDCARD}/usr/src/linux-headers-${modules_release}"
