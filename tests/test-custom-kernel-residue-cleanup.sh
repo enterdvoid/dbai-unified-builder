@@ -16,9 +16,9 @@ SRC="$tmp/src"
 readonly SDCARD="$tmp/readonly-sdcard"
 target_root="$tmp/final-image"
 mkdir -p "$SRC/userpatches/platform" "$tmp/boot-payload" "$target_root/boot" "$SDCARD/boot"
-printf '%s\\n' 'old-default-boot-file' > "$target_root/boot/old-default-file"
-printf '%s\\n' 'readonly-sdcard-sentinel' > "$SDCARD/boot/should-not-be-touched"
-printf '%s\\n' 'custom-kernel-boot-payload' > "$tmp/boot-payload/Image-6.1.66-DBAI"
+printf '%s\n' 'old-default-boot-file' > "$target_root/boot/old-default-file"
+printf '%s\n' 'readonly-sdcard-sentinel' > "$SDCARD/boot/should-not-be-touched"
+printf '%s\n' 'custom-kernel-boot-payload' > "$tmp/boot-payload/Image-6.1.66-DBAI"
 tar -czf "$SRC/userpatches/platform/bootfs_custom_kernel.tar.gz" -C "$tmp/boot-payload" .
 dbai_replace_bootfs_files "$target_root"
 [[ -f "$target_root/boot/Image-6.1.66-DBAI" ]]
