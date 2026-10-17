@@ -346,8 +346,13 @@ jobs:
               done
             done
           done
-          if [[ "$(jq '.include | length' <<< "$matrix")" -eq 0 ]]; then
-            echo "::error::No build combinations remain. Check selected image types, OS releases, and application compatibility."
+          planned_count="$(jq '.include | length' <<< "$matrix")"
+          if (( planned_count > 256 )); then
+            echo "::error::Plan expands to $planned_count matrix jobs; GitHub Actions supports at most 256. Choose fewer OS releases, filesystems, or Desktop environments."
+            exit 2
+          fi
+          if (( planned_count == 0 )); then
+            echo "::error::No build combinations remain. Check selected image types, OS releases, desktop environment, and application compatibility."
             exit 2
           fi
           {
@@ -358,7 +363,7 @@ jobs:
             echo "custom_kernel_release=$CUSTOM_KERNEL_RELEASE"
           } >> "$GITHUB_OUTPUT"
           echo "Resolved board: $BOARD"
-          echo "Planned combinations: $(jq '.include | length' <<< "$matrix")"
+          echo "Planned combinations: $planned_count"
           jq . <<< "$matrix"
 
   build:
