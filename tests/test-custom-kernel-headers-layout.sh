@@ -95,18 +95,28 @@ echo "PASS: incomplete mixed tree is rejected"
 # Test cleanup of the specific kernel residue reported for Custom Kernel mode.
 fixture="${tmp}/image-root"
 mkdir -p "$fixture/lib/modules/6.1.66-DBAI" "$fixture/lib/modules/6.18.57-current-meson64" \
-  "$fixture/usr/lib/linux-image-6.18.57-current-meson64" "$fixture/usr/src/linux-uapi-headers-6.1.66-DBAI" \
-  "$fixture/usr/src/linux-headers-6.18.57-current-meson64" "$fixture/6.1.66-DBAI"
+  "$fixture/usr/lib/modules/6.18.57-current-meson64" "$fixture/usr/lib/linux-image-6.18.57-current-meson64" \
+  "$fixture/usr/src/linux-uapi-headers-6.1.66-DBAI" "$fixture/usr/src/linux-headers-6.18.57-current-meson64" \
+  "$fixture/6.1.66-DBAI"
 touch "$fixture/lib/modules/6.1.66-DBAI/modules.dep"
 touch "$fixture/lib/modules/6.18.57-current-meson64/modules.dep"
+touch "$fixture/usr/lib/modules/6.18.57-current-meson64/modules.dep"
 touch "$fixture/usr/src/linux-uapi-headers-6.1.66-DBAI/include-placeholder"
 touch "$fixture/usr/src/linux-headers-6.18.57-current-meson64/Makefile"
-if ! dbai_prune_noncustom_kernel_artifacts "$fixture" "6.1.66-DBAI"; then
-  echo "FAIL: custom-kernel artifact cleanup returned failure" >&2
+# Armbian's finalizer must finish generating initramfs before this hook deletes
+# the distro module tree that IMAGE_INSTALLED_KERNEL_VERSION still references.
+display_alert() { :; }
+exit_with_error() { echo "ERROR: $*" >&2; return 1; }
+MOUNT="$fixture"
+DBAI_KERNEL_MODE="Custom Kernel"
+DBAI_CUSTOM_KERNEL_RELEASE="6.1.66-DBAI"
+if ! pre_umount_final_image__dbai_prune_noncustom_kernel_artifacts; then
+  echo "FAIL: final-image custom-kernel cleanup hook returned failure" >&2
   exit 1
 fi
 [[ -f "$fixture/lib/modules/6.1.66-DBAI/modules.dep" ]] || { echo "FAIL: custom modules were removed" >&2; exit 1; }
 [[ ! -e "$fixture/lib/modules/6.18.57-current-meson64" ]] || { echo "FAIL: official modules remain" >&2; exit 1; }
+[[ ! -e "$fixture/usr/lib/modules/6.18.57-current-meson64" ]] || { echo "FAIL: official modules in /usr/lib/modules remain" >&2; exit 1; }
 [[ ! -e "$fixture/usr/lib/linux-image-6.18.57-current-meson64" ]] || { echo "FAIL: official linux-image payload remains" >&2; exit 1; }
 [[ -d "$fixture/usr/src/linux-uapi-headers-6.1.66-DBAI" ]] || { echo "FAIL: custom UAPI headers were removed" >&2; exit 1; }
 [[ ! -e "$fixture/usr/src/linux-headers-6.18.57-current-meson64" ]] || { echo "FAIL: official kernel headers remain" >&2; exit 1; }
