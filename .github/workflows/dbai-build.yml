@@ -376,12 +376,12 @@ jobs:
       PROFILE: ${{ matrix.profile }}
       FILESYSTEM: ${{ matrix.filesystem }}
       SOURCE_REF: ${{ inputs.source_ref || 'main' }}
-      KERNEL_MODE: ${{ (github.event_name == 'push' && contains(github.event.head_commit.message, '[dbai-smoke]')) && 'Custom Kernel' || inputs.kernel_mode || 'Kernel Official' }}
+      KERNEL_MODE: ${{ (github.event_name == 'push' && (contains(github.event.head_commit.message, '[dbai-smoke]') || contains(github.event.head_commit.message, '[dbai-smoke-desktop]'))) && 'Custom Kernel' || inputs.kernel_mode || 'Kernel Official' }}
       APP_PROFILE: ${{ inputs.app_profile || 'none' }}
       APP_VARIANT: ${{ matrix.app_variant }}
       DESKTOP_ENVIRONMENT: ${{ matrix.desktop_environment || 'none' }}
       DESKTOP_TIER: ${{ inputs.desktop_tier || 'mid' }}
-      KERNEL_CUSTOM_INPUT: ${{ (github.event_name == 'push' && contains(github.event.head_commit.message, '[dbai-smoke]')) && 'https://github.com/armarchindo/kernel/releases/download/kernel_dbai/6.1.66-DBAI.tar.gz' || inputs.kernel_custom_input || '' }}
+      KERNEL_CUSTOM_INPUT: ${{ (github.event_name == 'push' && (contains(github.event.head_commit.message, '[dbai-smoke]') || contains(github.event.head_commit.message, '[dbai-smoke-desktop]'))) && 'https://github.com/armarchindo/kernel/releases/download/kernel_dbai/6.1.66-DBAI.tar.gz' || inputs.kernel_custom_input || '' }}
       CUSTOM_KERNEL_RELEASE: ${{ needs.plan.outputs.custom_kernel_release }}
       KERNEL_PATCH_SERIES: meson64-current
     steps:
@@ -829,11 +829,11 @@ jobs:
       BOARD: ${{ needs.plan.outputs.board }}
       RELEASES_INPUT: ${{ needs.plan.outputs.releases }}
       PROFILES_INPUT: ${{ needs.plan.outputs.profiles }}
-      FILESYSTEM_INPUT: ${{ (github.event_name == 'push' && contains(github.event.head_commit.message, '[dbai-smoke]')) && 'ext4' || inputs.filesystem || 'ext4' }}
-      KERNEL_MODE: ${{ (github.event_name == 'push' && contains(github.event.head_commit.message, '[dbai-smoke]')) && 'Custom Kernel' || inputs.kernel_mode || 'Kernel Official' }}
+      FILESYSTEM_INPUT: ${{ (github.event_name == 'push' && (contains(github.event.head_commit.message, '[dbai-smoke]') || contains(github.event.head_commit.message, '[dbai-smoke-desktop]'))) && 'ext4' || inputs.filesystem || 'ext4' }}
+      KERNEL_MODE: ${{ (github.event_name == 'push' && (contains(github.event.head_commit.message, '[dbai-smoke]') || contains(github.event.head_commit.message, '[dbai-smoke-desktop]'))) && 'Custom Kernel' || inputs.kernel_mode || 'Kernel Official' }}
       SOURCE_REF: ${{ inputs.source_ref || 'main' }}
       APP_PROFILE: ${{ inputs.build_application && inputs.app_profile || 'none' }}
-      DELETE_OLD: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[dbai-smoke]') && 'false' || 'true' }}
+      DELETE_OLD: ${{ github.event_name == 'push' && (contains(github.event.head_commit.message, '[dbai-smoke]') || contains(github.event.head_commit.message, '[dbai-smoke-desktop]')) && 'false' || 'true' }}
     steps:
       - name: Report release assembly runner resources
         shell: bash
