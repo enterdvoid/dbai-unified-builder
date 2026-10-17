@@ -91,3 +91,27 @@ if dbai_detect_kernel_headers_layout "${tmp}/invalid.txt" >/dev/null; then
   exit 1
 fi
 echo "PASS: incomplete mixed tree is rejected"
+
+# Test cleanup of the specific kernel residue reported for Custom Kernel mode.
+fixture="${tmp}/image-root"
+mkdir -p "$fixture/lib/modules/6.1.66-DBAI" "$fixture/lib/modules/6.18.57-current-meson64" \
+  "$fixture/usr/lib/linux-image-6.18.57-current-meson64" "$fixture/6.1.66-DBAI"
+touch "$fixture/lib/modules/6.1.66-DBAI/modules.dep"
+touch "$fixture/lib/modules/6.18.57-current-meson64/modules.dep"
+if ! dbai_prune_noncustom_kernel_artifacts "$fixture" "6.1.66-DBAI"; then
+  echo "FAIL: custom-kernel artifact cleanup returned failure" >&2
+  exit 1
+fi
+[[ -f "$fixture/lib/modules/6.1.66-DBAI/modules.dep" ]] || { echo "FAIL: custom modules were removed" >&2; exit 1; }
+[[ ! -e "$fixture/lib/modules/6.18.57-current-meson64" ]] || { echo "FAIL: official modules remain" >&2; exit 1; }
+[[ ! -e "$fixture/usr/lib/linux-image-6.18.57-current-meson64" ]] || { echo "FAIL: official linux-image payload remains" >&2; exit 1; }
+[[ ! -e "$fixture/6.1.66-DBAI" ]] || { echo "FAIL: empty root-level release directory remains" >&2; exit 1; }
+echo "PASS: custom-kernel cleanup removes official residue and empty root-level release directory"
+
+mkdir -p "$fixture/6.1.66-DBAI"
+touch "$fixture/6.1.66-DBAI/unexpected-file"
+if dbai_prune_noncustom_kernel_artifacts "$fixture" "6.1.66-DBAI" >/dev/null 2>&1; then
+  echo "FAIL: non-empty root-level release directory should be rejected" >&2
+  exit 1
+fi
+echo "PASS: non-empty root-level release directory is rejected"
