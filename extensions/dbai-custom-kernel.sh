@@ -41,6 +41,8 @@ function dbai_prune_noncustom_kernel_artifacts() {
 	[[ "$custom_release" =~ ^[A-Za-z0-9._+-]+$ ]] || return 1
 
 	for modules_root in "$target_root/lib/modules" "$target_root/usr/lib/modules"; do
+		# Never follow an absolute /usr/lib/modules symlink out of the image root.
+		[[ -L "$modules_root" ]] && continue
 		[[ -d "$modules_root" ]] || continue
 		for entry in "$modules_root"/*; do
 			[[ -e "$entry" || -L "$entry" ]] || continue
