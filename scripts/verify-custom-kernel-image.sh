@@ -187,6 +187,18 @@ if [[ -n "$residual_kernel_packages" ]]; then
 fi
 expected_boot_kernel_sha="$(sed -n 's/^Boot kernel SHA-256: //p' "$manifest" | head -n 1)"
 [[ "$expected_boot_kernel_sha" =~ ^[[:xdigit:]]{64}$ ]] || { echo "::error::Custom-kernel manifest lacks a valid Boot kernel SHA-256."; exit 1; }
+expected_initramfs_file="$(sed -n 's/^Initramfs file: //p' "$manifest" | head -n 1)"
+expected_initramfs_sha="$(sed -n 's/^Initramfs SHA-256: //p' "$manifest" | head -n 1)"
+expected_boot_ramdisk_file="$(sed -n 's/^Boot ramdisk file: //p' "$manifest" | head -n 1)"
+expected_boot_ramdisk_sha="$(sed -n 's/^Boot ramdisk SHA-256: //p' "$manifest" | head -n 1)"
+[[ "$expected_initramfs_file" == "initrd.img-$expected_release" && "$expected_initramfs_sha" =~ ^[[:xdigit:]]{64}$ ]] || {
+  echo "::error::Manifest lacks a valid custom-kernel initramfs path/checksum."
+  exit 1
+}
+[[ "$expected_boot_ramdisk_file" =~ ^[A-Za-z0-9._+-]+$ && "$expected_boot_ramdisk_sha" =~ ^[[:xdigit:]]{64}$ ]] || {
+  echo "::error::Manifest lacks a valid U-Boot ramdisk path/checksum."
+  exit 1
+}
 
 headers_layout="$(sed -n 's/^Headers archive layout: //p' "$manifest" | head -n 1)"
 # Ensure no distro header tree remains in /usr/src. UAPI-only and full build
@@ -323,6 +335,14 @@ fi
 
 [[ -n "$boot_kernel" ]] || { echo "::error::Built image does not contain the exact custom kernel payload recorded in its manifest."; exit 1; }
 [[ -n "$boot_dtb" ]] || { echo "::error::Built image has no DTB in its boot filesystem."; exit 1; }
+initramfs_path="$boot_mount/$expected_initramfs_file"
+[[ -s "$initramfs_path" ]] || { echo "::error::Boot filesystem is missing custom initramfs $expected_initramfs_file."; exit 1; }
+actual_initramfs_sha="$(sha256sum "$initramfs_path" | awk '{print $1}')"
+[[ "$actual_initramfs_sha" == "$expected_initramfs_sha" ]] || { echo "::error::Custom initramfs checksum mismatch."; exit 1; }
+boot_ramdisk_path="$boot_mount/$expected_boot_ramdisk_file"
+[[ -s "$boot_ramdisk_path" ]] || { echo "::error::Boot filesystem is missing U-Boot ramdisk $expected_boot_ramdisk_file."; exit 1; }
+actual_boot_ramdisk_sha="$(sha256sum "$boot_ramdisk_path" | awk '{print $1}')"
+[[ "$actual_boot_ramdisk_sha" == "$expected_boot_ramdisk_sha" ]] || { echo "::error::U-Boot ramdisk checksum mismatch."; exit 1; }
 for boot_scan in "$boot_mount" "$root_mount/boot"; do
   [[ -d "$boot_scan" ]] || continue
   for entry in "$boot_scan"/vmlinuz-* "$boot_scan"/Image-* "$boot_scan"/uImage-* "$boot_scan"/zImage-* "$boot_scan"/initrd.img-* "$boot_scan"/uInitrd-* "$boot_scan"/config-* "$boot_scan"/System.map-* "$boot_scan"/dtb-*; do
@@ -346,6 +366,7 @@ done
 actual_boot_kernel_sha="$(sha256sum "$boot_kernel" | awk '{print $1}')"
 [[ "$actual_boot_kernel_sha" == "$expected_boot_kernel_sha" ]] || { echo "::error::Boot kernel checksum mismatch."; exit 1; }
 echo "VERIFY: bundled boot kernel SHA-256 matches the image manifest: $actual_boot_kernel_sha"
+echo "VERIFY: custom initramfs and U-Boot ramdisk SHA-256 values match the image manifest."
 echo "VERIFY: boot files and installed kernel modules verified"
 echo "Verified custom-kernel image contents:"
 echo "  Image: $image_path"
