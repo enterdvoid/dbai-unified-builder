@@ -5,6 +5,26 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$repo_root/extensions/dbai-custom-kernel.sh"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
+
+# Regression: Armbian's SDCARD can be readonly during final-image cleanup.
+# Supplying an explicit target root must replace that image's /boot without
+# trying to assign to or accidentally write through the readonly SDCARD.
+# shellcheck disable=SC1091
+source "$repo_root/extensions/dbai-custom-bootfs.sh"
+display_alert() { :; }
+SRC="$tmp/src"
+readonly SDCARD="$tmp/readonly-sdcard"
+target_root="$tmp/final-image"
+mkdir -p "$SRC/userpatches/platform" "$tmp/boot-payload" "$target_root/boot" "$SDCARD/boot"
+printf '%s\\n' 'old-default-boot-file' > "$target_root/boot/old-default-file"
+printf '%s\\n' 'readonly-sdcard-sentinel' > "$SDCARD/boot/should-not-be-touched"
+printf '%s\\n' 'custom-kernel-boot-payload' > "$tmp/boot-payload/Image-6.1.66-DBAI"
+tar -czf "$SRC/userpatches/platform/bootfs_custom_kernel.tar.gz" -C "$tmp/boot-payload" .
+dbai_replace_bootfs_files "$target_root"
+[[ -f "$target_root/boot/Image-6.1.66-DBAI" ]]
+[[ ! -e "$target_root/boot/old-default-file" ]]
+[[ -f "$SDCARD/boot/should-not-be-touched" ]]
+echo "PASS: custom bootfs replacement accepts an explicit root with readonly SDCARD."
 status="$tmp/status"
 cat > "$status" <<'STATUS'
 Package: linux-image-current-meson64
