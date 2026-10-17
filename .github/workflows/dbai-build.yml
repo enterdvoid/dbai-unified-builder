@@ -668,6 +668,13 @@ jobs:
             stage_image="$GITHUB_WORKSPACE/stage/$safe_base"
             cp "$image" "$stage_image"
 
+            # For Custom Kernel, inspect the finished disk image itself before
+            # uploading it. This validates the manifest, installed module tree,
+            # header capability, and actual boot partition's kernel+DTB files.
+            if [[ "$BUILD_KERNEL_MODE" == "Custom Kernel" ]]; then
+              bash "$GITHUB_WORKSPACE/scripts/verify-custom-kernel-image.sh" "$stage_image" "$CUSTOM_KERNEL_RELEASE" "$IMAGE_SIZE"
+            fi
+
             image_size="$(stat -c '%s' "$stage_image")"
             if (( image_size > 1900000000 )); then
               echo "::error::Asset $safe_base is larger than 1.9 GB; split/compress it before publishing to GitHub Releases."
