@@ -54,5 +54,7 @@ jobs:
         run: |
           bash tests/test-validate-inputs.sh
           bash tests/test-custom-kernel-headers-layout.sh
+      - name: Test custom image verifier disk-space probe
+        run: bash tests/test-custom-kernel-image-verifier.sh
       - name: Inspect and test the published DBAI kernel bundle
         run: bash tests/test-custom-kernel-bundle-integration.sh
