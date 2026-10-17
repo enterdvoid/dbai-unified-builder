@@ -293,6 +293,30 @@ function dbai_purge_installed_distro_kernel_packages() {
 	done
 }
 
+function dbai_prune_noncustom_boot_artifacts() {
+	local target_root="$1" custom_release="$2" entry name version
+	local boot_dir="$target_root/boot"
+	[[ -d "$boot_dir" ]] || return 0
+	for entry in "$boot_dir"/vmlinuz-* "$boot_dir"/Image-* "$boot_dir"/uImage-* "$boot_dir"/zImage-* "$boot_dir"/initrd.img-* "$boot_dir"/uInitrd-* "$boot_dir"/config-* "$boot_dir"/System.map-* "$boot_dir"/dtb-*; do
+		[[ -e "$entry" || -L "$entry" ]] || continue
+		name="$(basename "$entry")"
+		case "$name" in
+			vmlinuz-*) version="${name#vmlinuz-}" ;;
+			Image-*) version="${name#Image-}" ;;
+			uImage-*) version="${name#uImage-}" ;;
+			zImage-*) version="${name#zImage-}" ;;
+			initrd.img-*) version="${name#initrd.img-}" ;;
+			uInitrd-*) version="${name#uInitrd-}" ;;
+			config-*) version="${name#config-}" ;;
+			System.map-*) version="${name#System.map-}" ;;
+			dtb-*) version="${name#dtb-}" ;;
+			*) continue ;;
+		esac
+		[[ "$version" == "$custom_release" ]] && continue
+		echo "Removing non-custom boot artifact: /boot/$name"
+		rm -rf -- "$entry"
+	done
+}
 function dbai_restore_custom_kernel_boot_payload() {
 	local target_root="$1" cache_dir="${SRC}/cache/dbai-custom-kernel" archive dtb_stage dtb_file dtb_rel dtb_target
 	[[ -f "$cache_dir/boot.tar" && -f "$cache_dir/dtb.tar" ]] || {
@@ -354,6 +378,7 @@ function pre_umount_final_image__dbai_prune_noncustom_kernel_artifacts() {
 	display_alert "DBAI custom kernel" "Purging distro kernel packages and restoring the verified custom boot payload" "info"
 	dbai_purge_installed_distro_kernel_packages "$target_root" "$custom_release" || exit_with_error "Unable to remove residual distro kernel packages from the final image"
 	dbai_restore_custom_kernel_boot_payload "$target_root" || exit_with_error "Unable to restore custom kernel/DTB payload after distro initramfs generation"
+	dbai_prune_noncustom_boot_artifacts "$target_root" "$custom_release" || exit_with_error "Unable to remove residual distro boot files from the final image"
 	dbai_prune_noncustom_kernel_artifacts "$target_root" "$custom_release" || exit_with_error "Unable to clean non-custom kernel artifacts from the final image"
 	dbai_verify_custom_kernel_boot_payload "$target_root" || exit_with_error "Final custom-kernel payload verification failed"
 }
