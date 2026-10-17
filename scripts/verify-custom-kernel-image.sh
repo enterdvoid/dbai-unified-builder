@@ -14,7 +14,7 @@ image_size_mb="${3:-4096}"
 [[ "$image_size_mb" =~ ^[0-9]+$ ]] || { echo "::error::IMAGE_SIZE_MB must be an integer."; exit 2; }
 
 image_dir="$(dirname "$image_path")"
-available_bytes="$(df -PB1 --output=avail "$image_dir" | awk 'NR==2 {print $1}')"
+available_bytes="$(df -B1 --output=avail "$image_dir" | awk 'NR==2 {print $1}')"
 required_bytes=$((image_size_mb * 1024 * 1024 + 1024 * 1024 * 1024))
 if (( available_bytes < required_bytes )); then
   echo "::error::Not enough free disk space to inspect the custom-kernel image read-only: available=$((available_bytes / 1024 / 1024 / 1024)) GiB, required at least $((required_bytes / 1024 / 1024 / 1024)) GiB."
