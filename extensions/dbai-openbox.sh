@@ -1,3 +1,4 @@
+#!/usr/bin/env bash
 # @description Builds a lightweight standalone Openbox X11 session with a graphical login, LXPanel application menu, PCManFM file manager, terminal, and NetworkManager tray. Used by the DBAI unified builder as a standalone window-manager variant rather than an Armbian configng desktop environment.
 
 function extension_prepare_config__openbox() {
