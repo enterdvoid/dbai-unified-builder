@@ -249,6 +249,101 @@ function dbai_install_kernel_modules_archive() {
 	echo "Installed verified module tree at /lib/modules/$release from isolated staging; no root-level release directory created."
 }
 
+function dbai_list_installed_distro_kernel_packages() {
+	local status_file="$1"
+	[[ -f "$status_file" ]] || return 1
+	awk '
+		BEGIN { RS=""; FS="\n" }
+		{
+			package=""
+			status=""
+			for (i=1; i<=NF; i++) {
+				if ($i ~ /^Package: /) { package=$i; sub(/^Package: /, "", package) }
+				if ($i ~ /^Status: /) { status=$i; sub(/^Status: /, "", status) }
+			}
+			if (package ~ /^linux-(image|dtb|headers)-/ && status ~ / ok installed$/) print package
+		}
+	' "$status_file" | sort -u
+}
+
+function dbai_purge_installed_distro_kernel_packages() {
+	local target_root="$1" custom_release="$2" package status_file
+	local -a packages=()
+	status_file="$target_root/var/lib/dpkg/status"
+	[[ -f "$status_file" ]] || { echo "ERROR: target dpkg status database is missing: $status_file" >&2; return 1; }
+	mapfile -t packages < <(dbai_list_installed_distro_kernel_packages "$status_file")
+	for package in "${packages[@]}"; do
+		case "$package" in
+			"linux-image-$custom_release"|"linux-dtb-$custom_release"|"linux-headers-$custom_release") continue ;;
+		esac
+		echo "Purging residual distro kernel package: $package"
+		printf '%s install\n' "$package" | chroot "$target_root" dpkg --set-selections || return 1
+		chroot "$target_root" dpkg --purge --force-depends "$package" || {
+			echo "ERROR: Unable to purge residual distro kernel package: $package" >&2
+			return 1
+		}
+	done
+	mapfile -t packages < <(dbai_list_installed_distro_kernel_packages "$status_file")
+	for package in "${packages[@]}"; do
+		case "$package" in
+			"linux-image-$custom_release"|"linux-dtb-$custom_release"|"linux-headers-$custom_release") continue ;;
+		esac
+		echo "ERROR: distro kernel package remains installed after purge: $package" >&2
+		return 1
+	done
+}
+
+function dbai_restore_custom_kernel_boot_payload() {
+	local target_root="$1" cache_dir="${SRC}/cache/dbai-custom-kernel" archive dtb_stage dtb_file dtb_rel dtb_target
+	[[ -f "$cache_dir/boot.tar" && -f "$cache_dir/dtb.tar" ]] || {
+		echo "ERROR: validated custom-kernel boot/DTB archives are unavailable during final cleanup." >&2
+		return 1
+	}
+	SDCARD="$target_root" dbai_replace_bootfs_files || return 1
+	archive="$cache_dir/boot.tar"
+	if tar -tf "$archive" | grep -Eq '^boot/'; then
+		tar --no-same-owner --no-same-permissions -xf "$archive" -C "$target_root"
+	else
+		tar --no-same-owner --no-same-permissions --transform='s,^[.]/,,;s,^,boot/,' -xf "$archive" -C "$target_root"
+	fi
+	dtb_stage="$(mktemp -d "$cache_dir/final-dtb.XXXXXX")"
+	if ! tar --no-same-owner --no-same-permissions -xf "$cache_dir/dtb.tar" -C "$dtb_stage"; then
+		rm -rf -- "$dtb_stage"
+		echo "ERROR: unable to restore the validated custom DTB archive." >&2
+		return 1
+	fi
+	while IFS= read -r -d '' dtb_file; do
+		dtb_rel="${dtb_file#"$dtb_stage"/}"
+		while [[ "$dtb_rel" == ./* ]]; do dtb_rel="${dtb_rel#./}"; done
+		case "/$dtb_rel" in
+			*/boot/*) dtb_target="$target_root/$dtb_rel" ;;
+			*/dtb/*) dtb_target="$target_root/boot/dtb/${dtb_rel#dtb/}" ;;
+			*/amlogic/*) dtb_target="$target_root/boot/dtb/$dtb_rel" ;;
+			*) dtb_target="$target_root/boot/dtb/amlogic/${dtb_rel##*/}" ;;
+		esac
+		mkdir -p "$(dirname "$dtb_target")"
+		cp -f -- "$dtb_file" "$dtb_target"
+	done < <(find "$dtb_stage" -type f -name '*.dtb' -print0)
+	rm -rf -- "$dtb_stage"
+	find "$target_root/boot" -type f -name '*.dtb' -print -quit | grep -q . || {
+		echo "ERROR: custom DTB archive restored no DTBs into the final boot filesystem." >&2
+		return 1
+	}
+}
+
+function dbai_verify_custom_kernel_boot_payload() {
+	local target_root="$1" expected_sha actual_candidate actual_sha
+	expected_sha="$(sed -n 's/^Boot kernel SHA-256: //p' "$target_root/etc/dbai-custom-kernel-manifest.txt" | head -n 1)"
+	[[ "$expected_sha" =~ ^[[:xdigit:]]{64}$ ]] || { echo "ERROR: custom-kernel manifest lacks a valid boot-kernel SHA-256." >&2; return 1; }
+	while IFS= read -r actual_candidate; do
+		[[ -f "$actual_candidate" ]] || continue
+		actual_sha="$(sha256sum "$actual_candidate" | awk '{print $1}')"
+		[[ "$actual_sha" == "$expected_sha" ]] && { echo "Verified custom kernel payload checksum: $actual_sha"; return 0; }
+	done < <(find "$target_root/boot" -maxdepth 5 -type f \( -name 'Image' -o -name 'Image-*' -o -name 'vmlinuz*' -o -name 'uImage' -o -name 'zImage' \) -print)
+	echo "ERROR: final boot filesystem no longer contains the exact custom kernel image recorded in the manifest." >&2
+	return 1
+}
+
 function pre_umount_final_image__dbai_prune_noncustom_kernel_artifacts() {
 	[[ "${DBAI_KERNEL_MODE:-}" == "Custom Kernel" ]] || return 0
 	local target_root="${MOUNT:-}" custom_release="${DBAI_CUSTOM_KERNEL_RELEASE:-}"
@@ -256,8 +351,11 @@ function pre_umount_final_image__dbai_prune_noncustom_kernel_artifacts() {
 	[[ "$custom_release" =~ ^[A-Za-z0-9._+-]+$ ]] || exit_with_error "Custom kernel release was not retained for final-image cleanup"
 	[[ -d "$target_root/lib/modules/$custom_release" ]] || exit_with_error "Custom kernel modules are missing from final image root: /lib/modules/$custom_release"
 
-	display_alert "DBAI custom kernel" "Removing distro kernel artifacts after Armbian initramfs generation" "info"
+	display_alert "DBAI custom kernel" "Purging distro kernel packages and restoring the verified custom boot payload" "info"
+	dbai_purge_installed_distro_kernel_packages "$target_root" "$custom_release" || exit_with_error "Unable to remove residual distro kernel packages from the final image"
+	dbai_restore_custom_kernel_boot_payload "$target_root" || exit_with_error "Unable to restore custom kernel/DTB payload after distro initramfs generation"
 	dbai_prune_noncustom_kernel_artifacts "$target_root" "$custom_release" || exit_with_error "Unable to clean non-custom kernel artifacts from the final image"
+	dbai_verify_custom_kernel_boot_payload "$target_root" || exit_with_error "Final custom-kernel payload verification failed"
 }
 
 function extension_prepare_config__dbai_custom_kernel() {
@@ -408,6 +506,11 @@ function pre_customize_image__dbai_overlay_kernel_bundle() {
 	DBAI_CUSTOM_KERNEL_RELEASE="${modules_release}"
 
 	local manifest="${SDCARD}/etc/dbai-custom-kernel-manifest.txt"
+	local boot_kernel_file boot_kernel_sha
+	boot_kernel_file="$(find "${SDCARD}/boot" -maxdepth 5 -type f \\( -name 'Image' -o -name 'Image-*' -o -name 'vmlinuz*' -o -name 'uImage' -o -name 'zImage' \\) -print -quit)"
+	[[ -n "$boot_kernel_file" ]] || exit_with_error "Cannot identify the custom kernel image while writing its manifest"
+	boot_kernel_sha="$(sha256sum "$boot_kernel_file" | awk '{print $1}')"
+	[[ "$boot_kernel_sha" =~ ^[[:xdigit:]]{64}$ ]] || exit_with_error "Unable to hash the bundled custom kernel image"
 	mkdir -p "${SDCARD}/etc"
 	{
 		echo "Kernel mode: Custom Kernel"
@@ -415,8 +518,10 @@ function pre_customize_image__dbai_overlay_kernel_bundle() {
 		echo "Modules path: /lib/modules/${modules_release}"
 		echo "Bundle URL: ${DBAI_KERNEL_BUNDLE_URL}"
 		echo "Overlay timestamp UTC: $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
-		echo "Inner archive SHA-256:"
 		echo "Headers archive layout: ${headers_layout}"
+		echo "Boot kernel file: $(basename "$boot_kernel_file")"
+		echo "Boot kernel SHA-256: ${boot_kernel_sha}"
+		echo "Inner archive SHA-256:"
 		if [[ "${headers_layout}" == "uapi-root" ]]; then
 			echo "Header capability: exported userspace UAPI headers only; kernel build headers/Makefile are not included."
 		fi

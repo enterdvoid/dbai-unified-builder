@@ -166,6 +166,28 @@ for entry in "$root_mount/usr/lib"/linux-image-*; do
   }
 done
 
+status_file="$root_mount/var/lib/dpkg/status"
+[[ -f "$status_file" ]] || { echo "::error::Image dpkg status database is missing."; exit 1; }
+residual_kernel_packages="$(awk '
+  BEGIN { RS=""; FS="\n" }
+  {
+    package=""
+    status=""
+    for (i=1; i<=NF; i++) {
+      if ($i ~ /^Package: /) { package=$i; sub(/^Package: /, "", package) }
+      if ($i ~ /^Status: /) { status=$i; sub(/^Status: /, "", status) }
+    }
+    if (package ~ /^linux-(image|dtb|headers)-/ && status ~ / ok installed$/) print package
+  }
+' "$status_file" | sort -u)"
+if [[ -n "$residual_kernel_packages" ]]; then
+  echo "::error::Custom Kernel image still has distro kernel packages marked installed:"
+  printf '%s\n' "$residual_kernel_packages"
+  exit 1
+fi
+expected_boot_kernel_sha="$(sed -n 's/^Boot kernel SHA-256: //p' "$manifest" | head -n 1)"
+[[ "$expected_boot_kernel_sha" =~ ^[[:xdigit:]]{64}$ ]] || { echo "::error::Custom-kernel manifest lacks a valid Boot kernel SHA-256."; exit 1; }
+
 headers_layout="$(sed -n 's/^Headers archive layout: //p' "$manifest" | head -n 1)"
 # Ensure no distro header tree remains in /usr/src. UAPI-only and full build
 # headers are kept in distinct, release-specific directories.
@@ -249,7 +271,12 @@ while read -r size_bytes device fstype; do
   if ! timeout 30s sudo mount -o ro "$device" "$candidate_mount" 2>/dev/null; then
     continue
   fi
-  kernel_file="$(find "$candidate_mount" -maxdepth 5 -type f \( -name 'Image' -o -name 'Image-*' -o -name 'vmlinuz*' -o -name 'uImage' -o -name 'zImage' \) -print -quit)"
+  kernel_file=""
+  while IFS= read -r candidate_kernel; do
+    [[ -f "$candidate_kernel" ]] || continue
+    candidate_kernel_sha="$(sha256sum "$candidate_kernel" | awk '{print $1}')"
+    if [[ "$candidate_kernel_sha" == "$expected_boot_kernel_sha" ]]; then kernel_file="$candidate_kernel"; break; fi
+  done < <(find "$candidate_mount" -maxdepth 5 -type f \( -name 'Image' -o -name 'Image-*' -o -name 'vmlinuz*' -o -name 'uImage' -o -name 'zImage' \) -print)
   dtb_file="$(find "$candidate_mount" -type f -name '*.dtb' -print -quit)"
   if [[ -n "$kernel_file" && -n "$dtb_file" ]]; then
     if (( expected_boot_partition_mib > 0 )); then
@@ -285,13 +312,40 @@ if [[ -z "$boot_mount" ]]; then
     exit 1
   fi
   boot_mount="${root_mount}/boot"
-  boot_kernel="$(find "$boot_mount" -maxdepth 5 -type f \( -name 'Image' -o -name 'Image-*' -o -name 'vmlinuz*' -o -name 'uImage' -o -name 'zImage' \) -print -quit 2>/dev/null || true)"
+  boot_kernel=""
+  while IFS= read -r candidate_kernel; do
+    [[ -f "$candidate_kernel" ]] || continue
+    candidate_kernel_sha="$(sha256sum "$candidate_kernel" | awk '{print $1}')"
+    if [[ "$candidate_kernel_sha" == "$expected_boot_kernel_sha" ]]; then boot_kernel="$candidate_kernel"; break; fi
+  done < <(find "$boot_mount" -maxdepth 5 -type f \( -name 'Image' -o -name 'Image-*' -o -name 'vmlinuz*' -o -name 'uImage' -o -name 'zImage' \) -print 2>/dev/null || true)
   boot_dtb="$(find "$boot_mount" -type f -name '*.dtb' -print -quit 2>/dev/null || true)"
 fi
 
-[[ -n "$boot_kernel" ]] || { echo "::error::Built image has no kernel image in its boot filesystem."; exit 1; }
+[[ -n "$boot_kernel" ]] || { echo "::error::Built image does not contain the exact custom kernel payload recorded in its manifest."; exit 1; }
 [[ -n "$boot_dtb" ]] || { echo "::error::Built image has no DTB in its boot filesystem."; exit 1; }
-
+for boot_scan in "$boot_mount" "$root_mount/boot"; do
+  [[ -d "$boot_scan" ]] || continue
+  for entry in "$boot_scan"/vmlinuz-* "$boot_scan"/Image-* "$boot_scan"/uImage-* "$boot_scan"/zImage-* "$boot_scan"/initrd.img-* "$boot_scan"/uInitrd-* "$boot_scan"/config-* "$boot_scan"/System.map-* "$boot_scan"/dtb-*; do
+    [[ -e "$entry" || -L "$entry" ]] || continue
+    name="$(basename "$entry")"
+    case "$name" in
+      vmlinuz-*) boot_version="${name#vmlinuz-}" ;;
+      Image-*) boot_version="${name#Image-}" ;;
+      uImage-*) boot_version="${name#uImage-}" ;;
+      zImage-*) boot_version="${name#zImage-}" ;;
+      initrd.img-*) boot_version="${name#initrd.img-}" ;;
+      uInitrd-*) boot_version="${name#uInitrd-}" ;;
+      config-*) boot_version="${name#config-}" ;;
+      System.map-*) boot_version="${name#System.map-}" ;;
+      dtb-*) boot_version="${name#dtb-}" ;;
+      *) continue ;;
+    esac
+    [[ "$boot_version" == "$expected_release" ]] || { echo "::error::Non-custom kernel boot artifact remains: $boot_scan/$name (expected $expected_release)."; exit 1; }
+  done
+done
+actual_boot_kernel_sha="$(sha256sum "$boot_kernel" | awk '{print $1}')"
+[[ "$actual_boot_kernel_sha" == "$expected_boot_kernel_sha" ]] || { echo "::error::Boot kernel checksum mismatch."; exit 1; }
+echo "VERIFY: bundled boot kernel SHA-256 matches the image manifest: $actual_boot_kernel_sha"
 echo "VERIFY: boot files and installed kernel modules verified"
 echo "Verified custom-kernel image contents:"
 echo "  Image: $image_path"
