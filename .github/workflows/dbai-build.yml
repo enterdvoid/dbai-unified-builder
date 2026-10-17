@@ -794,8 +794,9 @@ jobs:
             cp "$image" "$stage_image"
 
             # For Custom Kernel, inspect the finished disk image itself before
-            # uploading it. This validates the manifest, installed module tree,
-            # header capability, and actual boot partition's kernel+DTB files.
+            # uploading it. Verify the dpkg database has no distro kernel packages,
+            # the boot image matches the bundle SHA-256, no versioned legacy /boot
+            # artifacts remain, and the actual boot partition has the kernel+DTB.
             if [[ "$BUILD_KERNEL_MODE" == "Custom Kernel" ]]; then
               echo "Read-only verification of staged custom-kernel image: $safe_base (timeout: 300 seconds)"
               echo "Expected persistent manifest: /etc/dbai-custom-kernel-manifest.txt"

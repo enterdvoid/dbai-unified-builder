@@ -158,6 +158,10 @@ touch "$fixture/usr/src/linux-headers-6.18.57-current-meson64/Makefile"
 # the distro module tree that IMAGE_INSTALLED_KERNEL_VERSION still references.
 display_alert() { :; }
 exit_with_error() { echo "ERROR: $*" >&2; return 1; }
+# Stub image-assembly-only steps; this unit fixture exercises the kernel-tree cleanup hook.
+dbai_purge_installed_distro_kernel_packages() { :; }
+dbai_restore_custom_kernel_boot_payload() { :; }
+dbai_verify_custom_kernel_boot_payload() { :; }
 MOUNT="$fixture"
 DBAI_KERNEL_MODE="Custom Kernel"
 DBAI_CUSTOM_KERNEL_RELEASE="6.1.66-DBAI"
