@@ -606,8 +606,19 @@ jobs:
           if [[ "$BUILD_KERNEL_MODE" == "Custom Kernel" ]]; then
             DBAI_KERNEL_BUNDLE_ARG=("DBAI_KERNEL_BUNDLE_URL=$KERNEL_CUSTOM_INPUT")
           fi
-          ./compile.sh build             BOARD="$BOARD"             BRANCH=current             RELEASE="$RELEASE"             BUILD_MINIMAL="$BUILD_MINIMAL"             BUILD_DESKTOP="$BUILD_DESKTOP"             ROOTFS_TYPE="$FILESYSTEM"             FIXED_IMAGE_SIZE="$IMAGE_SIZE"             BOOTSIZE=256             COMPRESS_OUTPUTIMAGE=sha,xz             IMAGE_XZ_COMPRESSION_RATIO=0             KERNEL_CONFIGURE=no             ARTIFACT_IGNORE_CACHE="$ARTIFACT_IGNORE_CACHE"             ENABLE_EXTENSIONS="$ENABLE_EXTENSIONS"             "DBAI_KERNEL_MODE=$BUILD_KERNEL_MODE" \
-            "${DBAI_KERNEL_BUNDLE_ARG[@]}" "${KERNELSOURCE_ARG[@]}" "${KERNELBRANCH_ARG[@]}" "${BSPFREEZE_ARG[@]}"
+
+          # The special smoke commit exists only to validate the custom-kernel
+          # image verifier. If the Armbian APT redirector is degraded, use the
+          # upstream-supported SKIP_ARMBIAN_REPO switch for this smoke build
+          # only; regular user-triggered and production builds keep the repo.
+          ARMBIAN_REPO_ARG=()
+          if [[ "$GITHUB_EVENT_NAME" == "push" ]] && git -C "$GITHUB_WORKSPACE" log -1 --format=%s | grep -Fq '[dbai-smoke]'; then
+            ARMBIAN_REPO_ARG=("SKIP_ARMBIAN_REPO=yes")
+            echo "Smoke build: skipping the Armbian APT repository after apt.armbian.com connectivity failures."
+          fi
+
+          ./compile.sh build BOARD="$BOARD" BRANCH=current RELEASE="$RELEASE" BUILD_MINIMAL="$BUILD_MINIMAL" BUILD_DESKTOP="$BUILD_DESKTOP" ROOTFS_TYPE="$FILESYSTEM" FIXED_IMAGE_SIZE="$IMAGE_SIZE" BOOTSIZE=256 COMPRESS_OUTPUTIMAGE=sha,xz IMAGE_XZ_COMPRESSION_RATIO=0 KERNEL_CONFIGURE=no ARTIFACT_IGNORE_CACHE="$ARTIFACT_IGNORE_CACHE" ENABLE_EXTENSIONS="$ENABLE_EXTENSIONS" "DBAI_KERNEL_MODE=$BUILD_KERNEL_MODE" \
+            "${DBAI_KERNEL_BUNDLE_ARG[@]}" "${KERNELSOURCE_ARG[@]}" "${KERNELBRANCH_ARG[@]}" "${BSPFREEZE_ARG[@]}" "${ARMBIAN_REPO_ARG[@]}"
 
           mkdir -p "$GITHUB_WORKSPACE/stage"
           shopt -s nullglob
@@ -704,7 +715,9 @@ jobs:
   publish:
     name: Verify and publish firmware release
     needs: [plan, build]
-    if: ${{ needs.build.result == 'success' }}
+    # Smoke builds validate final-image cleanup, not publication of images
+    # assembled with the temporary SKIP_ARMBIAN_REPO workaround.
+    if: ${{ needs.build.result == 'success' && !((github.event_name == 'push') && contains(github.event.head_commit.message, '[dbai-smoke]')) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     permissions:
@@ -856,4 +869,4 @@ jobs:
           echo "Verified release: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/tag/$TAG"
           trap - EXIT
 
-# End-to-end smoke trigger for Custom Kernel cleanup deferred until after initramfs generation.
+# Smoke verification only: skip unavailable Armbian APT repo and do not publish test images.
