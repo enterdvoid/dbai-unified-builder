@@ -535,7 +535,7 @@ function pre_customize_image__dbai_overlay_kernel_bundle() {
 	dbai_install_kernel_modules_archive "${cache_dir}/modules.tar" "${modules_layout}" "${modules_release}" "${cache_dir}/modules-stage" "${SDCARD}" || exit_with_error "Unable to safely stage and install the custom module tree"
 
 	# Replace default boot scripts/config before applying the kernel bundle's /boot files.
-	dbai_replace_bootfs_files
+	dbai_replace_bootfs_files "$SDCARD"
 
 	# Some kernel bundles store boot archive entries directly at the boot-partition root
 	# (for example Image and uInitrd) instead of prefixing every entry with boot/.
