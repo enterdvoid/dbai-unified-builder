@@ -151,7 +151,7 @@ concurrency:
 
 jobs:
   plan:
-    if: ${{ github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[dbai-smoke]') }}
+    if: ${{ github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[dbai-smoke]') || contains(github.event.head_commit.message, '[dbai-smoke-desktop]') }}
     name: Validate inputs and expand build matrix
     runs-on: ubuntu-24.04
     outputs:
@@ -174,18 +174,18 @@ jobs:
         env:
           BOARD_INPUT: ${{ inputs.board || 'aml-s9xx-box' }}
           CUSTOM_BOARD: ${{ inputs.custom_board_name || '' }}
-          RELEASE_GROUP: ${{ (github.event_name == 'push' && contains(github.event.head_commit.message, '[dbai-smoke]')) && 'Custom' || inputs.armbian_version_release || 'Custom' }}
-          CUSTOM_RELEASES: ${{ inputs.custom_releases || 'trixie,resolute' }}
-          BUILD_MINIMAL_INPUT: ${{ github.event_name == 'workflow_dispatch' && inputs.build_minimal || (github.event_name == 'push' && !contains(github.event.head_commit.message, '[dbai-smoke]')) }}
+          RELEASE_GROUP: ${{ (github.event_name == 'push' && (contains(github.event.head_commit.message, '[dbai-smoke]') || contains(github.event.head_commit.message, '[dbai-smoke-desktop]'))) && 'Custom' || inputs.armbian_version_release || 'Custom' }}
+          CUSTOM_RELEASES: ${{ (github.event_name == 'push' && contains(github.event.head_commit.message, '[dbai-smoke-desktop]')) && 'trixie' || inputs.custom_releases || 'trixie,resolute' }}
+          BUILD_MINIMAL_INPUT: ${{ github.event_name == 'workflow_dispatch' && inputs.build_minimal || (github.event_name == 'push' && !contains(github.event.head_commit.message, '[dbai-smoke]') && !contains(github.event.head_commit.message, '[dbai-smoke-desktop]')) }}
           BUILD_SERVER_INPUT: ${{ github.event_name == 'workflow_dispatch' && inputs.build_server || (github.event_name == 'push' && contains(github.event.head_commit.message, '[dbai-smoke]')) }}
-          BUILD_APPLICATION_INPUT: ${{ github.event_name == 'workflow_dispatch' && inputs.build_application || (github.event_name == 'push' && !contains(github.event.head_commit.message, '[dbai-smoke]')) }}
-          BUILD_DESKTOP_INPUT: ${{ github.event_name == 'workflow_dispatch' && inputs.build_desktop || (github.event_name == 'push' && !contains(github.event.head_commit.message, '[dbai-smoke]')) }}
+          BUILD_APPLICATION_INPUT: ${{ github.event_name == 'workflow_dispatch' && inputs.build_application || (github.event_name == 'push' && !contains(github.event.head_commit.message, '[dbai-smoke]') && !contains(github.event.head_commit.message, '[dbai-smoke-desktop]')) }}
+          BUILD_DESKTOP_INPUT: ${{ github.event_name == 'workflow_dispatch' && inputs.build_desktop || (github.event_name == 'push' && contains(github.event.head_commit.message, '[dbai-smoke-desktop]')) }}
           DESKTOP_ENVIRONMENT_INPUT: ${{ inputs.desktop_environment || 'xfce' }}
           DESKTOP_TIER_INPUT: ${{ inputs.desktop_tier || 'mid' }}
-          FILESYSTEM_INPUT: ${{ (github.event_name == 'push' && contains(github.event.head_commit.message, '[dbai-smoke]')) && 'ext4' || inputs.filesystem || 'ext4' }}
-          KERNEL_MODE: ${{ (github.event_name == 'push' && contains(github.event.head_commit.message, '[dbai-smoke]')) && 'Custom Kernel' || inputs.kernel_mode || 'Kernel Official' }}
+          FILESYSTEM_INPUT: ${{ (github.event_name == 'push' && (contains(github.event.head_commit.message, '[dbai-smoke]') || contains(github.event.head_commit.message, '[dbai-smoke-desktop]'))) && 'ext4' || inputs.filesystem || 'ext4' }}
+          KERNEL_MODE: ${{ (github.event_name == 'push' && (contains(github.event.head_commit.message, '[dbai-smoke]') || contains(github.event.head_commit.message, '[dbai-smoke-desktop]'))) && 'Custom Kernel' || inputs.kernel_mode || 'Kernel Official' }}
           APP_PROFILE: ${{ inputs.app_profile || 'none' }}
-          KERNEL_CUSTOM_INPUT: ${{ (github.event_name == 'push' && contains(github.event.head_commit.message, '[dbai-smoke]')) && 'https://github.com/armarchindo/kernel/releases/download/kernel_dbai/6.1.66-DBAI.tar.gz' || inputs.kernel_custom_input || '' }}
+          KERNEL_CUSTOM_INPUT: ${{ (github.event_name == 'push' && (contains(github.event.head_commit.message, '[dbai-smoke]') || contains(github.event.head_commit.message, '[dbai-smoke-desktop]'))) && 'https://github.com/armarchindo/kernel/releases/download/kernel_dbai/6.1.66-DBAI.tar.gz' || inputs.kernel_custom_input || '' }}
           KERNEL_PATCH_SERIES: meson64-current
         run: |
           set -euo pipefail
@@ -711,7 +711,7 @@ jobs:
           # upstream-supported SKIP_ARMBIAN_REPO switch for this smoke build
           # only; regular user-triggered and production builds keep the repo.
           ARMBIAN_REPO_ARG=()
-          if [[ "$GITHUB_EVENT_NAME" == "push" ]] && git -C "$GITHUB_WORKSPACE" log -1 --format=%s | grep -Fq '[dbai-smoke]'; then
+          if [[ "$GITHUB_EVENT_NAME" == "push" ]] && git -C "$GITHUB_WORKSPACE" log -1 --format=%s | grep -Eq '\[dbai-smoke(-desktop)?\]'; then
             ARMBIAN_REPO_ARG=("SKIP_ARMBIAN_REPO=yes")
             echo "Smoke build: skipping the Armbian APT repository after apt.armbian.com connectivity failures."
           fi
@@ -819,7 +819,7 @@ jobs:
     needs: [plan, build]
     # Smoke builds validate final-image cleanup, not publication of images
     # assembled with the temporary SKIP_ARMBIAN_REPO workaround.
-    if: ${{ needs.build.result == 'success' && !((github.event_name == 'push') && contains(github.event.head_commit.message, '[dbai-smoke]')) }}
+    if: ${{ needs.build.result == 'success' && !((github.event_name == 'push') && (contains(github.event.head_commit.message, '[dbai-smoke]') || contains(github.event.head_commit.message, '[dbai-smoke-desktop]'))) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     permissions:
