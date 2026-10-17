@@ -144,6 +144,9 @@ if [[ -e "$root_mount/$expected_release" || -L "$root_mount/$expected_release" ]
   exit 1
 fi
 for modules_root in "$root_mount/lib/modules" "$root_mount/usr/lib/modules"; do
+  # /usr/lib/modules may be an absolute symlink to the host-visible /lib/modules path.
+  # /lib/modules is checked directly, so do not follow a symlink outside the mounted image.
+  [[ -L "$modules_root" ]] && continue
   [[ -d "$modules_root" ]] || continue
   for entry in "$modules_root"/*; do
     [[ -e "$entry" || -L "$entry" ]] || continue
