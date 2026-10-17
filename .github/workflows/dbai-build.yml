@@ -862,6 +862,9 @@ jobs:
           NOTES_FILE: ${{ steps.release.outputs.notes_file }}
         run: |
           set -euo pipefail
+          # RUNNER_TEMP can live on the runner's small root filesystem. Store remote verification
+          # downloads in the workspace, which is mounted on the expanded build volume.
+          CHECK_DIR="$GITHUB_WORKSPACE/.dbai-release-check-$GITHUB_RUN_ID"
           cleanup_partial_release() {
             status=$?
             if [[ $status -ne 0 ]]; then
@@ -869,13 +872,13 @@ jobs:
               gh release delete "$TAG" --repo "$GITHUB_REPOSITORY" --cleanup-tag --yes || true
               git push origin ":refs/tags/$TAG" || true
             fi
+            rm -rf -- "$CHECK_DIR" || true
             exit "$status"
           }
           trap cleanup_partial_release EXIT
 
           gh release create "$TAG" dist/* --repo "$GITHUB_REPOSITORY" --title "$TITLE" --prerelease --notes-file "$NOTES_FILE"
 
-          CHECK_DIR="$RUNNER_TEMP/dbai-release-check"
           mkdir -p "$CHECK_DIR"
           gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern SHA256SUMS --dir "$CHECK_DIR"
           while IFS=' ' read -r expected filename; do
@@ -888,6 +891,7 @@ jobs:
           # Keep every previously published release. Only a partially created current release
           # may be removed by cleanup_partial_release if remote asset verification fails.
           echo "Verified release: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/tag/$TAG"
+          rm -rf -- "$CHECK_DIR"
           trap - EXIT
 
 # Smoke verification only: skip unavailable Armbian APT repo and do not publish test images.
