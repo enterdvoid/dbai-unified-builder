@@ -43,3 +43,30 @@ dbai_prune_noncustom_boot_artifacts "$root" "6.1.66-DBAI"
 [[ ! -e "$root/boot/dtb-6.18.57-current-meson64" ]]
 [[ -f "$root/boot/Image-6.1.66-DBAI" && -f "$root/boot/uInitrd-6.1.66-DBAI" ]]
 echo "PASS: residual package status and old versioned boot-artifact checks."
+
+# The final verifier must reject stale initramfs files even when the custom kernel exists.
+mkdir -p "$root/etc"
+printf '%s\n' 'custom-kernel-payload' > "$root/boot/Image-6.1.66-DBAI"
+printf '%s\n' 'custom-initramfs-payload' > "$root/boot/initrd.img-6.1.66-DBAI"
+printf '%s\n' 'custom-u-boot-ramdisk-payload' > "$root/boot/uInitrd"
+kernel_sha="$(sha256sum "$root/boot/Image-6.1.66-DBAI" | awk '{print $1}')"
+initrd_sha="$(sha256sum "$root/boot/initrd.img-6.1.66-DBAI" | awk '{print $1}')"
+ramdisk_sha="$(sha256sum "$root/boot/uInitrd" | awk '{print $1}')"
+cat > "$root/etc/dbai-custom-kernel-manifest.txt" <<EOF
+Kernel release: 6.1.66-DBAI
+Boot kernel SHA-256: $kernel_sha
+Initramfs file: initrd.img-6.1.66-DBAI
+Initramfs SHA-256: $initrd_sha
+Boot ramdisk file: uInitrd
+Boot ramdisk SHA-256: $ramdisk_sha
+EOF
+touch "$root/boot/initrd.img-6.18.57-current-meson64"
+if dbai_verify_custom_kernel_boot_payload "$root" >/dev/null 2>&1; then
+  echo "FAIL: final boot verifier accepted a distro-kernel ramdisk." >&2
+  exit 1
+fi
+echo "PASS: final boot verifier rejects a stale distro-kernel ramdisk."
+dbai_prune_noncustom_boot_artifacts "$root" "6.1.66-DBAI"
+dbai_verify_custom_kernel_boot_payload "$root"
+echo "PASS: custom initramfs and U-Boot ramdisk match their recorded checksums."
+
