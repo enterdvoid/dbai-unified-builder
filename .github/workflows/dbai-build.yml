@@ -856,4 +856,4 @@ jobs:
           echo "Verified release: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/tag/$TAG"
           trap - EXIT
 
-# End-to-end smoke trigger for the Custom Kernel residue verifier.
+# End-to-end smoke trigger for Custom Kernel cleanup deferred until after initramfs generation.
