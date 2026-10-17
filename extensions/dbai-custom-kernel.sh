@@ -197,6 +197,8 @@ function pre_customize_image__dbai_overlay_kernel_bundle() {
 	mkdir -p "${SDCARD}/root"
 	{
 		echo "Kernel mode: Custom Kernel"
+		echo "Kernel release: ${modules_release}"
+		echo "Modules path: /lib/modules/${modules_release}"
 		echo "Bundle URL: ${DBAI_KERNEL_BUNDLE_URL}"
 		echo "Overlay timestamp UTC: $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
 		echo "Inner archive SHA-256:"
