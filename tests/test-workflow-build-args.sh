@@ -43,6 +43,10 @@ grep -Fq 'EXTENSIONS+=(dbai-openbox)' "$workflow" || {
   echo "FAIL: Openbox profile does not enable the standalone Openbox extension." >&2
   exit 1
 }
+grep -Fq 'asset_kernel_version="${asset_kernel_version%-openbox}"' "$workflow" || {
+  echo "FAIL: Openbox suffix must not be duplicated in the canonical firmware filename." >&2
+  exit 1
+}
 grep -Fq 'matrix.desktop_environment' "$workflow" || {
   echo "FAIL: Desktop environment must be included in the build job identity." >&2
   exit 1
