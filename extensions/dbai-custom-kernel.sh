@@ -271,6 +271,10 @@ function dbai_purge_installed_distro_kernel_packages() {
 	local -a packages=()
 	status_file="$target_root/var/lib/dpkg/status"
 	[[ -f "$status_file" ]] || { echo "ERROR: target dpkg status database is missing: $status_file" >&2; return 1; }
+	# Kernel package maintainer scripts invoke update-initramfs/mktemp during purge.
+	# The build WORK/TMPDIR may already be gone, so use a valid target /tmp.
+	mkdir -p "$target_root/tmp" || return 1
+	chmod 1777 "$target_root/tmp" || return 1
 	mapfile -t packages < <(dbai_list_installed_distro_kernel_packages "$status_file")
 	for package in "${packages[@]}"; do
 		case "$package" in
@@ -278,7 +282,7 @@ function dbai_purge_installed_distro_kernel_packages() {
 		esac
 		echo "Purging residual distro kernel package: $package"
 		printf '%s install\n' "$package" | chroot "$target_root" dpkg --set-selections || return 1
-		chroot "$target_root" dpkg --purge --force-depends "$package" || {
+		chroot "$target_root" env TMPDIR=/tmp dpkg --purge --force-depends "$package" || {
 			echo "ERROR: Unable to purge residual distro kernel package: $package" >&2
 			return 1
 		}
@@ -330,7 +334,7 @@ function dbai_restore_custom_kernel_boot_payload() {
 	else
 		tar --no-same-owner --no-same-permissions --transform='s,^[.]/,,;s,^,boot/,' -xf "$archive" -C "$target_root"
 	fi
-	dtb_stage="$(mktemp -d "$cache_dir/final-dtb.XXXXXX")"
+	dtb_stage="$(TMPDIR=/tmp mktemp -d /tmp/dbai-final-dtb.XXXXXX)" || { echo "ERROR: unable to create temporary directory for custom DTBs." >&2; return 1; }
 	if ! tar --no-same-owner --no-same-permissions -xf "$cache_dir/dtb.tar" -C "$dtb_stage"; then
 		rm -rf -- "$dtb_stage"
 		echo "ERROR: unable to restore the validated custom DTB archive." >&2
@@ -355,19 +359,88 @@ function dbai_restore_custom_kernel_boot_payload() {
 	}
 }
 
-function dbai_verify_custom_kernel_boot_payload() {
-	local target_root="$1" expected_sha actual_candidate actual_sha
-	expected_sha="$(sed -n 's/^Boot kernel SHA-256: //p' "$target_root/etc/dbai-custom-kernel-manifest.txt" | head -n 1)"
-	[[ "$expected_sha" =~ ^[[:xdigit:]]{64}$ ]] || { echo "ERROR: custom-kernel manifest lacks a valid boot-kernel SHA-256." >&2; return 1; }
-	while IFS= read -r actual_candidate; do
-		[[ -f "$actual_candidate" ]] || continue
-		actual_sha="$(sha256sum "$actual_candidate" | awk '{print $1}')"
-		[[ "$actual_sha" == "$expected_sha" ]] && { echo "Verified custom kernel payload checksum: $actual_sha"; return 0; }
-	done < <(find "$target_root/boot" -maxdepth 5 -type f \( -name 'Image' -o -name 'Image-*' -o -name 'vmlinuz*' -o -name 'uImage' -o -name 'zImage' \) -print)
-	echo "ERROR: final boot filesystem no longer contains the exact custom kernel image recorded in the manifest." >&2
-	return 1
+function dbai_generate_custom_kernel_initramfs() {
+	local target_root="$1" custom_release="$2" initrd_path boot_ramdisk_path bootfs_type manifest initrd_sha ramdisk_sha candidate
+	[[ -x "$target_root/usr/sbin/update-initramfs" ]] || { echo "ERROR: update-initramfs is unavailable in the target rootfs." >&2; return 1; }
+	[[ -d "$target_root/lib/modules/$custom_release" ]] || { echo "ERROR: cannot generate initramfs without /lib/modules/$custom_release." >&2; return 1; }
+	mkdir -p "$target_root/tmp" || return 1
+	chmod 1777 "$target_root/tmp" || return 1
+	initrd_path="$target_root/boot/initrd.img-$custom_release"
+	# Never keep a ramdisk generated for the distribution kernel. Build a new one
+	# from the modules belonging to the kernel that the image will actually boot.
+	rm -f -- "$initrd_path" "$target_root/boot/uInitrd-$custom_release" "$target_root/boot/uInitrd"
+	bootfs_type="${BOOTFS_TYPE:-}"
+	if [[ -n "$bootfs_type" ]]; then
+		chroot "$target_root" env TMPDIR=/tmp ARMBIAN_IMAGE_BUILD_BOOTFS_TYPE="$bootfs_type" /usr/sbin/update-initramfs -c -k "$custom_release" || { echo "ERROR: update-initramfs failed for custom kernel $custom_release." >&2; return 1; }
+	else
+		chroot "$target_root" env TMPDIR=/tmp /usr/sbin/update-initramfs -c -k "$custom_release" || { echo "ERROR: update-initramfs failed for custom kernel $custom_release." >&2; return 1; }
+	fi
+	[[ -s "$initrd_path" ]] || { echo "ERROR: custom initramfs was not created at /boot/initrd.img-$custom_release." >&2; return 1; }
+	boot_ramdisk_path=""
+	for candidate in "$target_root/boot/uInitrd" "$target_root/boot/uInitrd-$custom_release"; do
+		if [[ -s "$candidate" ]]; then boot_ramdisk_path="$candidate"; break; fi
+	done
+	[[ -n "$boot_ramdisk_path" ]] || { echo "ERROR: no U-Boot ramdisk was produced for custom kernel $custom_release." >&2; return 1; }
+	manifest="$target_root/etc/dbai-custom-kernel-manifest.txt"
+	[[ -f "$manifest" ]] || { echo "ERROR: custom-kernel manifest is missing while recording ramdisk hashes." >&2; return 1; }
+	initrd_sha="$(sha256sum "$initrd_path" | awk '{print $1}')"
+	ramdisk_sha="$(sha256sum "$boot_ramdisk_path" | awk '{print $1}')"
+	[[ "$initrd_sha" =~ ^[[:xdigit:]]{64}$ && "$ramdisk_sha" =~ ^[[:xdigit:]]{64}$ ]] || { echo "ERROR: unable to calculate valid custom ramdisk checksums." >&2; return 1; }
+	sed -i '/^Initramfs file: /d; /^Initramfs SHA-256: /d; /^Boot ramdisk file: /d; /^Boot ramdisk SHA-256: /d' "$manifest"
+	{
+		echo "Initramfs file: initrd.img-$custom_release"
+		echo "Initramfs SHA-256: $initrd_sha"
+		echo "Boot ramdisk file: $(basename "$boot_ramdisk_path")"
+		echo "Boot ramdisk SHA-256: $ramdisk_sha"
+	} >> "$manifest"
+	echo "Generated custom initramfs and U-Boot ramdisk for $custom_release."
 }
 
+function dbai_verify_custom_kernel_boot_payload() {
+	local target_root="$1" manifest expected_sha actual_candidate actual_sha custom_release initrd_name initrd_sha boot_ramdisk_name boot_ramdisk_sha candidate entry name version
+	manifest="$target_root/etc/dbai-custom-kernel-manifest.txt"
+	expected_sha="$(sed -n 's/^Boot kernel SHA-256: //p' "$manifest" | head -n 1)"
+	custom_release="$(sed -n 's/^Kernel release: //p' "$manifest" | head -n 1)"
+	[[ "$expected_sha" =~ ^[[:xdigit:]]{64}$ ]] || { echo "ERROR: custom-kernel manifest lacks a valid boot-kernel SHA-256." >&2; return 1; }
+	[[ "$custom_release" =~ ^[A-Za-z0-9._+-]+$ ]] || { echo "ERROR: custom-kernel manifest lacks a valid kernel release." >&2; return 1; }
+	actual_candidate=""
+	while IFS= read -r candidate; do
+		[[ -f "$candidate" ]] || continue
+		actual_sha="$(sha256sum "$candidate" | awk '{print $1}')"
+		if [[ "$actual_sha" == "$expected_sha" ]]; then actual_candidate="$candidate"; break; fi
+	done < <(find "$target_root/boot" -maxdepth 5 -type f \( -name 'Image' -o -name 'Image-*' -o -name 'vmlinuz*' -o -name 'uImage' -o -name 'zImage' \) -print)
+	[[ -n "$actual_candidate" ]] || { echo "ERROR: final boot filesystem no longer contains the exact custom kernel image recorded in the manifest." >&2; return 1; }
+	initrd_name="$(sed -n 's/^Initramfs file: //p' "$manifest" | head -n 1)"
+	initrd_sha="$(sed -n 's/^Initramfs SHA-256: //p' "$manifest" | head -n 1)"
+	[[ "$initrd_name" == "initrd.img-$custom_release" && "$initrd_sha" =~ ^[[:xdigit:]]{64}$ ]] || { echo "ERROR: custom initramfs details are missing from the manifest." >&2; return 1; }
+	[[ -s "$target_root/boot/$initrd_name" ]] || { echo "ERROR: custom initramfs is missing from final /boot: $initrd_name." >&2; return 1; }
+	actual_sha="$(sha256sum "$target_root/boot/$initrd_name" | awk '{print $1}')"
+	[[ "$actual_sha" == "$initrd_sha" ]] || { echo "ERROR: custom initramfs checksum mismatch." >&2; return 1; }
+	boot_ramdisk_name="$(sed -n 's/^Boot ramdisk file: //p' "$manifest" | head -n 1)"
+	boot_ramdisk_sha="$(sed -n 's/^Boot ramdisk SHA-256: //p' "$manifest" | head -n 1)"
+	[[ "$boot_ramdisk_name" =~ ^[A-Za-z0-9._+-]+$ && "$boot_ramdisk_sha" =~ ^[[:xdigit:]]{64}$ ]] || { echo "ERROR: U-Boot ramdisk details are missing from the manifest." >&2; return 1; }
+	[[ -s "$target_root/boot/$boot_ramdisk_name" ]] || { echo "ERROR: recorded U-Boot ramdisk is missing from final /boot: $boot_ramdisk_name." >&2; return 1; }
+	actual_sha="$(sha256sum "$target_root/boot/$boot_ramdisk_name" | awk '{print $1}')"
+	[[ "$actual_sha" == "$boot_ramdisk_sha" ]] || { echo "ERROR: U-Boot ramdisk checksum mismatch." >&2; return 1; }
+	for entry in "$target_root/boot"/vmlinuz-* "$target_root/boot"/Image-* "$target_root/boot"/uImage-* "$target_root/boot"/zImage-* "$target_root/boot"/initrd.img-* "$target_root/boot"/uInitrd-* "$target_root/boot"/config-* "$target_root/boot"/System.map-* "$target_root/boot"/dtb-*; do
+		[[ -e "$entry" || -L "$entry" ]] || continue
+		name="$(basename "$entry")"
+		case "$name" in
+			vmlinuz-*) version="${name#vmlinuz-}" ;;
+			Image-*) version="${name#Image-}" ;;
+			uImage-*) version="${name#uImage-}" ;;
+			zImage-*) version="${name#zImage-}" ;;
+			initrd.img-*) version="${name#initrd.img-}" ;;
+			uInitrd-*) version="${name#uInitrd-}" ;;
+			config-*) version="${name#config-}" ;;
+			System.map-*) version="${name#System.map-}" ;;
+			dtb-*) version="${name#dtb-}" ;;
+			*) continue ;;
+		esac
+		[[ "$version" == "$custom_release" ]] || { echo "ERROR: residual old-kernel boot artifact remains: /boot/$name" >&2; return 1; }
+	done
+	echo "Verified custom kernel, initramfs and U-Boot ramdisk checksums; no old versioned boot artifacts remain."
+}
 function pre_umount_final_image__dbai_prune_noncustom_kernel_artifacts() {
 	[[ "${DBAI_KERNEL_MODE:-}" == "Custom Kernel" ]] || return 0
 	local target_root="${MOUNT:-}" custom_release="${DBAI_CUSTOM_KERNEL_RELEASE:-}"
@@ -380,7 +453,9 @@ function pre_umount_final_image__dbai_prune_noncustom_kernel_artifacts() {
 	dbai_restore_custom_kernel_boot_payload "$target_root" || exit_with_error "Unable to restore custom kernel/DTB payload after distro initramfs generation"
 	dbai_prune_noncustom_boot_artifacts "$target_root" "$custom_release" || exit_with_error "Unable to remove residual distro boot files from the final image"
 	dbai_prune_noncustom_kernel_artifacts "$target_root" "$custom_release" || exit_with_error "Unable to clean non-custom kernel artifacts from the final image"
-	dbai_verify_custom_kernel_boot_payload "$target_root" || exit_with_error "Final custom-kernel payload verification failed"
+	dbai_generate_custom_kernel_initramfs "$target_root" "$custom_release" || exit_with_error "Unable to generate initramfs for the custom kernel"
+	dbai_prune_noncustom_boot_artifacts "$target_root" "$custom_release" || exit_with_error "Unable to remove residual distro boot files from the final image"
+	dbai_verify_custom_kernel_boot_payload "$target_root" || exit_with_error "Final custom-kernel and ramdisk verification failed"
 }
 
 function extension_prepare_config__dbai_custom_kernel() {
