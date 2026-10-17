@@ -193,8 +193,8 @@ function pre_customize_image__dbai_overlay_kernel_bundle() {
 		find "${SDCARD}/usr/src" -type f -name 'Makefile' -print -quit | grep -q . || exit_with_error "No kernel header Makefile found under target /usr/src after overlay"
 	fi
 
-	local manifest="${SDCARD}/root/DBAI-CUSTOM-KERNEL-MANIFEST.txt"
-	mkdir -p "${SDCARD}/root"
+	local manifest="${SDCARD}/etc/dbai-custom-kernel-manifest.txt"
+	mkdir -p "${SDCARD}/etc"
 	{
 		echo "Kernel mode: Custom Kernel"
 		echo "Kernel release: ${modules_release}"
@@ -208,5 +208,6 @@ function pre_customize_image__dbai_overlay_kernel_bundle() {
 		fi
 		sha256sum "${cache_dir}/boot.tar" "${cache_dir}/dtb.tar" "${cache_dir}/modules.tar" "${cache_dir}/headers.tar"
 	} > "${manifest}"
-	display_alert "DBAI custom kernel" "Four-part bundle overlay and basic checks completed; hardware boot testing is still required" "warn"
+	[[ -s "${manifest}" ]] || exit_with_error "Custom-kernel manifest was not written to target /etc"
+	display_alert "DBAI custom kernel" "Manifest written to /etc/dbai-custom-kernel-manifest.txt; bundle overlay checks completed, hardware boot testing still required" "warn"
 }
