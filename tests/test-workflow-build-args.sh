@@ -22,6 +22,14 @@ grep -Fq "DESKTOP_TIER_ARG=(\"DESKTOP_TIER=\$DESKTOP_TIER\")" "$workflow" || {
   echo "FAIL: Desktop profile must pass the selected package tier explicitly." >&2
   exit 1
 }
+grep -Fq "\"\${DESKTOP_ENVIRONMENT_ARG[@]}\"" "$workflow" || {
+  echo "FAIL: compile command does not pass the selected desktop environment." >&2
+  exit 1
+}
+grep -Fq "\"\${DESKTOP_TIER_ARG[@]}\"" "$workflow" || {
+  echo "FAIL: compile command does not pass the selected desktop tier." >&2
+  exit 1
+}
 # shellcheck disable=SC2016 # Match the literal Bash variable references embedded in YAML.
 grep -Fq 'scripts/resolve-desktop-environments.sh "$DESKTOP_ENVIRONMENT_INPUT" "$release"' "$workflow" || {
   echo "FAIL: build matrix does not resolve release-compatible Desktop environments." >&2
