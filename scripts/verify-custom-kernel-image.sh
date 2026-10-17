@@ -105,21 +105,36 @@ esac
 echo "VERIFY: root filesystem mounted read-only"
 mounted_dirs+=("$root_mount")
 
-manifest="${root_mount}/root/DBAI-CUSTOM-KERNEL-MANIFEST.txt"
-echo "VERIFY: checking manifest and modules release $expected_release"
-[[ -f "$manifest" ]] || { echo "::error::Custom-kernel manifest missing from built image."; exit 1; }
-grep -Fqx "Kernel mode: Custom Kernel" "$manifest" || { echo "::error::Image manifest does not identify Custom Kernel mode."; exit 1; }
-grep -Fqx "Kernel release: $expected_release" "$manifest" || {
-  echo "::error::Kernel release in image manifest does not match expected release $expected_release."
-  cat "$manifest"
+modules_dir="${root_mount}/lib/modules/${expected_release}"
+[[ -d "$modules_dir" ]] || {
+  echo "::error::Selected root filesystem is missing /lib/modules/$expected_release."
+  sudo ls -la "${root_mount}/lib/modules" || true
   exit 1
 }
-
-modules_dir="${root_mount}/lib/modules/${expected_release}"
-[[ -d "$modules_dir" ]] || { echo "::error::Image is missing /lib/modules/$expected_release."; exit 1; }
 [[ -f "${modules_dir}/modules.dep" ]] || { echo "::error::Image is missing /lib/modules/$expected_release/modules.dep."; exit 1; }
 module_file="$(find "$modules_dir" -type f -name '*.ko*' -print -quit)"
 [[ -n "$module_file" ]] || { echo "::error::Image contains no kernel modules under /lib/modules/$expected_release."; exit 1; }
+
+manifest="${root_mount}/etc/dbai-custom-kernel-manifest.txt"
+if [[ ! -f "$manifest" ]]; then
+  # Support already-built/custom bundles using the former location, but prefer
+  # /etc because it survives normal cleanup of ephemeral root-home files.
+  manifest="${root_mount}/root/DBAI-CUSTOM-KERNEL-MANIFEST.txt"
+fi
+[[ -f "$manifest" ]] || {
+  echo "::error::Custom-kernel manifest missing from root filesystem (checked /etc/dbai-custom-kernel-manifest.txt and /root/DBAI-CUSTOM-KERNEL-MANIFEST.txt)."
+  echo "Root filesystem top-level entries:"
+  ls -la "$root_mount" || true
+  echo "Kernel module tree present: $modules_dir"
+  exit 1
+}
+echo "VERIFY: found custom-kernel manifest at $manifest"
+grep -Fqx "Kernel mode: Custom Kernel" "$manifest" || { echo "::error::Image manifest does not identify Custom Kernel mode: $manifest"; exit 1; }
+grep -Fqx "Kernel release: $expected_release" "$manifest" || {
+  echo "::error::Kernel release in image manifest does not match expected release $expected_release (manifest $manifest)."
+  cat "$manifest"
+  exit 1
+}
 
 headers_layout="$(sed -n 's/^Headers archive layout: //p' "$manifest" | head -n 1)"
 case "$headers_layout" in
