@@ -47,6 +47,10 @@ grep -Fq 'matrix.desktop_environment' "$workflow" || {
   echo "FAIL: Desktop environment must be included in the build job identity." >&2
   exit 1
 }
+grep -Fq 'planned_count > 256' "$workflow" || {
+  echo "FAIL: expanded Desktop matrix must be guarded against GitHub's 256-job limit." >&2
+  exit 1
+}
 
 echo "PASS: stable DBAI image version overrides upstream -trunk metadata."
 echo "PASS: all Desktop environments and tiers are explicitly non-interactive."
