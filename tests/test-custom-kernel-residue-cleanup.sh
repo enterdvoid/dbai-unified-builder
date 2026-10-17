@@ -27,7 +27,10 @@ mapfile -t packages < <(dbai_list_installed_distro_kernel_packages "$status")
 [[ "${#packages[@]}" -eq 2 ]]
 printf '%s\n' "${packages[@]}" | grep -Fxq 'linux-image-current-meson64'
 printf '%s\n' "${packages[@]}" | grep -Fxq 'linux-dtb-current-meson64'
-! printf '%s\n' "${packages[@]}" | grep -Fxq 'linux-headers-current-meson64'
+if printf '%s\n' "${packages[@]}" | grep -Fxq 'linux-headers-current-meson64'; then
+  echo 'FAIL: deinstalled kernel headers were reported as installed.' >&2
+  exit 1
+fi
 
 root="$tmp/root"
 mkdir -p "$root/boot/dtb-6.18.57-current-meson64"
