@@ -66,10 +66,36 @@ on:
         required: true
         default: true
       build_desktop:
-        description: "Build a Desktop image using XFCE by default"
+        description: "Build Desktop image(s) using the selected environment below"
         type: boolean
         required: true
         default: true
+      desktop_environment:
+        description: "Desktop environment for Desktop images; all expands to every compatible environment. Openbox is a standalone lightweight session."
+        type: choice
+        required: true
+        default: xfce
+        options:
+          - all
+          - xfce
+          - mate
+          - gnome
+          - cinnamon
+          - kde-plasma
+          - lxqt
+          - i3-wm
+          - enlightenment
+          - budgie
+          - openbox
+      desktop_tier:
+        description: "Package tier for Armbian desktop environments; Openbox ignores this setting"
+        type: choice
+        required: true
+        default: mid
+        options:
+          - minimal
+          - mid
+          - full
       filesystem:
         description: "Build ext4, btrfs, or both variants"
         type: choice
@@ -154,6 +180,8 @@ jobs:
           BUILD_SERVER_INPUT: ${{ github.event_name == 'workflow_dispatch' && inputs.build_server || (github.event_name == 'push' && contains(github.event.head_commit.message, '[dbai-smoke]')) }}
           BUILD_APPLICATION_INPUT: ${{ github.event_name == 'workflow_dispatch' && inputs.build_application || (github.event_name == 'push' && !contains(github.event.head_commit.message, '[dbai-smoke]')) }}
           BUILD_DESKTOP_INPUT: ${{ github.event_name == 'workflow_dispatch' && inputs.build_desktop || (github.event_name == 'push' && !contains(github.event.head_commit.message, '[dbai-smoke]')) }}
+          DESKTOP_ENVIRONMENT_INPUT: ${{ inputs.desktop_environment || 'xfce' }}
+          DESKTOP_TIER_INPUT: ${{ inputs.desktop_tier || 'mid' }}
           FILESYSTEM_INPUT: ${{ (github.event_name == 'push' && contains(github.event.head_commit.message, '[dbai-smoke]')) && 'ext4' || inputs.filesystem || 'ext4' }}
           KERNEL_MODE: ${{ (github.event_name == 'push' && contains(github.event.head_commit.message, '[dbai-smoke]')) && 'Custom Kernel' || inputs.kernel_mode || 'Kernel Official' }}
           APP_PROFILE: ${{ inputs.app_profile || 'none' }}
@@ -172,8 +200,17 @@ jobs:
           esac
           [[ -n "${RELEASES_INPUT//[[:space:]]/}" ]] || { echo "::error::Custom releases cannot be empty."; exit 2; }
           PROFILES_INPUT="$(bash scripts/resolve-selected-profiles.sh "$BUILD_MINIMAL_INPUT" "$BUILD_SERVER_INPUT" "$BUILD_APPLICATION_INPUT" "$BUILD_DESKTOP_INPUT")"
+          case "$DESKTOP_ENVIRONMENT_INPUT" in
+            all|xfce|mate|gnome|cinnamon|kde-plasma|lxqt|i3-wm|enlightenment|budgie|openbox) ;;
+            *) echo "::error::Unknown desktop environment selection: $DESKTOP_ENVIRONMENT_INPUT"; exit 2 ;;
+          esac
+          case "$DESKTOP_TIER_INPUT" in
+            minimal|mid|full) ;;
+            *) echo "::error::Unknown desktop package tier: $DESKTOP_TIER_INPUT"; exit 2 ;;
+          esac
           echo "Resolved releases: $RELEASES_INPUT"
           echo "Selected image types: $PROFILES_INPUT"
+          echo "Desktop environment selection: $DESKTOP_ENVIRONMENT_INPUT; tier: $DESKTOP_TIER_INPUT"
           bash scripts/validate-inputs.sh "$BOARD" "" "$RELEASES_INPUT" "$PROFILES_INPUT" "$FILESYSTEM_INPUT" "$KERNEL_MODE" "$APP_PROFILE"
           if [[ "$KERNEL_MODE" == "Custom Kernel" || "$KERNEL_MODE" == "Recompile Custom Kernel" ]]; then
             bootfs_archive="$GITHUB_WORKSPACE/platform/bootfs_custom_kernel.tar.gz"
@@ -278,6 +315,7 @@ jobs:
             for profile in "${profiles[@]}"; do
               profile="$(xargs <<< "$profile")"
               app_candidates=("none")
+              desktop_candidates=("none")
               if [[ "$profile" == "application" ]]; then
                 if ! app_candidates_text="$(bash scripts/resolve-app-variants.sh "$APP_PROFILE" "$release")"; then
                   echo "::error::Could not resolve application '$APP_PROFILE' for release '$release'."
@@ -288,10 +326,22 @@ jobs:
                   continue
                 fi
                 mapfile -t app_candidates <<< "$app_candidates_text"
+              elif [[ "$profile" == "desktop" ]]; then
+                if ! desktop_candidates_text="$(bash scripts/resolve-desktop-environments.sh "$DESKTOP_ENVIRONMENT_INPUT" "$release")"; then
+                  echo "::error::Could not resolve desktop environment selection '$DESKTOP_ENVIRONMENT_INPUT' for release '$release'."
+                  exit 2
+                fi
+                if [[ -z "$desktop_candidates_text" ]]; then
+                  echo "::notice::Skipping Desktop image for '$release': no selected desktop environment is available for ARM64."
+                  continue
+                fi
+                mapfile -t desktop_candidates <<< "$desktop_candidates_text"
               fi
               for app_variant in "${app_candidates[@]}"; do
-                for fs in "${filesystems[@]}"; do
-                  matrix="$(jq -c --arg release "$release" --arg profile "$profile" --arg filesystem "$fs" --arg app_variant "$app_variant" '.include += [{release:$release,profile:$profile,filesystem:$filesystem,app_variant:$app_variant}]' <<< "$matrix")"
+                for desktop_environment in "${desktop_candidates[@]}"; do
+                  for fs in "${filesystems[@]}"; do
+                    matrix="$(jq -c --arg release "$release" --arg profile "$profile" --arg filesystem "$fs" --arg app_variant "$app_variant" --arg desktop_environment "$desktop_environment" '.include += [{release:$release,profile:$profile,filesystem:$filesystem,app_variant:$app_variant,desktop_environment:$desktop_environment}]' <<< "$matrix")"
+                  done
                 done
               done
             done
@@ -312,7 +362,7 @@ jobs:
           jq . <<< "$matrix"
 
   build:
-    name: ${{ matrix.release }} / ${{ matrix.profile }} / ${{ matrix.app_variant }} / ${{ matrix.filesystem }}
+    name: ${{ matrix.release }} / ${{ matrix.profile }} / ${{ matrix.app_variant }} / ${{ matrix.desktop_environment }} / ${{ matrix.filesystem }}
     needs: plan
     runs-on: ubuntu-24.04
     timeout-minutes: 360
@@ -329,6 +379,8 @@ jobs:
       KERNEL_MODE: ${{ (github.event_name == 'push' && contains(github.event.head_commit.message, '[dbai-smoke]')) && 'Custom Kernel' || inputs.kernel_mode || 'Kernel Official' }}
       APP_PROFILE: ${{ inputs.app_profile || 'none' }}
       APP_VARIANT: ${{ matrix.app_variant }}
+      DESKTOP_ENVIRONMENT: ${{ matrix.desktop_environment || 'none' }}
+      DESKTOP_TIER: ${{ inputs.desktop_tier || 'mid' }}
       KERNEL_CUSTOM_INPUT: ${{ (github.event_name == 'push' && contains(github.event.head_commit.message, '[dbai-smoke]')) && 'https://github.com/armarchindo/kernel/releases/download/kernel_dbai/6.1.66-DBAI.tar.gz' || inputs.kernel_custom_input || '' }}
       CUSTOM_KERNEL_RELEASE: ${{ needs.plan.outputs.custom_kernel_release }}
       KERNEL_PATCH_SERIES: meson64-current
@@ -473,6 +525,7 @@ jobs:
           cp extensions/dbai-custom-kernel.sh armbian-source/userpatches/extensions/
           # Custom module bundles are staged and normalized before entering the firmware rootfs.
           cp extensions/dbai-custom-bootfs.sh armbian-source/userpatches/extensions/
+          cp extensions/dbai-openbox.sh armbian-source/userpatches/extensions/
           cp extensions/dbai-branding.sh armbian-source/userpatches/extensions/
           if [[ "$KERNEL_MODE" == "Custom Kernel" || "$KERNEL_MODE" == "Recompile Custom Kernel" ]]; then
             mkdir -p armbian-source/userpatches/platform
@@ -568,23 +621,35 @@ jobs:
           BUILD_DESKTOP=no
           IMAGE_SIZE=4096
           DESKTOP_ENVIRONMENT_ARG=()
+          DESKTOP_TIER_ARG=()
+          DESKTOP_OPENBOX=no
           case "$PROFILE" in
             minimal) BUILD_MINIMAL=yes; IMAGE_SIZE=4096 ;;
             server) BUILD_MINIMAL=no; IMAGE_SIZE=4096 ;;
             application) BUILD_MINIMAL=no; IMAGE_SIZE=8192 ;;
-            # Armbian otherwise opens a whiptail/dialog menu when DESKTOP_ENVIRONMENT
-            # is unset; GitHub Actions has no interactive terminal. Use XFCE explicitly.
             desktop)
-              BUILD_MINIMAL=no
-              BUILD_DESKTOP=yes
               IMAGE_SIZE=8192
-              DESKTOP_ENVIRONMENT_ARG=("DESKTOP_ENVIRONMENT=xfce")
-              echo "Desktop environment selected non-interactively: XFCE"
+              if [[ "$DESKTOP_ENVIRONMENT" == "openbox" ]]; then
+                # DBAI's standalone Openbox extension manages its own lightweight session;
+                # do not invoke Armbian's interactive desktop setup for this variant.
+                BUILD_MINIMAL=no
+                BUILD_DESKTOP=no
+                DESKTOP_OPENBOX=yes
+              else
+                BUILD_MINIMAL=no
+                BUILD_DESKTOP=yes
+                DESKTOP_ENVIRONMENT_ARG=("DESKTOP_ENVIRONMENT=$DESKTOP_ENVIRONMENT")
+                DESKTOP_TIER_ARG=("DESKTOP_TIER=$DESKTOP_TIER")
+              fi
+              echo "Desktop environment selected non-interactively: $DESKTOP_ENVIRONMENT (tier: $DESKTOP_TIER)"
               ;;
             *) echo "::error::Unknown profile $PROFILE"; exit 2 ;;
           esac
 
           EXTENSIONS=(dbai-branding)
+          if [[ "$DESKTOP_OPENBOX" == "yes" ]]; then
+            EXTENSIONS+=(dbai-openbox)
+          fi
           BUILD_KERNEL_MODE="$KERNEL_MODE"
           APP_PROFILE_EFFECTIVE="none"
           ARTIFACT_IGNORE_CACHE=no
@@ -652,7 +717,7 @@ jobs:
           fi
 
           ./compile.sh build BOARD="$BOARD" BRANCH=current RELEASE="$RELEASE" BUILD_MINIMAL="$BUILD_MINIMAL" BUILD_DESKTOP="$BUILD_DESKTOP" REVISION="$DBAI_IMAGE_VERSION" IMAGE_VERSION="$DBAI_IMAGE_VERSION" ROOTFS_TYPE="$FILESYSTEM" FIXED_IMAGE_SIZE="$IMAGE_SIZE" BOOTSIZE=256 COMPRESS_OUTPUTIMAGE=sha,xz IMAGE_XZ_COMPRESSION_RATIO=0 KERNEL_CONFIGURE=no ARTIFACT_IGNORE_CACHE="$ARTIFACT_IGNORE_CACHE" ENABLE_EXTENSIONS="$ENABLE_EXTENSIONS" "DBAI_KERNEL_MODE=$BUILD_KERNEL_MODE" \
-            "${DESKTOP_ENVIRONMENT_ARG[@]}" "${DBAI_KERNEL_BUNDLE_ARG[@]}" "${KERNELSOURCE_ARG[@]}" "${KERNELBRANCH_ARG[@]}" "${BSPFREEZE_ARG[@]}" "${ARMBIAN_REPO_ARG[@]}"
+            "${DESKTOP_ENVIRONMENT_ARG[@]}" "${DESKTOP_TIER_ARG[@]}" "${DBAI_KERNEL_BUNDLE_ARG[@]}" "${KERNELSOURCE_ARG[@]}" "${KERNELBRANCH_ARG[@]}" "${BSPFREEZE_ARG[@]}" "${ARMBIAN_REPO_ARG[@]}"
 
           mkdir -p "$GITHUB_WORKSPACE/stage"
           shopt -s nullglob
@@ -695,8 +760,11 @@ jobs:
               *) echo "::error::Unrecognized image format: $base"; exit 1 ;;
             esac
 
-            # Canonical DBAI2K26 name: use the actual overlaid kernel release for Custom Kernel mode.
+            # Include the selected DE in Desktop asset names so an "all" run cannot overwrite sibling DEs.
             asset_profile="$PROFILE_VARIANT"
+            if [[ "$PROFILE" == "desktop" ]]; then
+              asset_profile="desktop-$DESKTOP_ENVIRONMENT"
+            fi
             asset_kernel_version="$kernel_version"
             if [[ "$BUILD_KERNEL_MODE" == "Custom Kernel" ]]; then
               [[ "$CUSTOM_KERNEL_RELEASE" =~ ^[A-Za-z0-9._+-]+$ ]] || {
@@ -740,7 +808,7 @@ jobs:
       - name: Upload image artifact
         uses: actions/upload-artifact@v4
         with:
-          name: dbai-${{ matrix.release }}-${{ matrix.profile }}-${{ matrix.app_variant }}-${{ matrix.filesystem }}
+          name: dbai-${{ matrix.release }}-${{ matrix.profile }}-${{ matrix.app_variant }}-${{ matrix.desktop_environment }}-${{ matrix.filesystem }}
           path: stage/*
           if-no-files-found: error
           compression-level: 0
