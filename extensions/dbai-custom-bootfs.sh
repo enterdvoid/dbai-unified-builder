@@ -50,7 +50,7 @@ function pre_customize_image__dbai_replace_bootfs_for_recompile() {
 		\( -type f \( -name 'Image' -o -name 'Image-*' -o -name 'vmlinuz*' -o -name 'uImage' -o -name 'zImage' -o -name 'initrd*' -o -name 'uInitrd*' -o -name '*.dtb' -o -name 'config-*' -o -name 'System.map-*' \) \
 		-o -type d \( -name 'dtb' -o -name 'dtbs' \) \) -print0)
 
-	dbai_replace_bootfs_files
+	dbai_replace_bootfs_files "$SDCARD"
 	cp -a "$preserve/." "$boot_dir/"
 	find "$boot_dir" -maxdepth 4 -type f \( -name 'Image' -o -name 'Image-*' -o -name 'vmlinuz*' -o -name 'uImage' -o -name 'zImage' \) -print -quit | grep -q . || exit_with_error "No compiled kernel image found in /boot after custom bootfs replacement"
 	display_alert "DBAI custom bootfs" "Custom bootfs installed; compiled kernel and DTB artifacts were preserved" "info"
