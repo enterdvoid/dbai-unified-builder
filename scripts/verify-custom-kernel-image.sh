@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ "$#" -lt 2 || "$#" -gt 3 ]]; then
-  echo "Usage: $0 IMAGE.img[.xz|.gz|.zst] EXPECTED_KERNEL_RELEASE [IMAGE_SIZE_MB]" >&2
+if [[ "$#" -lt 2 || "$#" -gt 4 ]]; then
+  echo "Usage: $0 IMAGE.img[.xz|.gz|.zst] EXPECTED_KERNEL_RELEASE [IMAGE_SIZE_MB] [EXPECTED_BOOT_PARTITION_MIB]" >&2
   exit 2
 fi
 
@@ -10,9 +10,11 @@ echo "VERIFY: starting custom-kernel image inspection"
 image_path="$(realpath "$1")"
 expected_release="$2"
 image_size_mb="${3:-4096}"
+expected_boot_partition_mib="${4:-0}"
 [[ -f "$image_path" ]] || { echo "::error::Image file does not exist: $image_path"; exit 2; }
 [[ "$expected_release" =~ ^[A-Za-z0-9._+-]+$ ]] || { echo "::error::Unsafe expected kernel release."; exit 2; }
 [[ "$image_size_mb" =~ ^[0-9]+$ ]] || { echo "::error::IMAGE_SIZE_MB must be an integer."; exit 2; }
+[[ "$expected_boot_partition_mib" =~ ^[0-9]+$ ]] || { echo "::error::EXPECTED_BOOT_PARTITION_MIB must be a non-negative integer."; exit 2; }
 
 image_dir="$(dirname "$image_path")"
 available_bytes="$(df -B1 --output=avail "$image_dir" | awk 'NR==2 {print $1}')"
@@ -232,6 +234,7 @@ candidate_index=0
 boot_mount=""
 boot_kernel=""
 boot_dtb=""
+boot_partition_size_bytes=0
 while read -r size_bytes device fstype; do
   [[ -n "${device:-}" && -n "${fstype:-}" ]] || continue
   [[ "$device" != "$root_part" ]] || continue
@@ -249,9 +252,19 @@ while read -r size_bytes device fstype; do
   kernel_file="$(find "$candidate_mount" -maxdepth 5 -type f \( -name 'Image' -o -name 'Image-*' -o -name 'vmlinuz*' -o -name 'uImage' -o -name 'zImage' \) -print -quit)"
   dtb_file="$(find "$candidate_mount" -type f -name '*.dtb' -print -quit)"
   if [[ -n "$kernel_file" && -n "$dtb_file" ]]; then
+    if (( expected_boot_partition_mib > 0 )); then
+      expected_boot_bytes=$((expected_boot_partition_mib * 1024 * 1024))
+      if [[ "$size_bytes" != "$expected_boot_bytes" ]]; then
+        sudo umount "$candidate_mount"
+        echo "::error::Boot partition size mismatch: expected ${expected_boot_partition_mib} MiB (${expected_boot_bytes} bytes), found ${size_bytes} bytes ($device)." >&2
+        exit 1
+      fi
+      echo "VERIFY: boot partition size matches expected ${expected_boot_partition_mib} MiB (${size_bytes} bytes)"
+    fi
     boot_mount="$candidate_mount"
     boot_kernel="$kernel_file"
     boot_dtb="$dtb_file"
+    boot_partition_size_bytes="$size_bytes"
     mounted_dirs+=("$candidate_mount")
     break
   fi
@@ -263,6 +276,10 @@ done < <(
 )
 
 if [[ -z "$boot_mount" ]]; then
+  if (( expected_boot_partition_mib > 0 )); then
+    echo "::error::A separate boot partition of ${expected_boot_partition_mib} MiB was required, but no partition containing both kernel and DTB was found."
+    exit 1
+  fi
   if (( candidate_index > 0 )); then
     echo "::error::A separate boot partition exists, but no partition contains both a kernel image and DTB."
     exit 1
@@ -284,3 +301,6 @@ echo "  Modules: $module_file"
 echo "  Headers layout: $headers_layout"
 echo "  Boot kernel: $boot_kernel"
 echo "  Boot DTB: $boot_dtb"
+if (( boot_partition_size_bytes > 0 )); then
+  echo "  Boot partition size: $((boot_partition_size_bytes / 1024 / 1024)) MiB ($boot_partition_size_bytes bytes)"
+fi

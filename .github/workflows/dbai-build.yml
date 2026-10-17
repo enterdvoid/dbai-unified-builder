@@ -493,9 +493,27 @@ jobs:
           cp tools/dbai-vm-import armbian-source/tools/
           # Kernel Official may consume Armbian's prebuilt OCI artifact, but must never silently fall back to source compilation.
           python3 "$GITHUB_WORKSPACE/scripts/guard-kernel-cache-only.py" "$GITHUB_WORKSPACE/armbian-source/lib/functions/artifacts/artifact-kernel.sh" "$KERNEL_MODE"
-          # Patch only aml-s9xx-box boot partition: FAT32 filesystem + MBR type 0x0C.
-          # Upstream otherwise uses XBOOTLDR 0xEA and may select FAT16.
+          # The board config is loaded after CLI parameters, so its BOOTSIZE="512" overrides
+          # the requested BOOTSIZE=256. Set the board's authoritative value to 256 MiB.
           if [[ "$BOARD" == "aml-s9xx-box" ]]; then
+            python3 - "$GITHUB_WORKSPACE/armbian-source/config/boards" <<'PY'
+          import pathlib, re, sys
+          board_dir = pathlib.Path(sys.argv[1])
+          candidates = sorted(board_dir.glob("aml-s9xx-box.*"))
+          if len(candidates) != 1:
+              raise SystemExit(f"Expected exactly one aml-s9xx-box board config, found {len(candidates)}")
+          p = candidates[0]
+          content = p.read_text(encoding="utf-8")
+          pattern = re.compile(r"(?m)^BOOTSIZE\s*=.*$")
+          matches = list(pattern.finditer(content))
+          if len(matches) != 1:
+              raise SystemExit(f"Expected exactly one BOOTSIZE assignment in {p}, found {len(matches)}")
+          old_line = matches[0].group(0)
+          if old_line.strip() != 'BOOTSIZE="256"':
+              content = pattern.sub('BOOTSIZE="256"', content, count=1)
+              p.write_text(content, encoding="utf-8")
+          print(f"Enforced {p.name}: BOOTSIZE=256 MiB")
+          PY
             python3 - "$GITHUB_WORKSPACE/armbian-source/lib/functions/image/partitioning.sh" <<'PY'
           import pathlib, sys
           p = pathlib.Path(sys.argv[1])
@@ -600,8 +618,10 @@ jobs:
           echo "Extensions=$ENABLE_EXTENSIONS"
           # aml-s9xx-box requires an actual FAT32 /boot filesystem and FAT32-LBA MBR type (0x0C),
           # not Armbian's default ext4 /boot or XBOOTLDR type 0xEA.
+          EXPECTED_BOOT_PARTITION_MIB=0
           if [[ "$BOARD" == "aml-s9xx-box" ]]; then
             export BOOTFS_TYPE=fat
+            EXPECTED_BOOT_PARTITION_MIB=256
           fi
           DBAI_KERNEL_BUNDLE_ARG=()
           if [[ "$BUILD_KERNEL_MODE" == "Custom Kernel" ]]; then
@@ -686,7 +706,7 @@ jobs:
             if [[ "$BUILD_KERNEL_MODE" == "Custom Kernel" ]]; then
               echo "Read-only verification of staged custom-kernel image: $safe_base (timeout: 300 seconds)"
               echo "Expected persistent manifest: /etc/dbai-custom-kernel-manifest.txt"
-              timeout 300s bash "$GITHUB_WORKSPACE/scripts/verify-custom-kernel-image.sh" "$stage_image" "$CUSTOM_KERNEL_RELEASE" "$IMAGE_SIZE"
+              timeout 300s bash "$GITHUB_WORKSPACE/scripts/verify-custom-kernel-image.sh" "$stage_image" "$CUSTOM_KERNEL_RELEASE" "$IMAGE_SIZE" "$EXPECTED_BOOT_PARTITION_MIB"
               echo "Custom-kernel image verification passed: $safe_base"
             fi
 
