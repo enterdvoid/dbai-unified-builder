@@ -298,25 +298,25 @@ function dbai_purge_installed_distro_kernel_packages() {
 }
 
 function dbai_prune_noncustom_boot_artifacts() {
-	local target_root="$1" custom_release="$2" entry name version
+	local target_root="$1" custom_release="$2" entry name boot_artifact_release
 	local boot_dir="$target_root/boot"
 	[[ -d "$boot_dir" ]] || return 0
 	for entry in "$boot_dir"/vmlinuz-* "$boot_dir"/Image-* "$boot_dir"/uImage-* "$boot_dir"/zImage-* "$boot_dir"/initrd.img-* "$boot_dir"/uInitrd-* "$boot_dir"/config-* "$boot_dir"/System.map-* "$boot_dir"/dtb-*; do
 		[[ -e "$entry" || -L "$entry" ]] || continue
 		name="$(basename "$entry")"
 		case "$name" in
-			vmlinuz-*) version="${name#vmlinuz-}" ;;
-			Image-*) version="${name#Image-}" ;;
-			uImage-*) version="${name#uImage-}" ;;
-			zImage-*) version="${name#zImage-}" ;;
-			initrd.img-*) version="${name#initrd.img-}" ;;
-			uInitrd-*) version="${name#uInitrd-}" ;;
-			config-*) version="${name#config-}" ;;
-			System.map-*) version="${name#System.map-}" ;;
-			dtb-*) version="${name#dtb-}" ;;
+			vmlinuz-*) boot_artifact_release="${name#vmlinuz-}" ;;
+			Image-*) boot_artifact_release="${name#Image-}" ;;
+			uImage-*) boot_artifact_release="${name#uImage-}" ;;
+			zImage-*) boot_artifact_release="${name#zImage-}" ;;
+			initrd.img-*) boot_artifact_release="${name#initrd.img-}" ;;
+			uInitrd-*) boot_artifact_release="${name#uInitrd-}" ;;
+			config-*) boot_artifact_release="${name#config-}" ;;
+			System.map-*) boot_artifact_release="${name#System.map-}" ;;
+			dtb-*) boot_artifact_release="${name#dtb-}" ;;
 			*) continue ;;
 		esac
-		[[ "$version" == "$custom_release" ]] && continue
+		[[ "$boot_artifact_release" == "$custom_release" ]] && continue
 		echo "Removing non-custom boot artifact: /boot/$name"
 		rm -rf -- "$entry"
 	done
@@ -397,7 +397,7 @@ function dbai_generate_custom_kernel_initramfs() {
 }
 
 function dbai_verify_custom_kernel_boot_payload() {
-	local target_root="$1" manifest expected_sha actual_candidate actual_sha custom_release initrd_name initrd_sha boot_ramdisk_name boot_ramdisk_sha candidate entry name version
+	local target_root="$1" manifest expected_sha actual_candidate actual_sha custom_release initrd_name initrd_sha boot_ramdisk_name boot_ramdisk_sha candidate entry name boot_artifact_release
 	manifest="$target_root/etc/dbai-custom-kernel-manifest.txt"
 	expected_sha="$(sed -n 's/^Boot kernel SHA-256: //p' "$manifest" | head -n 1)"
 	custom_release="$(sed -n 's/^Kernel release: //p' "$manifest" | head -n 1)"
@@ -426,18 +426,18 @@ function dbai_verify_custom_kernel_boot_payload() {
 		[[ -e "$entry" || -L "$entry" ]] || continue
 		name="$(basename "$entry")"
 		case "$name" in
-			vmlinuz-*) version="${name#vmlinuz-}" ;;
-			Image-*) version="${name#Image-}" ;;
-			uImage-*) version="${name#uImage-}" ;;
-			zImage-*) version="${name#zImage-}" ;;
-			initrd.img-*) version="${name#initrd.img-}" ;;
-			uInitrd-*) version="${name#uInitrd-}" ;;
-			config-*) version="${name#config-}" ;;
-			System.map-*) version="${name#System.map-}" ;;
-			dtb-*) version="${name#dtb-}" ;;
+			vmlinuz-*) boot_artifact_release="${name#vmlinuz-}" ;;
+			Image-*) boot_artifact_release="${name#Image-}" ;;
+			uImage-*) boot_artifact_release="${name#uImage-}" ;;
+			zImage-*) boot_artifact_release="${name#zImage-}" ;;
+			initrd.img-*) boot_artifact_release="${name#initrd.img-}" ;;
+			uInitrd-*) boot_artifact_release="${name#uInitrd-}" ;;
+			config-*) boot_artifact_release="${name#config-}" ;;
+			System.map-*) boot_artifact_release="${name#System.map-}" ;;
+			dtb-*) boot_artifact_release="${name#dtb-}" ;;
 			*) continue ;;
 		esac
-		[[ "$version" == "$custom_release" ]] || { echo "ERROR: residual old-kernel boot artifact remains: /boot/$name" >&2; return 1; }
+		[[ "$boot_artifact_release" == "$custom_release" ]] || { echo "ERROR: residual old-kernel boot artifact remains: /boot/$name" >&2; return 1; }
 	done
 	echo "Verified custom kernel, initramfs and U-Boot ramdisk checksums; no old versioned boot artifacts remain."
 }
