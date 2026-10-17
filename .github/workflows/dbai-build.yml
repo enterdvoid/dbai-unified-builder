@@ -635,9 +635,9 @@ jobs:
             desktop)
               IMAGE_SIZE=8192
               if [[ "$DESKTOP_ENVIRONMENT" == "openbox" ]]; then
-                # DBAI's standalone Openbox extension manages its own lightweight session;
-                # do not invoke Armbian's interactive desktop setup for this variant.
-                BUILD_MINIMAL=no
+                # Start from Armbian Minimal, then add only the standalone Openbox GUI session.
+                # This avoids both the interactive DE dialog and the heavier Server base.
+                BUILD_MINIMAL=yes
                 BUILD_DESKTOP=no
                 DESKTOP_OPENBOX=yes
               else
