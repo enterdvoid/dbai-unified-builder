@@ -855,3 +855,5 @@ jobs:
           # may be removed by cleanup_partial_release if remote asset verification fails.
           echo "Verified release: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/tag/$TAG"
           trap - EXIT
+
+# End-to-end smoke trigger for the Custom Kernel residue verifier.
