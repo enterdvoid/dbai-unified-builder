@@ -53,6 +53,16 @@ function dbai_prune_noncustom_kernel_artifacts() {
 		done
 	done
 
+	for entry in "$target_root/usr/src"/linux-headers-* "$target_root/usr/src"/linux-uapi-headers-*; do
+		[[ -e "$entry" || -L "$entry" ]] || continue
+		name="$(basename "$entry")"
+		case "$name" in
+			"linux-headers-$custom_release"|"linux-uapi-headers-$custom_release") continue ;;
+		esac
+		echo "Removing non-custom kernel headers: $(realpath --relative-to="$target_root" "$entry")"
+		rm -rf -- "$entry"
+	done
+
 	for entry in "$target_root/usr/lib"/linux-image-*; do
 		[[ -e "$entry" || -L "$entry" ]] || continue
 		name="$(basename "$entry")"
@@ -162,9 +172,6 @@ function pre_customize_image__dbai_overlay_kernel_bundle() {
 	}
 	local modules_release=""
 	modules_release="$(dbai_detect_kernel_modules_release "${modules_listing}")" || exit_with_error "Unable to safely determine kernel release from modules archive"
-	if [[ "$headers_layout" == "uapi-root" ]]; then
-		exit_with_error "Custom Kernel bundle headers archive contains exported UAPI headers only, not full build headers. Provide full kernel build headers matching the custom release; refusing to publish an image that claims custom kernel headers."
-	fi
 
 	# Replace default boot scripts/config before applying the kernel bundle's /boot files.
 	dbai_replace_bootfs_files
