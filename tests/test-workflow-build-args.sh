@@ -8,6 +8,7 @@ grep -Fq 'DBAI_IMAGE_VERSION: "26.11.0"' "$workflow" || {
   echo "FAIL: workflow does not pin the stable DBAI image version." >&2
   exit 1
 }
+# shellcheck disable=SC2016 # Intentionally match the literal variable expressions in the YAML.
 stable_version_args='REVISION="$DBAI_IMAGE_VERSION" IMAGE_VERSION="$DBAI_IMAGE_VERSION"'
 grep -Fq "$stable_version_args" "$workflow" || {
   echo "FAIL: compile command must override upstream VERSION/-trunk metadata." >&2
@@ -17,6 +18,7 @@ grep -Fq 'DESKTOP_ENVIRONMENT_ARG=("DESKTOP_ENVIRONMENT=xfce")' "$workflow" || {
   echo "FAIL: Desktop profile does not select a non-interactive desktop environment." >&2
   exit 1
 }
+# shellcheck disable=SC2016 # Intentionally match the literal Bash array expansion in the YAML.
 desktop_arg_array='"${DESKTOP_ENVIRONMENT_ARG[@]}"'
 grep -Fq "$desktop_arg_array" "$workflow" || {
   echo "FAIL: compile command does not pass Desktop environment arguments." >&2
