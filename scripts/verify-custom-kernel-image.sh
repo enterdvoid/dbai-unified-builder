@@ -6,6 +6,7 @@ if [[ "$#" -lt 2 || "$#" -gt 3 ]]; then
   exit 2
 fi
 
+echo "VERIFY: starting custom-kernel image inspection"
 image_path="$(realpath "$1")"
 expected_release="$2"
 image_size_mb="${3:-4096}"
@@ -40,6 +41,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
+echo "VERIFY: checking/decompressing $image_path"
 case "$image_path" in
   *.img.xz)
     xz --test "$image_path"
@@ -63,8 +65,15 @@ case "$image_path" in
     ;;
 esac
 
+echo "VERIFY: decompression complete; attaching partition-aware loop device"
 loop_device="$(sudo losetup --find --show --partscan "$raw_image")"
-sudo udevadm settle || true
+echo "VERIFY: loop device is $loop_device"
+if ! timeout 30s sudo udevadm settle; then
+  echo "::error::Timed out waiting for udev to discover image partitions."
+  sudo lsblk -f "$loop_device" || true
+  exit 1
+fi
+sudo lsblk -f "$loop_device" || true
 
 root_part=""
 root_fstype=""
@@ -88,13 +97,16 @@ done < <(sudo lsblk --bytes --noheadings --raw --paths --output NAME,FSTYPE,SIZE
   exit 1
 }
 
+echo "VERIFY: selected root partition $root_part ($root_fstype, $root_size bytes)"
 case "$root_fstype" in
-  ext4) sudo mount -o ro,noload "$root_part" "$root_mount" ;;
-  btrfs) sudo mount -o ro "$root_part" "$root_mount" ;;
+  ext4) timeout 30s sudo mount -o ro,noload "$root_part" "$root_mount" ;;
+  btrfs) timeout 30s sudo mount -o ro "$root_part" "$root_mount" ;;
 esac
+echo "VERIFY: root filesystem mounted read-only"
 mounted_dirs+=("$root_mount")
 
 manifest="${root_mount}/root/DBAI-CUSTOM-KERNEL-MANIFEST.txt"
+echo "VERIFY: checking manifest and modules release $expected_release"
 [[ -f "$manifest" ]] || { echo "::error::Custom-kernel manifest missing from built image."; exit 1; }
 grep -Fqx "Kernel mode: Custom Kernel" "$manifest" || { echo "::error::Image manifest does not identify Custom Kernel mode."; exit 1; }
 grep -Fqx "Kernel release: $expected_release" "$manifest" || {
@@ -145,10 +157,11 @@ while read -r size_bytes device fstype; do
     vfat|fat|fat32|ext2|ext3|ext4|btrfs|xfs) ;;
     *) continue ;;
   esac
+  echo "VERIFY: inspecting possible boot partition $device ($fstype, $size_bytes bytes)"
   candidate_mount="${tmp_dir}/partition-${candidate_index}"
   mkdir -p "$candidate_mount"
   candidate_index=$((candidate_index + 1))
-  if ! sudo mount -o ro "$device" "$candidate_mount" 2>/dev/null; then
+  if ! timeout 30s sudo mount -o ro "$device" "$candidate_mount" 2>/dev/null; then
     continue
   fi
   kernel_file="$(find "$candidate_mount" -maxdepth 5 -type f \( -name 'Image' -o -name 'Image-*' -o -name 'vmlinuz*' -o -name 'uImage' -o -name 'zImage' \) -print -quit)"
@@ -180,6 +193,7 @@ fi
 [[ -n "$boot_kernel" ]] || { echo "::error::Built image has no kernel image in its boot filesystem."; exit 1; }
 [[ -n "$boot_dtb" ]] || { echo "::error::Built image has no DTB in its boot filesystem."; exit 1; }
 
+echo "VERIFY: boot files and installed kernel modules verified"
 echo "Verified custom-kernel image contents:"
 echo "  Image: $image_path"
 echo "  Root filesystem: $root_part ($root_fstype)"
