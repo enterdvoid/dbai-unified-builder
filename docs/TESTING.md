@@ -15,6 +15,7 @@ bash tests/test-workflow-build-args.sh
 bash tests/test-custom-kernel-residue-cleanup.sh
 bash tests/test-custom-kernel-image-verifier.sh
 bash tests/test-custom-kernel-bundle-integration.sh
+bash tests/test-proxmox-firstlogin-service-user.sh
 ```
 
 The GitHub Actions validation workflow additionally runs actionlint on all workflow YAML files and validates the embedded Docker Compose configuration.
@@ -31,7 +32,7 @@ The GitHub Actions validation workflow additionally runs actionlint on all workf
 
 When fixing a failure in this path, inspect the whole cleanup call chain and all sibling helpers for the same class of issue before rerunning the build. Do not stop after fixing the first shell error.
 
-## 3. Full-build verification
+## Proxmox first-login service-account regression\n\nRun `bash tests/test-proxmox-firstlogin-service-user.sh` when changing either Proxmox extension or the Armbian first-login integration. The test exercises the patched selector against `ceph` and other service-account fixtures, checks idempotence, and requires the build-time patch to fail closed if the upstream selector is unrecognized. Both Proxmox Official and Community images use the same patch helper.\n\n## 3. Full-build verification
 
 After static validation passes, run an actual workflow build with the exact failing configuration when feasible. A static-validation success is not equivalent to a firmware-build success.
 
