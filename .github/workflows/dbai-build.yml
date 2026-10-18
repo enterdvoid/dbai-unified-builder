@@ -7,6 +7,7 @@ on:
       - ".github/workflows/dbai-build.yml"
       # Commit subjects with [dbai-smoke-app] run a single Trixie/ext4
       # Application + Proxmox Official custom-kernel regression build.
+      # This verifies source vmlinuz/uInitrd payloads survive byte-for-byte.
       # All smoke builds skip release publication.
   workflow_dispatch:
     inputs:

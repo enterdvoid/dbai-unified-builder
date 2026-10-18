@@ -6,17 +6,12 @@ source "$repo_root/extensions/dbai-custom-kernel.sh"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
-# Regression: Armbian's SDCARD can be readonly during final-image cleanup.
-# Supplying an explicit target root must replace that image's /boot without
-# trying to assign to or accidentally write through the readonly SDCARD.
+# Regression: Armbian's SDCARD and global version may be readonly.
 # shellcheck disable=SC1091
 source "$repo_root/extensions/dbai-custom-bootfs.sh"
 display_alert() { :; }
 SRC="$tmp/src"
 readonly SDCARD="$tmp/readonly-sdcard"
-# Armbian exposes some generic globals as readonly; cleanup helpers must not
-# shadow or assign these names with local variables. This value is intentionally
-# only read by the test assertion below to silence ShellCheck's unused-global warning.
 # shellcheck disable=SC2034
 readonly version="Armbian-global-version"
 [[ "$version" == "Armbian-global-version" ]]
@@ -24,13 +19,16 @@ target_root="$tmp/final-image"
 mkdir -p "$SRC/userpatches/platform" "$tmp/boot-payload" "$target_root/boot" "$SDCARD/boot"
 printf '%s\n' 'old-default-boot-file' > "$target_root/boot/old-default-file"
 printf '%s\n' 'readonly-sdcard-sentinel' > "$SDCARD/boot/should-not-be-touched"
-printf '%s\n' 'custom-kernel-boot-payload' > "$tmp/boot-payload/Image-6.1.66-DBAI"
+printf '%s\n' 'boot-script-kernel' > "$tmp/boot-payload/vmlinuz-6.1.66-DBAI"
+printf '%s\n' 'original-bundled-u-boot-ramdisk' > "$tmp/boot-payload/uInitrd-6.1.66-DBAI"
 tar -czf "$SRC/userpatches/platform/bootfs_custom_kernel.tar.gz" -C "$tmp/boot-payload" .
 dbai_replace_bootfs_files "$target_root"
-[[ -f "$target_root/boot/Image-6.1.66-DBAI" ]]
+[[ -f "$target_root/boot/vmlinuz-6.1.66-DBAI" ]]
+[[ -f "$target_root/boot/uInitrd-6.1.66-DBAI" ]]
 [[ ! -e "$target_root/boot/old-default-file" ]]
 [[ -f "$SDCARD/boot/should-not-be-touched" ]]
 echo "PASS: custom bootfs replacement accepts an explicit root with readonly SDCARD."
+
 status="$tmp/status"
 cat > "$status" <<'STATUS'
 Package: linux-image-current-meson64
@@ -58,41 +56,44 @@ if printf '%s\n' "${packages[@]}" | grep -Fxq 'linux-headers-current-meson64'; t
   exit 1
 fi
 
+# Simulate an image after the original kernel and ramdisk have been restored.
 root="$tmp/root"
-mkdir -p "$root/boot/dtb-6.18.57-current-meson64"
-touch "$root/boot/vmlinuz-6.18.57-current-meson64" "$root/boot/initrd.img-6.18.57-current-meson64" "$root/boot/System.map-6.18.57-current-meson64"
-touch "$root/boot/Image-6.1.66-DBAI" "$root/boot/uInitrd-6.1.66-DBAI"
-dbai_prune_noncustom_boot_artifacts "$root" "6.1.66-DBAI"
-[[ ! -e "$root/boot/vmlinuz-6.18.57-current-meson64" ]]
-[[ ! -e "$root/boot/initrd.img-6.18.57-current-meson64" ]]
-[[ ! -e "$root/boot/System.map-6.18.57-current-meson64" ]]
-[[ ! -e "$root/boot/dtb-6.18.57-current-meson64" ]]
-[[ -f "$root/boot/Image-6.1.66-DBAI" && -f "$root/boot/uInitrd-6.1.66-DBAI" ]]
-echo "PASS: residual package status and old versioned boot-artifact checks."
-
-# The final verifier must reject stale initramfs files even when the custom kernel exists.
-mkdir -p "$root/etc"
-printf '%s\n' 'custom-kernel-payload' > "$root/boot/Image-6.1.66-DBAI"
-printf '%s\n' 'custom-initramfs-payload' > "$root/boot/initrd.img-6.1.66-DBAI"
-printf '%s\n' 'custom-u-boot-ramdisk-payload' > "$root/boot/uInitrd"
-kernel_sha="$(sha256sum "$root/boot/Image-6.1.66-DBAI" | awk '{print $1}')"
-initrd_sha="$(sha256sum "$root/boot/initrd.img-6.1.66-DBAI" | awk '{print $1}')"
-ramdisk_sha="$(sha256sum "$root/boot/uInitrd" | awk '{print $1}')"
+mkdir -p "$root/boot/dtb" "$root/etc"
+printf '%s\n' 'unchanged-kernel-content' > "$root/boot/vmlinuz-6.1.66-DBAI"
+printf '%s\n' 'unchanged-original-uinitrd-content' > "$root/boot/uInitrd-6.1.66-DBAI"
+printf '%s\n' 'custom-dtb' > "$root/boot/dtb/test.dtb"
+kernel_sha="$(sha256sum "$root/boot/vmlinuz-6.1.66-DBAI" | awk '{print $1}')"
+ramdisk_sha="$(sha256sum "$root/boot/uInitrd-6.1.66-DBAI" | awk '{print $1}')"
 cat > "$root/etc/dbai-custom-kernel-manifest.txt" <<EOF
+Kernel mode: Custom Kernel
 Kernel release: 6.1.66-DBAI
+Boot kernel file: vmlinuz-6.1.66-DBAI
 Boot kernel SHA-256: $kernel_sha
-Initramfs file: initrd.img-6.1.66-DBAI
-Initramfs SHA-256: $initrd_sha
-Boot ramdisk file: uInitrd
+Boot ramdisk file: uInitrd-6.1.66-DBAI
 Boot ramdisk SHA-256: $ramdisk_sha
 EOF
-touch "$root/boot/initrd.img-6.18.57-current-meson64"
+original_kernel_sha="$kernel_sha"
+original_ramdisk_sha="$ramdisk_sha"
+
+printf '%s\n' 'stale-distro-initramfs' > "$root/boot/initrd.img-6.18.57-current-meson64"
 if dbai_verify_custom_kernel_boot_payload "$root" >/dev/null 2>&1; then
-  echo "FAIL: final boot verifier accepted a distro-kernel ramdisk." >&2
+  echo "FAIL: final boot verifier accepted a stale distro initramfs." >&2
   exit 1
 fi
-echo "PASS: final boot verifier rejects a stale distro-kernel ramdisk."
+echo "PASS: final boot verifier rejects a stale distro initramfs."
 dbai_prune_noncustom_boot_artifacts "$root" "6.1.66-DBAI"
 dbai_verify_custom_kernel_boot_payload "$root"
-echo "PASS: custom initramfs and U-Boot ramdisk match their recorded checksums."
+[[ "$(sha256sum "$root/boot/vmlinuz-6.1.66-DBAI" | awk '{print $1}')" == "$original_kernel_sha" ]]
+[[ "$(sha256sum "$root/boot/uInitrd-6.1.66-DBAI" | awk '{print $1}')" == "$original_ramdisk_sha" ]]
+[[ ! -e "$root/boot/initrd.img-6.18.57-current-meson64" ]]
+echo "PASS: original kernel/ramdisk filenames and SHA-256 values survive final verification unchanged."
 
+if declare -F dbai_generate_custom_kernel_initramfs >/dev/null; then
+  echo "FAIL: a helper still regenerates the custom initramfs instead of keeping the supplied ramdisk." >&2
+  exit 1
+fi
+if grep -Eq '/usr/sbin/update-initramfs -c -k|dbai_generate_custom_kernel_initramfs' "$repo_root/extensions/dbai-custom-kernel.sh"; then
+  echo "FAIL: custom-kernel extension still explicitly regenerates/rewrites the supplied ramdisk." >&2
+  exit 1
+fi
+echo "PASS: custom-kernel finalization does not regenerate or rename the supplied ramdisk."

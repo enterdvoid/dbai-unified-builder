@@ -26,7 +26,8 @@ The GitHub Actions validation workflow additionally runs actionlint on all workf
 - `SDCARD` may be readonly in the Armbian build shell. Helpers that need another target root must receive it as an argument; never assign to `SDCARD` to temporarily change the target.
 - Generic names from the Armbian shell (especially `version`) may already be readonly. Use scoped, purpose-specific names such as `boot_artifact_release` rather than shadowing generic globals.
 - Non-custom versioned kernel artifacts must be removed from final `/boot`, including `vmlinuz-*`, `Image-*`, `uImage-*`, `zImage-*`, `initrd.img-*`, `uInitrd-*`, `config-*`, `System.map-*`, and `dtb-*`.
-- The final verifier must reject stale distro initramfs/ramdisk files and confirm the custom kernel, initramfs, and U-Boot ramdisk match the recorded SHA-256 values.
+- The finalizer must restore the bundle-supplied kernel and U-Boot ramdisk without renaming or regenerating them, record their exact filenames and SHA-256 values, and fail if those values change.
+- The final verifier must reject stale versioned distro boot files and any generated `initrd.img-*`; the supplied `uInitrd-<release>` must remain byte-for-byte the same as in the kernel bundle.
 
 When fixing a failure in this path, inspect the whole cleanup call chain and all sibling helpers for the same class of issue before rerunning the build. Do not stop after fixing the first shell error.
 
@@ -38,8 +39,8 @@ For any custom-kernel image, inspect the build log and resulting image to verify
 
 1. The intended kernel release is present in `/boot` and `/lib/modules`.
 2. Versioned distro kernel packages have been purged.
-3. No stale kernel, DTB, initramfs, or U-Boot ramdisk artifacts remain.
-4. The generated custom initramfs and U-Boot ramdisk are present and match the manifest checksums.
+3. No stale versioned kernel, DTB, or distro `initrd.img-*` artifacts remain.
+4. The original bundle kernel and U-Boot ramdisk retain their supplied filenames and match the manifest SHA-256 values; the builder does not regenerate or rename them.
 5. The image filename and selected board/release/profile/filesystem match the workflow inputs.
 
 Record the failing workflow URL, failed step, decisive error line, corrective commit, static test result, and full-build result in the follow-up. Do not mark a bug resolved based only on lint or unit tests.

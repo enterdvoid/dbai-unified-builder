@@ -37,6 +37,29 @@ module_release="$(dbai_detect_kernel_modules_release "${tmp}/modules-list.txt")"
 }
 echo "Detected actual kernel module release from published bundle: ${module_release}"
 
+# The tracked boot configuration drives filenames loaded by U-Boot. Never
+# rename the payloads or create a replacement initramfs in the image builder.
+bootfs_archive="${repo_root}/platform/bootfs_custom_kernel.tar.gz"
+[[ -s "$bootfs_archive" ]] || { echo "FAIL: tracked custom bootfs archive is missing." >&2; exit 1; }
+tar -tzf "$bootfs_archive" | grep -Fxq 'uEnv.txt' || {
+  echo "FAIL: custom bootfs archive is missing uEnv.txt." >&2
+  exit 1
+}
+tar -xOzf "$bootfs_archive" uEnv.txt > "${tmp}/uEnv.txt"
+boot_config_release="$(awk -F= '$1 == "KERNEL" { gsub(/\\r/, "", $2); print $2; exit }' "${tmp}/uEnv.txt")"
+[[ "$boot_config_release" == "$module_release" ]] || {
+  echo "FAIL: bootfs KERNEL release '${boot_config_release:-missing}' differs from bundle modules release '${module_release}'." >&2
+  exit 1
+}
+grep -Fqx 'LINUX=/vmlinuz-${KERNEL}' "${tmp}/uEnv.txt" || {
+  echo "FAIL: uEnv.txt no longer points to the original versioned vmlinuz name." >&2
+  exit 1
+}
+grep -Fqx 'INITRD=/uInitrd-${KERNEL}' "${tmp}/uEnv.txt" || {
+  echo "FAIL: uEnv.txt no longer points to the original versioned U-Boot ramdisk name." >&2
+  exit 1
+}
+
 mapfile -t boot_archives < <(find "${tmp}/bundle" -type f \( -name 'boot-*.tar.gz' -o -name 'boot-*.tar.xz' \) -print)
 if [[ "${#boot_archives[@]}" -ne 1 ]]; then
   echo "FAIL: expected exactly one boot-*.tar.gz/.tar.xz archive, got ${#boot_archives[@]}" >&2
@@ -50,6 +73,19 @@ if ! awk ' /^\// { bad=1 } /(^|\/)\.\.(\/|$)/ { bad=1 } END { exit bad }' "${tmp
 fi
 echo "Boot archive kernel/ramdisk candidates (preserve these names as supplied):"
 grep -Ei '(^|/)(vmlinuz|Image|zImage|uImage|uInitrd|initrd)' "${tmp}/boot-list.txt" || true
+archive_has_path() {
+  local wanted="$1"
+  awk -v wanted="$wanted" '{ path=$0; sub(/^\.\//, "", path); if (path==wanted || path=="boot/" wanted) found=1 } END { exit !found }' "${tmp}/boot-list.txt"
+}
+archive_has_path "vmlinuz-${module_release}" || {
+  echo "FAIL: boot bundle does not supply the original vmlinuz-${module_release} name configured by uEnv.txt." >&2
+  exit 1
+}
+archive_has_path "uInitrd-${module_release}" || {
+  echo "FAIL: boot bundle does not supply the original uInitrd-${module_release} name configured by uEnv.txt." >&2
+  exit 1
+}
+echo "PASS: bootfs version and original kernel/ramdisk filenames agree with the published bundle."
 
 modules_layout="target-root"
 if ! grep -Eq '^([.]/)?lib/modules/[^/]+/' "${tmp}/modules-list.txt"; then
