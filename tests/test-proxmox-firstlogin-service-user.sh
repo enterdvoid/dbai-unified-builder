@@ -12,7 +12,9 @@ source "$repo_root/extensions/dbai-proxmox-firstlogin-fix.sh"
 # it against the final target rootfs after their packages are installed.
 for extension in proxmox-official.sh proxmox-community.sh; do
   extension_file="$repo_root/extensions/$extension"
+  # shellcheck disable=SC2016
   grep -Fq 'source "${SRC}/extensions/dbai-proxmox-firstlogin-fix.sh"' "$extension_file"
+  # shellcheck disable=SC2016
   grep -Fq 'dbai_patch_proxmox_firstlogin_user_detection "${SDCARD}"' "$extension_file"
 done
 grep -Fq 'cp extensions/dbai-proxmox-firstlogin-fix.sh armbian-source/extensions/' "$repo_root/.github/workflows/dbai-build.yml"
