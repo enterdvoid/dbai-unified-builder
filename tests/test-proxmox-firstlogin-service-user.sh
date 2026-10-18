@@ -8,6 +8,15 @@ exit_with_error() { printf 'EXPECTED/TEST ERROR: %s\n' "$*" >&2; }
 # shellcheck disable=SC1091
 source "$repo_root/extensions/dbai-proxmox-firstlogin-fix.sh"
 
+# Regression: both Proxmox variants must install the same helper and invoke
+# it against the final target rootfs after their packages are installed.
+for extension in proxmox-official.sh proxmox-community.sh; do
+  extension_file="$repo_root/extensions/$extension"
+  grep -Fq 'source "${SRC}/extensions/dbai-proxmox-firstlogin-fix.sh"' "$extension_file"
+  grep -Fq 'dbai_patch_proxmox_firstlogin_user_detection "${SDCARD}"' "$extension_file"
+done
+grep -Fq 'cp extensions/dbai-proxmox-firstlogin-fix.sh armbian-source/extensions/' "$repo_root/.github/workflows/dbai-build.yml"
+
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 target_root="$tmp/target"
