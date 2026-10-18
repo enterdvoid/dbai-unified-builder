@@ -556,6 +556,7 @@ jobs:
           mkdir -p armbian-source/extensions armbian-source/tools
           cp extensions/proxmox-official.sh armbian-source/extensions/
           cp extensions/proxmox-community.sh armbian-source/extensions/
+          # Both Proxmox profiles patch the installed Armbian first-login selector after package install.
           cp extensions/dbai-proxmox-firstlogin-fix.sh armbian-source/extensions/
           cp tools/dbai-vm-import armbian-source/tools/
           # Kernel Official may consume Armbian's prebuilt OCI artifact, but must never silently fall back to source compilation.
