@@ -31,7 +31,9 @@ chmod 0755 "$firstlogin"
 dbai_patch_proxmox_firstlogin_user_detection "$target_root"
 bash -n "$firstlogin"
 grep -Fq '# DBAI-FIRSTLOGIN-HUMAN-USER-RECOVERY-BEGIN' "$firstlogin"
+# shellcheck disable=SC2016
 grep -Fq 'existing_user="$(dbai_find_existing_human_user)"' "$firstlogin"
+# shellcheck disable=SC2016
 if grep -Fq 'existing_user=$(awk -F:' "$firstlogin"; then
   echo "FAIL: UID-only selector remains in patched first-login script." >&2
   exit 1
