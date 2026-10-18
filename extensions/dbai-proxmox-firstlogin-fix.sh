@@ -17,10 +17,8 @@ path = Path(sys.argv[1])
 text = path.read_text(encoding="utf-8")
 begin = "# DBAI-FIRSTLOGIN-HUMAN-USER-RECOVERY-BEGIN"
 end = "# DBAI-FIRSTLOGIN-HUMAN-USER-RECOVERY-END"
-old = """local existing_user
-existing_user=$(awk -F: '$3 >= 1000 && $1 != "nobody" {print $1; exit}' /etc/passwd)"""
-new = """local existing_user
-# DBAI-FIRSTLOGIN-HUMAN-USER-RECOVERY-BEGIN
+old = """existing_user=$(awk -F: '$3 >= 1000 && $1 != "nobody" {print $1; exit}' /etc/passwd)"""
+new = """# DBAI-FIRSTLOGIN-HUMAN-USER-RECOVERY-BEGIN
 # Only reuse a complete, interactive human account when recovering an
 # interrupted first-login run. UID alone is not enough: service packages
 # (notably Proxmox's ceph-common dependency) may create UID >= 1000 users.
