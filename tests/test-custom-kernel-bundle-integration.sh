@@ -49,7 +49,8 @@ if ! awk ' /^\// { bad=1 } /(^|\/)\.\.(\/|$)/ { bad=1 } END { exit bad }' "${tmp
   exit 1
 fi
 echo "Boot archive kernel/ramdisk candidates (preserve these names as supplied):"
-grep -E '(^|/)(vmlinuz[^/]*|Image[^/]*|zImage[^/]*|uImage[^/]*|uInitrd[^/]*|initrd[^/]*)
+grep -Ei '(^|/)(vmlinuz|Image|zImage|uImage|uInitrd|initrd)' "${tmp}/boot-list.txt" || true
+
 modules_layout="target-root"
 if ! grep -Eq '^([.]/)?lib/modules/[^/]+/' "${tmp}/modules-list.txt"; then
   modules_layout="release-root"
