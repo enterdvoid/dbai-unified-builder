@@ -50,6 +50,8 @@ journalctl -u pveproxy -u pvedaemon -n 100 --no-pager
 
 Perbaikan source DBAI sekarang memeriksa exit status perintah pengaturan password root dan menampilkan kesalahan jika password ditolak; first-login tidak melanjutkan dengan diam-diam seolah password sudah berhasil ditetapkan.
 
+Perbaikan pemilihan pengguna juga dipasang langsung oleh builder untuk **kedua profil Proxmox: Official dan Community**. Setelah paket Proxmox dipasang, builder memvalidasi dan memperbaiki `/usr/lib/armbian/armbian-firstlogin`: akun hanya boleh dipakai ulang bila UID-nya memenuhi batas pengguna biasa, home-nya tepat `/home/<user>` dan benar-benar ada, serta shell-nya executable dan terdaftar di `/etc/shells` (bukan `nologin`/`false`). Dengan begitu UID `ceph` saja tidak cukup untuk menjadikannya akun onboarding. Jika pola source upstream berubah dan patch tidak bisa diverifikasi, proses build sengaja gagal alih-alih menerbitkan image yang diam-diam masih bermasalah. Image yang sudah jadi perlu dibangun ulang dan di-flash untuk menerima perbaikan ini.
+
 Untuk administrasi Proxmox, akun root PAM digunakan; akun Linux biasa bukan pengganti realm tersebut. Jika halaman tidak terbuka, lanjutkan ke diagnostik pada bagian 4.
 
 ## 2. Kenapa first-login meminta akun bernama `ceph`?
