@@ -37,8 +37,8 @@ module_release="$(dbai_detect_kernel_modules_release "${tmp}/modules-list.txt")"
 }
 echo "Detected actual kernel module release from published bundle: ${module_release}"
 
-# The tracked boot configuration drives filenames loaded by U-Boot. Never
-# rename the payloads or create a replacement initramfs in the image builder.
+# The latest tracked bootfs archive drives the filenames loaded by U-Boot.
+# Never rename the payloads or create a replacement initramfs in the image builder.
 bootfs_archive="${repo_root}/platform/bootfs_custom_kernel.tar.gz"
 [[ -s "$bootfs_archive" ]] || { echo "FAIL: tracked custom bootfs archive is missing." >&2; exit 1; }
 tar -tzf "$bootfs_archive" | grep -Fxq 'uEnv.txt' || {
