@@ -46,6 +46,9 @@ tar -tzf "$bootfs_archive" | grep -Fxq 'uEnv.txt' || {
   exit 1
 }
 tar -xOzf "$bootfs_archive" uEnv.txt > "${tmp}/uEnv.txt"
+# The bootfs archive may use CRLF line endings; normalize only the test copy.
+tr -d '\r' < "${tmp}/uEnv.txt" > "${tmp}/uEnv.normalized.txt"
+mv "${tmp}/uEnv.normalized.txt" "${tmp}/uEnv.txt"
 boot_config_release="$(awk -F= '$1 == "KERNEL" { gsub(/\r/, "", $2); print $2; exit }' "${tmp}/uEnv.txt")"
 [[ "$boot_config_release" == "$module_release" ]] || {
   echo "FAIL: bootfs KERNEL release '${boot_config_release:-missing}' differs from bundle modules release '${module_release}'." >&2
