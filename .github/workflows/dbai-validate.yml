@@ -57,6 +57,8 @@ jobs:
           bash tests/test-desktop-selection.sh
           bash tests/test-workflow-build-args.sh
           bash tests/test-custom-kernel-residue-cleanup.sh
+      - name: Test Proxmox first-login service-account guard
+        run: bash tests/test-proxmox-firstlogin-service-user.sh
       - name: Test custom image verifier disk-space probe
         run: bash tests/test-custom-kernel-image-verifier.sh
       - name: Inspect and test the published DBAI kernel bundle
