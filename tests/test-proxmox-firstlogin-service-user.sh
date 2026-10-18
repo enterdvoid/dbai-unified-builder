@@ -48,6 +48,13 @@ selector="$tmp/selector.sh"
 sed -n '/^dbai_find_existing_human_user() {$/,/^}$/p' "$firstlogin" > "$selector"
 [[ -s "$selector" ]]
 bash -n "$selector"
+runner="$tmp/run-selector.sh"
+cat > "$runner" <<'RUNNER'
+#!/usr/bin/env bash
+set -euo pipefail
+source "$1"
+dbai_find_existing_human_user
+RUNNER
 
 home_root="$tmp/home"
 mkdir -p "$home_root/alice" "$home_root/orphan" "$home_root/nobody"
@@ -66,7 +73,7 @@ PASSWD
 export DBAI_FIRSTLOGIN_PASSWD_FILE="$passwd_all"
 export DBAI_FIRSTLOGIN_HOME_ROOT="$home_root"
 export DBAI_FIRSTLOGIN_SHELLS_FILE="$shells_file"
-selected="$(bash -c 'source "$1"; dbai_find_existing_human_user' _ "$selector")"
+selected="$(bash "$runner" "$selector")"
 [[ "$selected" == "alice" ]] || {
   echo "FAIL: expected alice; selected '$selected'." >&2
   exit 1
@@ -82,7 +89,7 @@ wronghome:x:1002:1002:Service account:/var/lib/wronghome:/bin/bash
 nobody:x:65534:65534:nobody:$home_root/nobody:/bin/bash
 PASSWD
 export DBAI_FIRSTLOGIN_PASSWD_FILE="$passwd_services"
-selected="$(bash -c 'source "$1"; dbai_find_existing_human_user' _ "$selector")"
+selected="$(bash "$runner" "$selector")"
 [[ -z "$selected" ]] || {
   echo "FAIL: expected no candidate for service-only accounts; selected '$selected'." >&2
   exit 1
