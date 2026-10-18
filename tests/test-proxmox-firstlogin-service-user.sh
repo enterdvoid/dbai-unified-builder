@@ -17,6 +17,7 @@ cat > "$firstlogin" <<'FIRSTLOGIN'
 #!/bin/bash
 add_user() {
 local existing_user
+
 existing_user=$(awk -F: '$3 >= 1000 && $1 != "nobody" {print $1; exit}' /etc/passwd)
 if [ -n "${existing_user}" ]; then
     echo "Detected existing user ${existing_user} from previous setup, reusing."
@@ -100,8 +101,15 @@ echo "PASS: service-only account tables do not select any account."
 unknown_root="$tmp/unknown"
 mkdir -p "$unknown_root/usr/lib/armbian"
 printf '%s\n' '#!/bin/bash' 'echo upstream changed' > "$unknown_root/usr/lib/armbian/armbian-firstlogin"
-if dbai_patch_proxmox_firstlogin_user_detection "$unknown_root"; then
+unknown_log="$tmp/unknown-patch.log"
+if dbai_patch_proxmox_firstlogin_user_detection "$unknown_root" >"$unknown_log" 2>&1; then
+  cat "$unknown_log" >&2
   echo "FAIL: unknown upstream selector was accepted without a verified patch." >&2
   exit 1
 fi
+grep -Fq "Failed to patch Armbian first-login user selection safely" "$unknown_log" || {
+  cat "$unknown_log" >&2
+  echo "FAIL: unknown upstream source was rejected for an unexpected reason." >&2
+  exit 1
+}
 echo "PASS: unknown upstream first-login source fails the build-time patch check."
