@@ -349,7 +349,7 @@ actual_boot_ramdisk_sha="$(sha256sum "$boot_ramdisk_path" | awk '{print $1}')"
 if find "$boot_mount" "$root_mount/boot" -maxdepth 1 -type f -name 'initrd.img-*' -print -quit 2>/dev/null | grep -q .; then
   echo "::error::Generated/stale initrd.img-* remains in the image; this bootfs expects the supplied uInitrd file."
   exit 1
-}
+fi
 for boot_scan in "$boot_mount" "$root_mount/boot"; do
   [[ -d "$boot_scan" ]] || continue
   for entry in "$boot_scan"/vmlinuz-* "$boot_scan"/Image-* "$boot_scan"/uImage-* "$boot_scan"/zImage-* "$boot_scan"/initrd.img-* "$boot_scan"/uInitrd-* "$boot_scan"/config-* "$boot_scan"/System.map-* "$boot_scan"/dtb-*; do

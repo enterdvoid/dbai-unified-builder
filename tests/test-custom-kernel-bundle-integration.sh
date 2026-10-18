@@ -46,16 +46,16 @@ tar -tzf "$bootfs_archive" | grep -Fxq 'uEnv.txt' || {
   exit 1
 }
 tar -xOzf "$bootfs_archive" uEnv.txt > "${tmp}/uEnv.txt"
-boot_config_release="$(awk -F= '$1 == "KERNEL" { gsub(/\\r/, "", $2); print $2; exit }' "${tmp}/uEnv.txt")"
+boot_config_release="$(awk -F= '$1 == "KERNEL" { gsub(/\r/, "", $2); print $2; exit }' "${tmp}/uEnv.txt")"
 [[ "$boot_config_release" == "$module_release" ]] || {
   echo "FAIL: bootfs KERNEL release '${boot_config_release:-missing}' differs from bundle modules release '${module_release}'." >&2
   exit 1
 }
-grep -Fqx 'LINUX=/vmlinuz-${KERNEL}' "${tmp}/uEnv.txt" || {
+grep -Fqx "LINUX=/vmlinuz-\${KERNEL}" "${tmp}/uEnv.txt" || {
   echo "FAIL: uEnv.txt no longer points to the original versioned vmlinuz name." >&2
   exit 1
 }
-grep -Fqx 'INITRD=/uInitrd-${KERNEL}' "${tmp}/uEnv.txt" || {
+grep -Fqx "INITRD=/uInitrd-\${KERNEL}" "${tmp}/uEnv.txt" || {
   echo "FAIL: uEnv.txt no longer points to the original versioned U-Boot ramdisk name." >&2
   exit 1
 }
