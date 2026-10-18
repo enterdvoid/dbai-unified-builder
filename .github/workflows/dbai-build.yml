@@ -556,6 +556,7 @@ jobs:
           mkdir -p armbian-source/extensions armbian-source/tools
           cp extensions/proxmox-official.sh armbian-source/extensions/
           cp extensions/proxmox-community.sh armbian-source/extensions/
+          cp extensions/dbai-proxmox-firstlogin-fix.sh armbian-source/extensions/
           cp tools/dbai-vm-import armbian-source/tools/
           # Kernel Official may consume Armbian's prebuilt OCI artifact, but must never silently fall back to source compilation.
           python3 "$GITHUB_WORKSPACE/scripts/guard-kernel-cache-only.py" "$GITHUB_WORKSPACE/armbian-source/lib/functions/artifacts/artifact-kernel.sh" "$KERNEL_MODE"
