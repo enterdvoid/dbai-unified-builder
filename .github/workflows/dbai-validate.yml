@@ -50,6 +50,30 @@ jobs:
           MACHINE_ID_SALT=validation-machine-salt
           EOF
           docker compose --project-directory "$RUNNER_TEMP" --profile hermes-9router --profile lightnvr-go2rtc -f "$RUNNER_TEMP/docker-compose.yml" config --quiet
+      - name: Inspect current custom bootfs archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="platform/bootfs_custom_kernel.tar.gz"
+          echo "=== ARCHIVE ENTRY LIST ==="
+          tar -tvzf "$archive"
+          tmp="$(mktemp -d)"
+          trap 'rm -rf "$tmp"' EXIT
+          tar -xzf "$archive" -C "$tmp"
+          echo "=== TEXT CONFIGS AND BOOT SCRIPTS ==="
+          while IFS= read -r -d '' f; do
+            rel="${f#"$tmp"/}"
+            case "$rel" in
+              *.cmd|*.sh|*.conf|*.ini|*.txt|*.env|*.cfg|*.scr|*boot*|*extlinux*|*uEnv*)
+                echo "--- $rel ---"
+                if grep -Iq . "$f"; then
+                  sed -n '1,240p' "$f"
+                else
+                  strings -a "$f" | sed -n '1,240p'
+                fi
+                ;;
+            esac
+          done < <(find "$tmp" -type f -print0)
       - name: Test input, kernel headers, desktop compatibility, and build arguments
         run: |
           bash tests/test-validate-inputs.sh
