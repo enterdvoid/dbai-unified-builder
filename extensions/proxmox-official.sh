@@ -69,6 +69,8 @@ PVE_DISABLE_ENTERPRISE
 	# Shared image-import wizard for local files, URLs, common virtual disk formats and archives.
 	chroot_sdcard_apt_get_install curl wget whiptail unzip xz-utils zstd gzip bzip2 python3
 	run_host_command_logged install -m 0755 tools/dbai-vm-import "${SDCARD}/usr/local/sbin/dbai-vm-import"
+	source "${SRC}/extensions/dbai-proxmox-firstlogin-fix.sh"
+	dbai_patch_proxmox_firstlogin_user_detection "${SDCARD}"
 	dbai_proxmox_add_firstboot_hostname_service
 }
 
