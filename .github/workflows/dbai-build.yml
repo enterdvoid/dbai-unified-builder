@@ -524,6 +524,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
           echo "Using $SOURCE_REPO@$SOURCE_SHA for $BOARD"
 
+      # [dbai-smoke-app] Verify MOTD and dbai-apps installation in a real Proxmox Official image.
       - name: Add DBAI build extensions
         shell: bash
         run: |
