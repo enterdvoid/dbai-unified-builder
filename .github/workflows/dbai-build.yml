@@ -524,8 +524,6 @@ jobs:
           } >> "$GITHUB_OUTPUT"
           echo "Using $SOURCE_REPO@$SOURCE_SHA for $BOARD"
 
-      # [dbai-smoke-app] Verify MOTD and dbai-apps installation in a real Proxmox Official image.
-      # Re-run on the final WAN-aware MOTD revision for end-to-end image validation.
       - name: Add DBAI build extensions
         shell: bash
         run: |
@@ -538,9 +536,8 @@ jobs:
           cp extensions/dbai-custom-bootfs.sh armbian-source/userpatches/extensions/
           cp extensions/dbai-openbox.sh armbian-source/userpatches/extensions/
           cp extensions/dbai-branding.sh armbian-source/userpatches/extensions/
-          cp extensions/dbai-motd.sh armbian-source/userpatches/extensions/
           mkdir -p armbian-source/userpatches/tools
-          cp scripts/dbai-motd.sh scripts/dbai-apps.sh armbian-source/userpatches/tools/
+          cp scripts/patch-armbian-motd.py scripts/dbai-apps.sh armbian-source/userpatches/tools/
           if [[ "$KERNEL_MODE" == "Custom Kernel" || "$KERNEL_MODE" == "Recompile Custom Kernel" ]]; then
             mkdir -p armbian-source/userpatches/platform
             cp "$GITHUB_WORKSPACE/platform/bootfs_custom_kernel.tar.gz" armbian-source/userpatches/platform/
@@ -666,7 +663,7 @@ jobs:
             *) echo "::error::Unknown profile $PROFILE"; exit 2 ;;
           esac
 
-          EXTENSIONS=(dbai-branding dbai-motd)
+          EXTENSIONS=(dbai-branding)
           if [[ "$DESKTOP_OPENBOX" == "yes" ]]; then
             EXTENSIONS+=(dbai-openbox)
           fi
