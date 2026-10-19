@@ -38,6 +38,26 @@ The firmware build step must export `COLUMNS=80` and `LINES=24` before running `
 
 A passing static test confirms the workaround is wired in; it does not replace a full Bullseye image build. Bullseye is currently limited to Minimal and Server matrix rows in the unified builder; application and desktop rows are deliberately not generated for this end-of-service release.
 
+## DBAI MOTD and modular application status
+
+Every image profile enables the `dbai-motd` extension. It installs `/etc/update-motd.d/05-dbai-motd` and disables the duplicate Armbian header/IP/sysinfo/tips/commands sections through the supported `MOTD_DISABLE` setting. The banner uses terminal text, ANSI colors, an optional `figlet` logo, local system files, `uname -r`, and the device-tree model/compatible values to report the active kernel, board model, detected SoC, OS release, cached APT update count, LAN IPs, load, memory, temperature, uptime, logged-in users, and root filesystem usage. If a field cannot be read, it falls back to an unavailable value rather than guessing. It makes no WAN lookup/network requests during login; OpenSSH remains responsible for the separate “Last login” line.
+
+The modular `dbai-apps` command checks application state only when invoked, not on every login. For example:
+
+```bash
+dbai-apps list
+dbai-apps proxmox
+dbai-apps hermes
+dbai-apps 9router
+```
+
+The supported state labels are `running`, `stopped`, and `not installed`. The checks use local package/service/process/container state; 9router, LightNVR and the integrated go2rtc status use the DBAI Compose profile/container information. Tests:
+
+```bash
+bash tests/test-dbai-motd.sh
+bash tests/test-dbai-apps.sh
+```
+
 ## 3. Full-build verification
 
 After static validation passes, run an actual workflow build with the exact failing configuration when feasible. A static-validation success is not equivalent to a firmware-build success.
