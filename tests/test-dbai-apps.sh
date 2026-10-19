@@ -48,9 +48,6 @@ grep -Fq 'Status:      stopped' <<< "$nvr"
 go2rtc="$(run_app go2rtc)"
 grep -Fq 'Status:      stopped' <<< "$go2rtc"
 
-openbox="$(run_app openbox)"
-grep -Fq 'Status:      running' <<< "$openbox"
-
 ha="$(run_app homeassistant)"
 grep -Fq 'Status:      not installed' <<< "$ha"
 
@@ -66,11 +63,21 @@ list="$(run_app list)"
 grep -Fq 'Proxmox VE Official' <<< "$list"
 grep -Fq 'LightNVR' <<< "$list"
 grep -Fq 'Use: dbai-apps <name>' <<< "$list"
+if grep -Eq '^Openbox WM[[:space:]]' <<< "$list"; then
+  echo 'FAIL: Openbox WM must not be listed by dbai-apps.' >&2
+  exit 1
+fi
 
 if run_app unknown-app >"$tmp/unknown.out" 2>&1; then
   echo 'FAIL: unknown app name should return a non-zero status.' >&2
   exit 1
 fi
 grep -Fq 'Unknown application' "$tmp/unknown.out"
+
+if run_app openbox >"$tmp/openbox.out" 2>&1; then
+  echo 'FAIL: Openbox must not be registered as a dbai-apps application.' >&2
+  exit 1
+fi
+grep -Fq 'Unknown application' "$tmp/openbox.out"
 
 echo 'PASS: dbai-apps reports running/stopped/not installed from local package, service, profile, process and container state.'

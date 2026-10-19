@@ -105,7 +105,63 @@ case "$root_fstype" in
   btrfs) timeout 30s sudo mount -o ro "$root_part" "$root_mount" ;;
 esac
 echo "VERIFY: root filesystem mounted read-only"
-mounted_dirs+=("$root_mount")
+mounted_dirs+=("${root_mount}")
+
+# Verify every Triad archive file/link reached the final rootfs under /usr/lib/firmware.
+builder_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+triad_archive="${builder_root}/platform/triad-firmware.tar.gz"
+[[ -s "$triad_archive" ]] || { echo "::error::triad-firmware.tar.gz is missing from the builder checkout."; exit 1; }
+triad_listing="${tmp_dir}/triad-firmware-list.txt"
+tar -tzf "$triad_archive" > "$triad_listing" || { echo "::error::triad-firmware.tar.gz is invalid."; exit 1; }
+if ! awk ' /^\// { bad=1 } /(^|\/)\.\.(\/|$)/ { bad=1 } END { exit bad }' "$triad_listing"; then
+  echo "::error::Unsafe path in triad-firmware.tar.gz."
+  exit 1
+fi
+triad_stage="${tmp_dir}/triad-firmware-unpacked"
+mkdir -p "$triad_stage"
+tar --no-same-owner --no-same-permissions -xzf "$triad_archive" -C "$triad_stage"
+triad_payload="$triad_stage"
+if [[ -d "$triad_stage/usr/lib/firmware" ]]; then
+  triad_payload="$triad_stage/usr/lib/firmware"
+elif [[ -d "$triad_stage/lib/firmware" ]]; then
+  triad_payload="$triad_stage/lib/firmware"
+elif [[ -d "$triad_stage/firmware" ]]; then
+  triad_payload="$triad_stage/firmware"
+fi
+firmware_dest="${root_mount}/usr/lib/firmware"
+[[ -d "$firmware_dest" && ! -L "$firmware_dest" ]] || {
+  echo "::error::Final image is missing a regular /usr/lib/firmware directory."
+  exit 1
+}
+triad_count=0
+while IFS= read -r -d '' triad_source; do
+  triad_relative="${triad_source#"$triad_payload"/}"
+  triad_destination="${firmware_dest}/${triad_relative}"
+  if [[ -L "$triad_source" ]]; then
+    [[ -L "$triad_destination" ]] || {
+      echo "::error::Triad firmware symlink is missing in the final image: /usr/lib/firmware/${triad_relative}."
+      exit 1
+    }
+    [[ "$(readlink "$triad_source")" == "$(readlink "$triad_destination")" ]] || {
+      echo "::error::Triad firmware symlink target changed in the final image: /usr/lib/firmware/${triad_relative}."
+      exit 1
+    }
+  elif [[ -f "$triad_source" ]]; then
+    [[ -f "$triad_destination" && ! -L "$triad_destination" ]] || {
+      echo "::error::Triad firmware file is missing in the final image: /usr/lib/firmware/${triad_relative}."
+      exit 1
+    }
+    cmp -s "$triad_source" "$triad_destination" || {
+      echo "::error::Triad firmware contents differ in the final image: /usr/lib/firmware/${triad_relative}."
+      exit 1
+    }
+  else
+    continue
+  fi
+  triad_count=$((triad_count + 1))
+done < <(find "$triad_payload" \( -type f -o -type l \) -print0)
+(( triad_count > 0 )) || { echo "::error::triad-firmware.tar.gz contains no files or symlinks."; exit 1; }
+echo "VERIFY: all ${triad_count} Triad firmware files/links match the archive under /usr/lib/firmware"
 
 modules_dir="${root_mount}/lib/modules/${expected_release}"
 [[ -d "$modules_dir" ]] || {

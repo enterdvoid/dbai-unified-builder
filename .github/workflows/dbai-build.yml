@@ -543,7 +543,7 @@ jobs:
           cp scripts/patch-armbian-motd.py scripts/dbai-apps.sh armbian-source/userpatches/tools/
           cp extensions/dbai-platform-overlays.sh armbian-source/userpatches/extensions/
           mkdir -p armbian-source/userpatches/platform
-          cp "$GITHUB_WORKSPACE/platform/u-boot.tar.gz" "$GITHUB_WORKSPACE/platform/usr.tar.gz" armbian-source/userpatches/platform/
+          cp "$GITHUB_WORKSPACE/platform/u-boot.tar.gz" "$GITHUB_WORKSPACE/platform/usr.tar.gz" "$GITHUB_WORKSPACE/platform/triad-firmware.tar.gz" armbian-source/userpatches/platform/
           # Set the root filesystem UUID at mkfs time, before fstab and boot config are generated.
           # The mkfs-time assertion in the patched Armbian source verifies this for every image.
           python3 "$GITHUB_WORKSPACE/scripts/patch-rootfs-uuid.py" "$GITHUB_WORKSPACE/armbian-source/lib/functions/image/partitioning.sh"

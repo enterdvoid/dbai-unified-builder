@@ -293,21 +293,6 @@ detect_go2rtc() {
   fi
 }
 
-detect_openbox() {
-  local installed=no running=no
-  package_installed openbox && installed=yes
-  unit_exists openbox.service && installed=yes
-  process_active openbox && running=yes
-  process_active openbox-session && running=yes
-  if [[ "$installed" == no ]]; then
-    set_result 'Openbox WM' 'not installed' 'Package openbox was not found.'
-  elif [[ "$running" == yes ]]; then
-    set_result 'Openbox WM' 'running' 'An Openbox session process is active.'
-  else
-    set_result 'Openbox WM' 'stopped' 'Openbox is installed, but no Openbox session process is active.'
-  fi
-}
-
 detect_app() {
   local app="${1,,}"
   case "$app" in
@@ -320,7 +305,6 @@ detect_app() {
     9router|router9) detect_9router ;;
     lightnvr|light-nvr) detect_lightnvr ;;
     go2rtc) detect_go2rtc ;;
-    openbox|openbox-wm) detect_openbox ;;
     proxmox-official)
       detect_proxmox
       if [[ "$RESULT_STATUS" != 'not installed' && "$RESULT_NAME" != 'Proxmox VE Official' ]]; then
@@ -335,7 +319,7 @@ detect_app() {
       ;;
     *)
       printf 'Unknown application: %s\n' "$1" >&2
-      printf 'Valid names: proxmox, docker, homeassistant, openmediavault, casaos, hermes, 9router, lightnvr, go2rtc, openbox\n' >&2
+      printf 'Valid names: proxmox, docker, homeassistant, openmediavault, casaos, hermes, 9router, lightnvr, go2rtc\n' >&2
       return 2
       ;;
   esac
@@ -364,7 +348,7 @@ print_list() {
   local app color
   printf 'DBAI application status (local system check)\n'
   printf '%s%-22s %-15s%s\n' "$C_DIM" 'APPLICATION' 'STATUS' "$C_RESET"
-  for app in proxmox docker homeassistant openmediavault casaos hermes 9router lightnvr go2rtc openbox; do
+  for app in proxmox docker homeassistant openmediavault casaos hermes 9router lightnvr go2rtc; do
     detect_app "$app" || continue
     case "$RESULT_STATUS" in
       running) color="$C_GREEN" ;;
@@ -379,7 +363,7 @@ print_list() {
 case "${1:-list}" in
   list|--list|-l) print_list ;;
   --help|-h|help)
-    printf 'Usage: dbai-apps [list|proxmox|docker|homeassistant|openmediavault|casaos|hermes|9router|lightnvr|go2rtc|openbox]\n'
+    printf 'Usage: dbai-apps [list|proxmox|docker|homeassistant|openmediavault|casaos|hermes|9router|lightnvr|go2rtc]\n'
     printf 'Checks local package/service/process/container state; no network requests are made.\n'
     ;;
   *) print_one "$1" ;;

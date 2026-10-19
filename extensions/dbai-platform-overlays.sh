@@ -1,6 +1,6 @@
 # shellcheck shell=bash
-# Install the platform boot filesystem and Ophub userspace payloads into each image.
-# Runs before custom-kernel hooks; custom-kernel modes may intentionally replace /boot later.
+# Install platform boot files, Ophub userspace tools, and Triad firmware into each image.
+# Custom-kernel handling rebuilds /boot later by merging U-Boot, custom bootfs, and kernel payloads.
 
 function dbai_platform_validate_archive() {
 	local archive="${1}"
@@ -18,9 +18,11 @@ function extension_prepare_config__dbai_platform_overlays() {
 	local platform_dir="${SRC}/userpatches/platform"
 	local uboot_archive="${platform_dir}/u-boot.tar.gz"
 	local usr_archive="${platform_dir}/usr.tar.gz"
+	local triad_archive="${platform_dir}/triad-firmware.tar.gz"
 
 	dbai_platform_validate_archive "$uboot_archive"
 	dbai_platform_validate_archive "$usr_archive"
+	dbai_platform_validate_archive "$triad_archive"
 
 	if ! tar -tzf "$usr_archive" | awk '
 		function clean(path) {
@@ -49,13 +51,17 @@ function pre_customize_image__100_dbai_platform_overlays() {
 	local platform_dir="${SRC}/userpatches/platform"
 	local uboot_archive="${platform_dir}/u-boot.tar.gz"
 	local usr_archive="${platform_dir}/usr.tar.gz"
+	local triad_archive="${platform_dir}/triad-firmware.tar.gz"
 	local stage_dir="${SRC}/cache/dbai-platform-overlays"
 	local boot_stage="${stage_dir}/boot-unpacked"
 	local usr_stage="${stage_dir}/usr-unpacked"
+	local triad_stage="${stage_dir}/triad-unpacked"
 	local boot_dir="${SDCARD}/boot"
 	local usr_dir="${SDCARD}/usr"
+	local firmware_dir="${SDCARD}/usr/lib/firmware"
 	local boot_payload="$boot_stage"
 	local usr_payload="$usr_stage"
+	local triad_payload="$triad_stage"
 	local relative file destination
 	local -a executable_paths=(
 		"bin/ampart"
@@ -85,11 +91,14 @@ function pre_customize_image__100_dbai_platform_overlays() {
 
 	dbai_platform_validate_archive "$uboot_archive"
 	dbai_platform_validate_archive "$usr_archive"
+	dbai_platform_validate_archive "$triad_archive"
 	[[ ! -L "$boot_dir" ]] || exit_with_error "Refusing to replace a symlink at image /boot"
 	[[ ! -L "$usr_dir" ]] || exit_with_error "Refusing to overlay a symlink at image /usr"
+	[[ ! -L "${SDCARD}/usr/lib" ]] || exit_with_error "Refusing to overlay firmware through a symlink at image /usr/lib"
+	[[ ! -L "$firmware_dir" ]] || exit_with_error "Refusing to overlay firmware through a symlink at image /usr/lib/firmware"
 
 	rm -rf -- "$stage_dir"
-	mkdir -p "$boot_stage" "$usr_stage" "$boot_dir" "$usr_dir"
+	mkdir -p "$boot_stage" "$usr_stage" "$triad_stage" "$boot_dir" "$usr_dir" "$firmware_dir"
 
 	# Normalize either a boot-root tarball or an archive with one enclosing boot/ directory.
 	tar --no-same-owner --no-same-permissions -xzf "$uboot_archive" -C "$boot_stage"
@@ -117,6 +126,23 @@ function pre_customize_image__100_dbai_platform_overlays() {
 	display_alert "DBAI platform userspace" "Overlaying usr.tar.gz into image /usr" "info"
 	cp -a "${usr_payload}/." "$usr_dir/"
 
+	# Triad firmware archives may be rooted directly at the firmware tree or
+	# wrapped in firmware/, lib/firmware/, or usr/lib/firmware/.
+	tar --no-same-owner --no-same-permissions -xzf "$triad_archive" -C "$triad_stage"
+	if [[ -d "$triad_stage/usr/lib/firmware" ]]; then
+		triad_payload="$triad_stage/usr/lib/firmware"
+	elif [[ -d "$triad_stage/lib/firmware" ]]; then
+		triad_payload="$triad_stage/lib/firmware"
+	elif [[ -d "$triad_stage/firmware" ]]; then
+		triad_payload="$triad_stage/firmware"
+	fi
+	find "$triad_payload" -mindepth 1 -print -quit | grep -q . || exit_with_error "triad-firmware.tar.gz contains no firmware payload"
+	display_alert "DBAI Triad firmware" "Overlaying triad-firmware.tar.gz into image /usr/lib/firmware" "info"
+	cp -a "${triad_payload}/." "$firmware_dir/"
+	local triad_file_count
+	triad_file_count="$(find "$triad_payload" -type f -print | wc -l | tr -d '[:space:]')"
+	[[ "$triad_file_count" =~ ^[0-9]+$ && "$triad_file_count" -gt 0 ]] || exit_with_error "triad-firmware.tar.gz contains no regular firmware files"
+
 	# Clear execute bits on archive-supplied regular files, then mark only known
 	# programs and scripts executable; configuration and list files stay data.
 	while IFS= read -r -d '' file; do
@@ -134,5 +160,5 @@ function pre_customize_image__100_dbai_platform_overlays() {
 	done
 
 	rm -rf -- "$stage_dir"
-	display_alert "DBAI platform payloads" "Installed u-boot.tar.gz and usr.tar.gz; marked the 23 designated programs/scripts executable" "info"
+	display_alert "DBAI platform payloads" "Installed U-Boot files, overlaid usr.tar.gz, installed ${triad_file_count} Triad firmware files, and marked the 23 designated programs/scripts executable" "info"
 }

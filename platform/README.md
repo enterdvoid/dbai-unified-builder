@@ -2,9 +2,10 @@
 
 The builder stages and installs these platform archives in every firmware build:
 
-- **`u-boot.tar.gz`** — replaces the generated image's `/boot` contents with the archive payload. The archive may contain boot-partition files at its root or a single enclosing `boot/` directory. This is applied before custom-kernel hooks.
+- **`u-boot.tar.gz`** — supplies the base `/boot` contents. The archive may contain files at its root or inside one enclosing `boot/` directory. For custom-kernel builds it is applied again during final bootfs assembly so its files are not lost during later kernel hooks.
+- **`bootfs_custom_kernel.tar.gz`** — used only by **Custom Kernel** and **Recompile Custom Kernel**. Its configuration is layered over the U-Boot base; matching paths such as `uEnv.txt` use the custom-kernel version. Kernel, ramdisk, and DTB files are then applied and verified.
 - **`usr.tar.gz`** — overlays its `bin/`, `sbin/`, and `share/` trees into the image's `/usr/`. The archive may store those directories directly or inside one leading `usr/` directory. Existing unrelated `/usr` files are preserved.
-- **`bootfs_custom_kernel.tar.gz`** — used only by **Custom Kernel** and **Recompile Custom Kernel**. It replaces the boot filesystem as part of custom-kernel handling, after the generic `u-boot.tar.gz` overlay, so the selected custom boot files take precedence.
+- **`triad-firmware.tar.gz`** — overlays firmware files into `/usr/lib/firmware/`. It accepts a firmware-root archive or a single `firmware/`, `lib/firmware/`, or `usr/lib/firmware/` wrapper. Existing firmware files not present in the archive are preserved.
 
 The installer sets executable mode only for these 23 files from `usr.tar.gz`:
 

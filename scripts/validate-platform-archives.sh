@@ -20,8 +20,16 @@ validate_archive() {
 
 uboot_archive="$platform_dir/u-boot.tar.gz"
 usr_archive="$platform_dir/usr.tar.gz"
+triad_archive="$platform_dir/triad-firmware.tar.gz"
 validate_archive "$uboot_archive"
 validate_archive "$usr_archive"
+validate_archive "$triad_archive"
+
+# Keep the real archive layout visible in CI logs so extraction regressions are diagnosable.
+for archive in "$uboot_archive" "$triad_archive"; do
+	echo "Platform archive entry sample: $(basename "$archive")"
+	tar -tzf "$archive" | awk 'NR <= 24 { print "  " $0 }'
+done
 
 if ! tar -tzf "$usr_archive" | awk '
 	function clean(path) {
@@ -88,5 +96,5 @@ for path in "${executables[@]}"; do
 	fi
 done
 
-echo "PASS: u-boot.tar.gz and usr.tar.gz are valid, path-safe platform archives."
+echo "PASS: u-boot.tar.gz, usr.tar.gz, and triad-firmware.tar.gz are valid, path-safe platform archives."
 echo "PASS: usr.tar.gz contains all 23 required executable program/script paths."
