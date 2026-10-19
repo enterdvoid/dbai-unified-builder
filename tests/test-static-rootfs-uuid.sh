@@ -22,7 +22,7 @@ function make_test_rootfs() {
     local LOOP="/dev/loop-test"
     local rootpart=2
     local physical_rootdevice="$rootdevice"
-    run_host_command_logged mkfs.${mkfs[$ROOTFS_TYPE]} ${mkopts[$ROOTFS_TYPE]} ${mkopts_label[$ROOTFS_TYPE]:+${mkopts_label[$ROOTFS_TYPE]}"$ROOT_FS_LABEL"} "$rootdevice"
+    run_host_command_logged mkfs.${mkfs[$ROOTFS_TYPE]} ${mkopts[$ROOTFS_TYPE]} ${mkopts_label[$ROOTFS_TYPE]:+${mkopts_label[$ROOTFS_TYPE]}"$ROOT_FS_LABEL"} "${rootdevice}"
     root_part_uuid="$(blkid -s UUID -o value "${LOOP}p${rootpart}")"
     declare -g -r ROOT_PART_UUID="${root_part_uuid}"
     rootfs="UUID=$(blkid -s UUID -o value "$rootdevice")"
