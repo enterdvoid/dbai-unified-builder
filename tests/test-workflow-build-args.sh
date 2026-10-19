@@ -22,6 +22,14 @@ grep -Fq 'cp scripts/patch-armbian-motd.py scripts/dbai-apps.sh armbian-source/u
   echo "FAIL: workflow must stage the in-place Armbian MOTD patcher and app-status CLI." >&2
   exit 1
 }
+grep -Fq 'scripts/patch-rootfs-uuid.py' "$workflow" || {
+  echo "FAIL: build workflow must patch Armbian's rootfs mkfs command with the fixed UUID." >&2
+  exit 1
+}
+grep -Fq '19450817-1945-4817-a817-194508170817' "$repo_root/scripts/patch-rootfs-uuid.py" || {
+  echo "FAIL: fixed rootfs UUID changed unexpectedly." >&2
+  exit 1
+}
 if grep -Fq 'MOTD_DISABLE' "$repo_root/extensions/dbai-branding.sh"; then
   echo "FAIL: DBAI should preserve the stock Armbian MOTD sections instead of disabling them." >&2
   exit 1
