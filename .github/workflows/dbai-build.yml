@@ -8,7 +8,8 @@ on:
       # Commit subjects with [dbai-smoke-app] run a single Trixie/ext4
       # Application + Proxmox Official custom-kernel regression build.
       # This verifies original vmlinuz/uInitrd bytes and their manifest checksums.
-      # All smoke builds skip release publication.
+      # Smoke runs are regression-only and never publish releases; the [dbai-smoke-app]
+      # path validates the current custom-kernel bundle end-to-end.
   workflow_dispatch:
     inputs:
       board:
