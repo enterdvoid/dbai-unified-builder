@@ -49,16 +49,20 @@ tar -xOzf "$bootfs_archive" uEnv.txt > "${tmp}/uEnv.txt"
 # The bootfs archive may use CRLF line endings; normalize only the test copy.
 tr -d '\r' < "${tmp}/uEnv.txt" > "${tmp}/uEnv.normalized.txt"
 mv "${tmp}/uEnv.normalized.txt" "${tmp}/uEnv.txt"
-# This archive is a template: the build rewrites KERNEL/LINUX/INITRD to
-# match the actual module release and the unmodified kernel/ramdisk filenames.
+# The tracked bootfs uses KERNEL-derived filenames; LINUX/INITRD overrides
+# are optional, but duplicates are ambiguous and must be rejected.
 for variable in KERNEL LINUX INITRD; do
-  assignment_count="$(awk -F= -v key="$variable" '$1 == key { count++ } END { print count+0 }' "${tmp}/uEnv.txt")"
-  [[ "$assignment_count" == "1" ]] || {
-    echo "FAIL: bootfs uEnv.txt must contain exactly one $variable assignment (found $assignment_count)." >&2
-    echo "Actual tracked uEnv.txt:" >&2
-    sed -n '1,120p' "${tmp}/uEnv.txt" >&2
+  assignment_count="$(awk -F= -v key="$variable" '$1 ~ "^[[:space:]]*" key "[[:space:]]*$" { count++ } END { print count+0 }' "${tmp}/uEnv.txt")"
+  if [[ "$variable" == "KERNEL" ]]; then
+    [[ "$assignment_count" == "1" ]] || {
+      echo "FAIL: bootfs uEnv.txt must contain exactly one KERNEL assignment (found $assignment_count)." >&2
+      sed -n '1,120p' "${tmp}/uEnv.txt" >&2
+      exit 1
+    }
+  elif (( assignment_count > 1 )); then
+    echo "FAIL: bootfs uEnv.txt has duplicate optional $variable assignments." >&2
     exit 1
-  }
+  fi
 done
 
 mapfile -t boot_archives < <(find "${tmp}/bundle" -type f \( -name 'boot-*.tar.gz' -o -name 'boot-*.tar.xz' \) -print)
@@ -88,9 +92,13 @@ archive_has_path "uInitrd-${module_release}" || {
 }
 dbai_sync_custom_kernel_uenv "${tmp}/uEnv.txt" "$module_release" "vmlinuz-${module_release}" "uInitrd-${module_release}"
 grep -Fqx "KERNEL=$module_release" "${tmp}/uEnv.txt"
-grep -Fqx "LINUX=/vmlinuz-${module_release}" "${tmp}/uEnv.txt"
-grep -Fqx "INITRD=/uInitrd-${module_release}" "${tmp}/uEnv.txt"
-echo "PASS: bootfs template is synchronized to the published kernel/ramdisk filenames without renaming either payload."
+linux_count="$(awk -F= '$1 ~ /^[[:space:]]*LINUX[[:space:]]*$/ { count++ } END { print count+0 }' "${tmp}/uEnv.txt")"
+initrd_count="$(awk -F= '$1 ~ /^[[:space:]]*INITRD[[:space:]]*$/ { count++ } END { print count+0 }' "${tmp}/uEnv.txt")"
+if [[ "$linux_count" == "1" ]]; then grep -Fqx "LINUX=/vmlinuz-${module_release}" "${tmp}/uEnv.txt"; fi
+if [[ "$initrd_count" == "1" ]]; then grep -Fqx "INITRD=/uInitrd-${module_release}" "${tmp}/uEnv.txt"; fi
+[[ "$linux_count" == "0" || "$linux_count" == "1" ]]
+[[ "$initrd_count" == "0" || "$initrd_count" == "1" ]]
+echo "PASS: bootfs KERNEL assignment and optional explicit paths match the published kernel/ramdisk filenames without renaming either payload."
 
 modules_layout="target-root"
 if ! grep -Eq '^([.]/)?lib/modules/[^/]+/' "${tmp}/modules-list.txt"; then
