@@ -32,7 +32,13 @@ The GitHub Actions validation workflow additionally runs actionlint on all workf
 
 When fixing a failure in this path, inspect the whole cleanup call chain and all sibling helpers for the same class of issue before rerunning the build. Do not stop after fixing the first shell error.
 
-## Proxmox first-login service-account regression\n\nRun `bash tests/test-proxmox-firstlogin-service-user.sh` when changing either Proxmox extension or the Armbian first-login integration. The test exercises the patched selector against `ceph` and other service-account fixtures, checks idempotence, and requires the build-time patch to fail closed if the upstream selector is unrecognized. Both Proxmox Official and Community images use the same patch helper.\n\n## 3. Full-build verification
+## Proxmox first-login service-account regression\n\nRun `bash tests/test-proxmox-firstlogin-service-user.sh` when changing either Proxmox extension or the Armbian first-login integration. The test exercises the patched selector against `ceph` and other service-account fixtures, checks idempotence, and requires the build-time patch to fail closed if the upstream selector is unrecognized. Both Proxmox Official and Community images use the same patch helper.\n\n## Debian Bullseye package-install environment
+
+The firmware build step must export `COLUMNS=80` and `LINES=24` before running `compile.sh`. GitHub Actions builds do not guarantee an interactive TTY, and package maintainer scripts may fail or behave incorrectly when terminal dimensions are empty. The workflow-argument regression test checks that both exports remain present. This guards the historical fix from `enterdvoid/build` commit [051b217](https://github.com/enterdvoid/build/commit/051b21779563585cf5c8a4a57929e816530d547c).
+
+A passing static test confirms the workaround is wired in; it does not replace a full Bullseye image build. Bullseye is currently limited to Minimal and Server matrix rows in the unified builder; application and desktop rows are deliberately not generated for this end-of-service release.
+
+## 3. Full-build verification
 
 After static validation passes, run an actual workflow build with the exact failing configuration when feasible. A static-validation success is not equivalent to a firmware-build success.
 
