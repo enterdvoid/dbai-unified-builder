@@ -13,6 +13,7 @@ function post_repo_customize_image__dbai_motd() {
 	local apps_source="${SRC}/userpatches/tools/dbai-apps.sh"
 	local motd_dir="${SDCARD}/etc/update-motd.d"
 	local default_file="${SDCARD}/etc/default/armbian-motd"
+	local dbai_default_file="${SDCARD}/etc/default/dbai-motd"
 
 	[[ -s "$renderer_source" ]] || exit_with_error "DBAI MOTD renderer not found: $renderer_source"
 	[[ -s "$apps_source" ]] || exit_with_error "DBAI application status script not found: $apps_source"
@@ -33,5 +34,14 @@ DBAI_MOTD_CONFIG
 	fi
 
 	chmod 0644 "$default_file"
+
+	# Keep the legacy banner's WAN IP information, but cap concurrent IPv4/IPv6 lookups.
+	# Users may set DBAI_MOTD_WAN_CHECK=0 here to avoid any external request at login.
+	touch "$dbai_default_file"
+	if ! grep -Eq '^[[:space:]]*DBAI_MOTD_WAN_CHECK[[:space:]]*=' "$dbai_default_file"; then
+		printf 'DBAI_MOTD_WAN_CHECK=1\\n' >> "$dbai_default_file"
+	fi
+	chmod 0644 "$dbai_default_file"
+
 	display_alert "DBAI MOTD installed" "Dynamic board/kernel/system details and dbai-apps CLI enabled; duplicate Armbian sections disabled" "info"
 }
