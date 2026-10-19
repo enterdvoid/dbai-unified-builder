@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Apply DBAI2K26 vendor branding to the generated target image release metadata.
+# Apply DBAI-2K26 branding to stock Armbian metadata and MOTD scripts.
 # shellcheck shell=bash
 
 function post_repo_customize_image__dbai_branding() {
@@ -18,8 +18,9 @@ except FileNotFoundError:
     lines = []
 
 branding = {
-    "VENDOR": "DBAI2K26",
-    "VENDORPRETTYNAME": "DBAI2K26",
+    "VENDOR": "DBAI-2K26",
+    "VENDORPRETTYNAME": "DBAI-2K26",
+    "VENDORCOLOR": "255;55;55",
 }
 seen = set()
 updated = []
@@ -37,6 +38,19 @@ for key, value in branding.items():
         updated.append(f'{key}="{value}"')
 
 path.write_text("\n".join(updated) + "\n", encoding="utf-8")
-print("Set DBAI2K26 vendor metadata in /etc/armbian-release")
+print("Set DBAI-2K26 vendor metadata in /etc/armbian-release")
 PY
+
+	local dbai_motd_patcher="${SRC}/userpatches/tools/patch-armbian-motd.py"
+	local dbai_apps_script="${SRC}/userpatches/tools/dbai-apps.sh"
+	local dbai_motd_header="${SDCARD}/etc/update-motd.d/10-armbian-header"
+	local dbai_motd_commands="${SDCARD}/etc/update-motd.d/41-commands"
+
+	[[ -s "$dbai_motd_patcher" ]] || exit_with_error "DBAI Armbian MOTD patcher not found: $dbai_motd_patcher"
+	[[ -s "$dbai_apps_script" ]] || exit_with_error "DBAI app status CLI not found: $dbai_apps_script"
+	[[ -f "$dbai_motd_header" && -f "$dbai_motd_commands" ]] || exit_with_error "Required stock Armbian MOTD files were not found in the target image"
+
+	install -m 0755 "$dbai_apps_script" "${SDCARD}/usr/local/bin/dbai-apps"
+	python3 "$dbai_motd_patcher" "$dbai_motd_header" "$dbai_motd_commands"
+	display_alert "DBAI-2K26 branding" "Patched existing Armbian header/commands; preserved stock IP, performance, tips and login sections" "info"
 }
