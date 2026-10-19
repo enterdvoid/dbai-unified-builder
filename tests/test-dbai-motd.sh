@@ -71,6 +71,23 @@ cat > "$bin/figlet" <<'FIGLET'
 #!/usr/bin/env bash
 printf '%s\n' '  DBAI-2K26'
 FIGLET
+cat > "$bin/curl" <<'CURL'
+#!/usr/bin/env bash
+url=''
+output_file=''
+while (($#)); do
+  case "$1" in
+    -o) output_file="${2:-}"; shift 2 ;;
+    http*) url="$1"; shift ;;
+    *) shift ;;
+  esac
+done
+case "$url" in
+  *ipv4*) printf '203.0.113.55\n' > "$output_file" ;;
+  *ipv6*) printf '2001:db8::55\n' > "$output_file" ;;
+  *) exit 1 ;;
+esac
+CURL
 for command_name in armbian-config armbian-upgrade htop dbai-apps; do
   cat > "$bin/$command_name" <<'CMD'
 #!/usr/bin/env bash
@@ -78,10 +95,10 @@ exit 0
 CMD
   chmod 0755 "$bin/$command_name"
 done
-chmod 0755 "$bin/uname" "$bin/ip" "$bin/df" "$bin/who" "$bin/figlet"
+chmod 0755 "$bin/uname" "$bin/ip" "$bin/df" "$bin/who" "$bin/figlet" "$bin/curl"
 
 output="$tmp/motd.out"
-PATH="$bin:$PATH" NO_COLOR=1 COLUMNS=80 DBAI_MOTD_ROOT="$root" \
+PATH="$bin:$PATH" NO_COLOR=1 COLUMNS=80 DBAI_MOTD_ROOT="$root" DBAI_MOTD_WAN_CHECK=1 \
   bash "$repo_root/scripts/dbai-motd.sh" > "$output"
 
 grep -Fq 'DBAI-2K26' "$output"
@@ -90,6 +107,8 @@ grep -Fq 'running on B860H-V2 (Amlogic S905X)' "$output"
 grep -Fq 'OS: Ubuntu jammy | Updates: 164 packages' "$output"
 grep -Fq '192.168.2.206' "$output"
 grep -Fq '192.168.2.138' "$output"
+grep -Fq '203.0.113.55' "$output"
+grep -Fq '2001:db8::55' "$output"
 grep -Fq 'Load: 6%' "$output"
 grep -Fq 'CPU: 61°C' "$output"
 grep -Fq 'RootFS: 45%/6.5G' "$output"
@@ -97,7 +116,7 @@ grep -Fq 'dbai-apps' "$output"
 
 # A small terminal should use the plain-text logo instead of a wide figlet banner.
 small="$tmp/small.out"
-PATH="$bin:$PATH" NO_COLOR=1 COLUMNS=50 DBAI_MOTD_ROOT="$root" \
+PATH="$bin:$PATH" NO_COLOR=1 COLUMNS=50 DBAI_MOTD_ROOT="$root" DBAI_MOTD_WAN_CHECK=0 \
   bash "$repo_root/scripts/dbai-motd.sh" > "$small"
 grep -Fq 'DBAI-2K26' "$small"
 
