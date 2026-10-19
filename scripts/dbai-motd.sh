@@ -214,7 +214,7 @@ fi
 users="$(who 2>/dev/null | wc -l | tr -d '[:space:]')"
 [[ "$users" =~ ^[0-9]+$ ]] || users=0
 root_fs='n/a'
-root_df="$(df -hP / 2>/dev/null | awk 'NR==2 {gsub(/%/, "", $5); print $5 "/" $2; exit}')"
+root_df="$(df -hP / 2>/dev/null | awk 'NR==2 {print $5 "/" $2; exit}')"
 [[ -n "$root_df" ]] && root_fs="$root_df"
 
 columns="${COLUMNS:-}"
@@ -246,7 +246,12 @@ fi
 
 printf 'Armbian %sv%s%s | Linux %s%s%s\n' "$C_CYAN" "$version" "$C_RESET" "$C_GREEN" "$kernel" "$C_RESET"
 printf 'running on %s%s%s\n' "$C_YELLOW" "$board_display" "$C_RESET"
-printf '%sOS:%s %s | %sUpdates:%s %s packages\n' "$C_CYAN" "$C_RESET" "$os_display" "$C_CYAN" "$C_RESET" "$updates"
+printf '%sOS:%s %s | %sUpdates:%s ' "$C_CYAN" "$C_RESET" "$os_display" "$C_CYAN" "$C_RESET"
+if [[ "$updates" =~ ^[0-9]+$ ]]; then
+  printf '%s packages\n' "$updates"
+else
+  printf 'not yet checked\n'
+fi
 
 if [[ -n "$lan4" ]]; then
   printf '%sLAN:%s %s%s%s' "$C_CYAN" "$C_RESET" "$C_GREEN" "$lan4" "$C_RESET"
