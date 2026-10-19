@@ -536,6 +536,7 @@ jobs:
           cp extensions/dbai-custom-bootfs.sh armbian-source/userpatches/extensions/
           cp extensions/dbai-openbox.sh armbian-source/userpatches/extensions/
           cp extensions/dbai-branding.sh armbian-source/userpatches/extensions/
+          # Patch Armbian's existing header and command list in place; preserve its other MOTD modules.
           mkdir -p armbian-source/userpatches/tools
           cp scripts/patch-armbian-motd.py scripts/dbai-apps.sh armbian-source/userpatches/tools/
           if [[ "$KERNEL_MODE" == "Custom Kernel" || "$KERNEL_MODE" == "Recompile Custom Kernel" ]]; then
