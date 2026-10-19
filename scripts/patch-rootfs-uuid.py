@@ -18,7 +18,6 @@ MKFS_LINE = (
     '"${rootdevice}"'
 )
 ROOT_UUID_LINE = 'root_part_uuid="$(blkid -s UUID -o value "${LOOP}p${rootpart}")"'
-DEVICE_LINE = "local physical_rootdevice=$rootdevice"
 
 REPLACEMENT_MKFS = f'''{UUID_MARKER}
         if [[ "$ROOTFS_TYPE" == "ext4" || "$ROOTFS_TYPE" == "btrfs" ]]; then
@@ -51,9 +50,6 @@ def patch(path: pathlib.Path) -> None:
         raise SystemExit("Incomplete DBAI static rootfs UUID patch detected; refusing to continue.")
 
     # Ensure the target source has the expected Armbian mkfs and UUID flow.
-    content = replace_once(content, DEVICE_LINE,
-                           DEVICE_LINE + f'\n\t\tlocal dbai_static_rootfs_uuid="{ROOTFS_UUID}"',
-                           "root device declaration")
     content = replace_once(content, MKFS_LINE, REPLACEMENT_MKFS, "rootfs mkfs command")
     content = replace_once(content, ROOT_UUID_LINE, REPLACEMENT_ROOT_UUID, "rootfs UUID readback")
     path.write_text(content, encoding="utf-8")
