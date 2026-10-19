@@ -142,6 +142,37 @@ get_addresses() {
 lan4="${DBAI_MOTD_LAN_IPS:-$(get_addresses 4)}"
 lan6="${DBAI_MOTD_IPV6_IPS:-$(get_addresses 6)}"
 
+get_wan_addresses() {
+  local enabled="${DBAI_MOTD_WAN_CHECK:-}" config tmp ipv4='' ipv6='' pid4='' pid6=''
+  if [[ -z "$enabled" ]]; then
+    config="$(target_path /etc/default/dbai-motd)"
+    if [[ -r "$config" ]]; then
+      enabled="$(sed -n 's/^[[:space:]]*DBAI_MOTD_WAN_CHECK[[:space:]]*=[[:space:]]*//p' "$config" | tail -n 1 | tr -d '"[:space:]')"
+    fi
+  fi
+  [[ -n "$enabled" ]] || enabled=1
+  [[ "$enabled" == 1 ]] || { printf '|\\n'; return 0; }
+  command -v curl >/dev/null 2>&1 || { printf '|\\n'; return 0; }
+
+  # IPv4 and IPv6 run concurrently, each capped at one second, so a missing
+  # network cannot stall SSH login for several seconds.
+  tmp="$(mktemp -d 2>/dev/null)" || { printf '|\\n'; return 0; }
+  curl --connect-timeout 1 --max-time 1 -4 -fsS https://ipv4.whatismyip.akamai.com/ -o "$tmp/ipv4" >/dev/null 2>&1 &
+  pid4=$!
+  curl --connect-timeout 1 --max-time 1 -6 -fsS https://ipv6.whatismyip.akamai.com/ -o "$tmp/ipv6" >/dev/null 2>&1 &
+  pid6=$!
+  wait "$pid4" 2>/dev/null || true
+  wait "$pid6" 2>/dev/null || true
+
+  [[ -r "$tmp/ipv4" ]] && ipv4="$(tr -d '\\r\\n' < "$tmp/ipv4")"
+  [[ -r "$tmp/ipv6" ]] && ipv6="$(tr -d '\\r\\n' < "$tmp/ipv6")"
+  [[ "$ipv4" =~ ^([0-9]{1,3}\\.){3}[0-9]{1,3}$ ]] || ipv4=''
+  [[ "$ipv6" =~ ^[0-9A-Fa-f:.]+$ && "$ipv6" == *:* ]] || ipv6=''
+  rm -rf "$tmp"
+  printf '%s|%s\\n' "$ipv4" "$ipv6"
+}
+IFS='|' read -r wan4 wan6 < <(get_wan_addresses)
+
 load_percent='n/a'
 load_file="$(target_path /proc/loadavg)"
 cpuinfo_file="$(target_path /proc/cpuinfo)"
@@ -253,9 +284,27 @@ else
   printf 'not yet checked\n'
 fi
 
-if [[ -n "$lan4" ]]; then
-  printf '%sLAN:%s %s%s%s' "$C_CYAN" "$C_RESET" "$C_GREEN" "$lan4" "$C_RESET"
-  if [[ -n "$lan6" ]]; then printf ' | %sIPv6:%s %s%s%s' "$C_CYAN" "$C_RESET" "$C_GREEN" "$lan6" "$C_RESET"; fi
+if [[ -n "$lan4" || -n "$lan6" || -n "$wan4" || -n "$wan6" ]]; then
+  printf '%sIP:%s ' "$C_CYAN" "$C_RESET"
+  first_ip=1
+  if [[ -n "$lan4" ]]; then
+    printf '%sLAN%s %s%s%s' "$C_YELLOW" "$C_RESET" "$C_GREEN" "$lan4" "$C_RESET"
+    first_ip=0
+  fi
+  if [[ -n "$lan6" ]]; then
+    (( first_ip )) || printf ' | '
+    printf '%sLAN IPv6%s %s%s%s' "$C_YELLOW" "$C_RESET" "$C_GREEN" "$lan6" "$C_RESET"
+    first_ip=0
+  fi
+  if [[ -n "$wan4" ]]; then
+    (( first_ip )) || printf ' | '
+    printf '%sWAN%s %s%s%s' "$C_YELLOW" "$C_RESET" "$C_MAGENTA" "$wan4" "$C_RESET"
+    first_ip=0
+  fi
+  if [[ -n "$wan6" ]]; then
+    (( first_ip )) || printf ' | '
+    printf '%sWAN IPv6%s %s%s%s' "$C_YELLOW" "$C_RESET" "$C_MAGENTA" "$wan6" "$C_RESET"
+  fi
   printf '\n'
 fi
 
