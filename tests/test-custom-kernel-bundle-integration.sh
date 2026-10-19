@@ -49,19 +49,21 @@ tar -xOzf "$bootfs_archive" uEnv.txt > "${tmp}/uEnv.txt"
 # The bootfs archive may use CRLF line endings; normalize only the test copy.
 tr -d '\r' < "${tmp}/uEnv.txt" > "${tmp}/uEnv.normalized.txt"
 mv "${tmp}/uEnv.normalized.txt" "${tmp}/uEnv.txt"
-boot_config_release="$(awk -F= '$1 == "KERNEL" { gsub(/\r/, "", $2); print $2; exit }' "${tmp}/uEnv.txt")"
-[[ "$boot_config_release" == "$module_release" ]] || {
-  echo "FAIL: bootfs KERNEL release '${boot_config_release:-missing}' differs from bundle modules release '${module_release}'." >&2
-  exit 1
-}
-grep -Fqx "LINUX=/vmlinuz-\${KERNEL}" "${tmp}/uEnv.txt" || {
-  echo "FAIL: uEnv.txt no longer points to the original versioned vmlinuz name." >&2
-  exit 1
-}
-grep -Fqx "INITRD=/uInitrd-\${KERNEL}" "${tmp}/uEnv.txt" || {
-  echo "FAIL: uEnv.txt no longer points to the original versioned U-Boot ramdisk name." >&2
-  exit 1
-}
+# The tracked bootfs uses KERNEL-derived filenames; LINUX/INITRD overrides
+# are optional, but duplicates are ambiguous and must be rejected.
+for variable in KERNEL LINUX INITRD; do
+  assignment_count="$(awk -F= -v key="$variable" '$1 ~ "^[[:space:]]*" key "[[:space:]]*$" { count++ } END { print count+0 }' "${tmp}/uEnv.txt")"
+  if [[ "$variable" == "KERNEL" ]]; then
+    [[ "$assignment_count" == "1" ]] || {
+      echo "FAIL: bootfs uEnv.txt must contain exactly one KERNEL assignment (found $assignment_count)." >&2
+      sed -n '1,120p' "${tmp}/uEnv.txt" >&2
+      exit 1
+    }
+  elif (( assignment_count > 1 )); then
+    echo "FAIL: bootfs uEnv.txt has duplicate optional $variable assignments." >&2
+    exit 1
+  fi
+done
 
 mapfile -t boot_archives < <(find "${tmp}/bundle" -type f \( -name 'boot-*.tar.gz' -o -name 'boot-*.tar.xz' \) -print)
 if [[ "${#boot_archives[@]}" -ne 1 ]]; then
@@ -81,14 +83,22 @@ archive_has_path() {
   awk -v wanted="$wanted" '{ path=$0; sub(/^\.\//, "", path); if (path==wanted || path=="boot/" wanted) found=1 } END { exit !found }' "${tmp}/boot-list.txt"
 }
 archive_has_path "vmlinuz-${module_release}" || {
-  echo "FAIL: boot bundle does not supply the original vmlinuz-${module_release} name configured by uEnv.txt." >&2
+  echo "FAIL: boot bundle does not supply the original vmlinuz-${module_release} name expected by the published DBAI bundle." >&2
   exit 1
 }
 archive_has_path "uInitrd-${module_release}" || {
-  echo "FAIL: boot bundle does not supply the original uInitrd-${module_release} name configured by uEnv.txt." >&2
+  echo "FAIL: boot bundle does not supply the original uInitrd-${module_release} name expected by the published DBAI bundle." >&2
   exit 1
 }
-echo "PASS: bootfs version and original kernel/ramdisk filenames agree with the published bundle."
+dbai_sync_custom_kernel_uenv "${tmp}/uEnv.txt" "$module_release" "vmlinuz-${module_release}" "uInitrd-${module_release}"
+grep -Fqx "KERNEL=$module_release" "${tmp}/uEnv.txt"
+linux_count="$(awk -F= '$1 ~ /^[[:space:]]*LINUX[[:space:]]*$/ { count++ } END { print count+0 }' "${tmp}/uEnv.txt")"
+initrd_count="$(awk -F= '$1 ~ /^[[:space:]]*INITRD[[:space:]]*$/ { count++ } END { print count+0 }' "${tmp}/uEnv.txt")"
+if [[ "$linux_count" == "1" ]]; then grep -Fqx "LINUX=/vmlinuz-${module_release}" "${tmp}/uEnv.txt"; fi
+if [[ "$initrd_count" == "1" ]]; then grep -Fqx "INITRD=/uInitrd-${module_release}" "${tmp}/uEnv.txt"; fi
+[[ "$linux_count" == "0" || "$linux_count" == "1" ]]
+[[ "$initrd_count" == "0" || "$initrd_count" == "1" ]]
+echo "PASS: bootfs KERNEL assignment and optional explicit paths match the published kernel/ramdisk filenames without renaming either payload."
 
 modules_layout="target-root"
 if ! grep -Eq '^([.]/)?lib/modules/[^/]+/' "${tmp}/modules-list.txt"; then

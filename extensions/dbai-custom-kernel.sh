@@ -110,9 +110,30 @@ function dbai_detect_kernel_modules_release() {
 	[[ -n "${listing_file}" && -f "${listing_file}" ]] || return 1
 
 	if grep -Eq '^([.]/)?lib/modules/[^/]+/' "${listing_file}"; then
-		release="$(sed -nE 's#^([.]/)?lib/modules/([^/]+)/.*#\2#p' "${listing_file}" | head -n 1)"
+		release="$(awk '
+			{
+				path=$0
+				sub(/^\.\//, "", path)
+				if (path ~ /^lib\/modules\/[^/]+\//) {
+					sub(/^lib\/modules\//, "", path)
+					split(path, parts, "/")
+					print parts[1]
+					exit
+				}
+			}
+		' "${listing_file}")"
 	else
-		release="$(sed -nE 's#^([.]/)?([^/]+)/modules[.]dep$#\2#p; s#^([.]/)?([^/]+)/kernel/.*#\2#p' "${listing_file}" | head -n 1)"
+		release="$(awk '
+			{
+				path=$0
+				sub(/^\.\//, "", path)
+				if (path ~ /^[^/]+\/modules[.]dep$/ || path ~ /^[^/]+\/kernel\//) {
+					split(path, parts, "/")
+					print parts[1]
+					exit
+				}
+			}
+		' "${listing_file}")"
 	fi
 	[[ -n "${release}" && "${release}" =~ ^[A-Za-z0-9._+-]+$ ]] || return 1
 	printf '%s\n' "${release}"
@@ -321,8 +342,37 @@ function dbai_prune_noncustom_boot_artifacts() {
 		rm -rf -- "$entry"
 	done
 }
+function dbai_sync_custom_kernel_uenv() {
+	local uenv="$1" release="$2" kernel_name="$3" ramdisk_name="$4" tmp
+	[[ -f "$uenv" && ! -L "$uenv" ]] || { echo "ERROR: custom-kernel U-Boot config is missing or not a regular file: $uenv" >&2; return 1; }
+	[[ "$release" =~ ^[A-Za-z0-9][A-Za-z0-9._+-]*$ ]] || { echo "ERROR: Unsafe custom kernel release for uEnv.txt: $release" >&2; return 1; }
+	[[ "$kernel_name" =~ ^[A-Za-z0-9][A-Za-z0-9._+-]*$ ]] || { echo "ERROR: Unsafe custom kernel filename for uEnv.txt: $kernel_name" >&2; return 1; }
+	[[ "$ramdisk_name" =~ ^[A-Za-z0-9][A-Za-z0-9._+-]*$ ]] || { echo "ERROR: Unsafe U-Boot ramdisk filename for uEnv.txt: $ramdisk_name" >&2; return 1; }
+
+	tmp="$(mktemp "$(dirname "$uenv")/.uEnv.txt.dbai.XXXXXX")" || return 1
+	if ! awk -v release="$release" -v kernel_name="$kernel_name" -v ramdisk_name="$ramdisk_name" '
+		BEGIN { kernels=0; linuxes=0; initrds=0 }
+		{
+			sub(/\r$/, "")
+			if ($0 ~ /^[[:space:]]*KERNEL[[:space:]]*=/) { print "KERNEL=" release; kernels++; next }
+			if ($0 ~ /^[[:space:]]*LINUX[[:space:]]*=/) { print "LINUX=/" kernel_name; linuxes++; next }
+			if ($0 ~ /^[[:space:]]*INITRD[[:space:]]*=/) { print "INITRD=/" ramdisk_name; initrds++; next }
+			print
+		}
+		END { if (kernels != 1 || linuxes > 1 || initrds > 1) exit 1 }
+	' "$uenv" > "$tmp"; then
+		rm -f -- "$tmp"
+		echo "ERROR: uEnv.txt must contain exactly one KERNEL assignment and no duplicate optional LINUX/INITRD assignments." >&2
+		return 1
+	fi
+	chmod --reference="$uenv" "$tmp" || { rm -f -- "$tmp"; return 1; }
+	mv -f -- "$tmp" "$uenv" || { rm -f -- "$tmp"; return 1; }
+	echo "Synchronized uEnv.txt to kernel release $release, kernel /$kernel_name, and ramdisk /$ramdisk_name."
+}
+
 function dbai_restore_custom_kernel_boot_payload() {
 	local target_root="$1" cache_dir="${SRC}/cache/dbai-custom-kernel" archive dtb_stage dtb_file dtb_rel dtb_target
+	local manifest custom_release kernel_name ramdisk_name
 	[[ -f "$cache_dir/boot.tar" && -f "$cache_dir/dtb.tar" ]] || {
 		echo "ERROR: validated custom-kernel boot/DTB archives are unavailable during final cleanup." >&2
 		return 1
@@ -334,6 +384,11 @@ function dbai_restore_custom_kernel_boot_payload() {
 	else
 		tar --no-same-owner --no-same-permissions --transform='s,^[.]/,,;s,^,boot/,' -xf "$archive" -C "$target_root"
 	fi
+	manifest="$target_root/etc/dbai-custom-kernel-manifest.txt"
+	custom_release="$(sed -n 's/^Kernel release: //p' "$manifest" | sed -n '1p')"
+	kernel_name="$(sed -n 's/^Boot kernel file: //p' "$manifest" | sed -n '1p')"
+	ramdisk_name="$(sed -n 's/^Boot ramdisk file: //p' "$manifest" | sed -n '1p')"
+	dbai_sync_custom_kernel_uenv "$target_root/boot/uEnv.txt" "$custom_release" "$kernel_name" "$ramdisk_name" || return 1
 	dtb_stage="$(TMPDIR=/tmp mktemp -d /tmp/dbai-final-dtb.XXXXXX)" || { echo "ERROR: unable to create temporary directory for custom DTBs." >&2; return 1; }
 	if ! tar --no-same-owner --no-same-permissions -xf "$cache_dir/dtb.tar" -C "$dtb_stage"; then
 		rm -rf -- "$dtb_stage"
@@ -370,7 +425,7 @@ function dbai_verify_custom_kernel_boot_payload() {
 	expected_ramdisk_sha="$(sed -n 's/^Boot ramdisk SHA-256: //p' "$manifest" | sed -n '1p')"
 	[[ "$custom_release" =~ ^[A-Za-z0-9._+-]+$ ]] || { echo "ERROR: custom-kernel manifest lacks a valid kernel release." >&2; return 1; }
 	case "$expected_kernel_name" in
-		"vmlinuz-$custom_release"|vmlinuz|zImage) ;;
+		"vmlinuz-$custom_release"|"Image-$custom_release"|"uImage-$custom_release"|"zImage-$custom_release"|vmlinuz|Image|uImage|zImage) ;;
 		*) echo "ERROR: recorded kernel filename is incompatible with the DBAI boot scripts: ${expected_kernel_name:-missing}" >&2; return 1 ;;
 	esac
 	[[ "$expected_kernel_sha" =~ ^[[:xdigit:]]{64}$ ]] || { echo "ERROR: custom-kernel manifest lacks a valid boot-kernel SHA-256." >&2; return 1; }
@@ -379,6 +434,32 @@ function dbai_verify_custom_kernel_boot_payload() {
 		*) echo "ERROR: recorded ramdisk filename is incompatible with the DBAI boot scripts: ${expected_ramdisk_name:-missing}" >&2; return 1 ;;
 	esac
 	[[ "$expected_ramdisk_sha" =~ ^[[:xdigit:]]{64}$ ]] || { echo "ERROR: custom-kernel manifest lacks a valid supplied-ramdisk SHA-256." >&2; return 1; }
+
+	local boot_config configured_release configured_kernel configured_ramdisk configured_kernel_count configured_ramdisk_count
+	boot_config="$target_root/boot/uEnv.txt"
+	[[ -s "$boot_config" && ! -L "$boot_config" ]] || { echo "ERROR: final /boot/uEnv.txt is missing." >&2; return 1; }
+	configured_release="$(awk -F= '$1 == "KERNEL" { sub(/\r$/, "", $2); print $2; exit }' "$boot_config")"
+	configured_kernel_count="$(awk -F= '$1 ~ /^[[:space:]]*LINUX[[:space:]]*$/ { count++ } END { print count+0 }' "$boot_config")"
+	configured_ramdisk_count="$(awk -F= '$1 ~ /^[[:space:]]*INITRD[[:space:]]*$/ { count++ } END { print count+0 }' "$boot_config")"
+	configured_kernel="$(awk -F= '$1 ~ /^[[:space:]]*LINUX[[:space:]]*$/ { sub(/\r$/, "", $2); gsub(/^[[:space:]]+|[[:space:]]+$/, "", $2); print $2; exit }' "$boot_config")"
+	configured_ramdisk="$(awk -F= '$1 ~ /^[[:space:]]*INITRD[[:space:]]*$/ { sub(/\r$/, "", $2); gsub(/^[[:space:]]+|[[:space:]]+$/, "", $2); print $2; exit }' "$boot_config")"
+	[[ "$configured_release" == "$custom_release" ]] || { echo "ERROR: uEnv.txt KERNEL does not match the custom module release." >&2; return 1; }
+	if [[ "$configured_kernel_count" == "1" ]]; then
+		[[ "$configured_kernel" == "/$expected_kernel_name" ]] || { echo "ERROR: uEnv.txt LINUX does not point to the original custom kernel filename." >&2; return 1; }
+	elif [[ "$configured_kernel_count" == "0" ]]; then
+		[[ "$expected_kernel_name" == "vmlinuz-$custom_release" ]] || { echo "ERROR: uEnv.txt uses KERNEL-derived kernel naming and requires vmlinuz-$custom_release." >&2; return 1; }
+	else
+		echo "ERROR: final uEnv.txt contains duplicate LINUX assignments." >&2
+		return 1
+	fi
+	if [[ "$configured_ramdisk_count" == "1" ]]; then
+		[[ "$configured_ramdisk" == "/$expected_ramdisk_name" ]] || { echo "ERROR: uEnv.txt INITRD does not point to the supplied U-Boot ramdisk filename." >&2; return 1; }
+	elif [[ "$configured_ramdisk_count" == "0" ]]; then
+		[[ "$expected_ramdisk_name" == "uInitrd-$custom_release" ]] || { echo "ERROR: uEnv.txt uses KERNEL-derived ramdisk naming and requires uInitrd-$custom_release." >&2; return 1; }
+	else
+		echo "ERROR: final uEnv.txt contains duplicate INITRD assignments." >&2
+		return 1
+	fi
 
 	kernel_path="$target_root/boot/$expected_kernel_name"
 	ramdisk_path="$target_root/boot/$expected_ramdisk_name"
@@ -572,27 +653,36 @@ function pre_customize_image__dbai_overlay_kernel_bundle() {
 	DBAI_CUSTOM_KERNEL_RELEASE="${modules_release}"
 
 	local manifest="${SDCARD}/etc/dbai-custom-kernel-manifest.txt"
-	local boot_config="${SDCARD}/boot/uEnv.txt" boot_config_release boot_kernel_file boot_kernel_name boot_kernel_sha boot_ramdisk_file boot_ramdisk_name boot_ramdisk_sha
-	[[ -s "$boot_config" ]] || exit_with_error "Custom bootfs is missing /boot/uEnv.txt; cannot determine the boot-script kernel release"
-	boot_config_release="$(awk -F= '$1 == "KERNEL" { gsub(/\r/, "", $2); print $2; exit }' "$boot_config")"
-	[[ -n "$boot_config_release" && "$boot_config_release" == "$modules_release" ]] || exit_with_error "Boot script KERNEL release ('${boot_config_release:-missing}') does not match custom bundle modules release '${modules_release}'"
+	local boot_config="${SDCARD}/boot/uEnv.txt" boot_kernel_file boot_kernel_name boot_kernel_sha boot_ramdisk_file boot_ramdisk_name boot_ramdisk_sha
+	[[ -s "$boot_config" ]] || exit_with_error "Custom bootfs is missing /boot/uEnv.txt"
 
 	boot_kernel_file=""
-	for boot_kernel_name in "vmlinuz-${modules_release}" zImage vmlinuz; do
-		if [[ -s "${SDCARD}/boot/${boot_kernel_name}" ]]; then
-			boot_kernel_file="${SDCARD}/boot/${boot_kernel_name}"
-			break
-		fi
-	done
-	[[ -n "$boot_kernel_file" ]] || exit_with_error "Custom boot bundle contains no kernel file usable by the DBAI boot scripts (vmlinuz-${modules_release}, zImage, or vmlinuz)"
+	if grep -Eq '^[[:space:]]*LINUX[[:space:]]*=' "$boot_config"; then
+		for boot_kernel_name in "vmlinuz-${modules_release}" "Image-${modules_release}" "uImage-${modules_release}" "zImage-${modules_release}" vmlinuz Image uImage zImage; do
+			if [[ -s "${SDCARD}/boot/${boot_kernel_name}" ]]; then
+				boot_kernel_file="${SDCARD}/boot/${boot_kernel_name}"
+				break
+			fi
+		done
+	else
+		boot_kernel_name="vmlinuz-${modules_release}"
+		[[ -s "${SDCARD}/boot/${boot_kernel_name}" ]] && boot_kernel_file="${SDCARD}/boot/${boot_kernel_name}"
+	fi
+	[[ -n "$boot_kernel_file" ]] || exit_with_error "Custom bootfs requires the KERNEL-derived vmlinuz-${modules_release} unless it has an explicit LINUX= assignment"
 	boot_ramdisk_file=""
-	for boot_ramdisk_name in "uInitrd-${modules_release}" uInitrd; do
-		if [[ -s "${SDCARD}/boot/${boot_ramdisk_name}" ]]; then
-			boot_ramdisk_file="${SDCARD}/boot/${boot_ramdisk_name}"
-			break
-		fi
-	done
-	[[ -n "$boot_ramdisk_file" ]] || exit_with_error "Custom boot bundle contains no supplied U-Boot ramdisk usable by the DBAI boot scripts (uInitrd-${modules_release} or uInitrd)"
+	if grep -Eq '^[[:space:]]*INITRD[[:space:]]*=' "$boot_config"; then
+		for boot_ramdisk_name in "uInitrd-${modules_release}" uInitrd; do
+			if [[ -s "${SDCARD}/boot/${boot_ramdisk_name}" ]]; then
+				boot_ramdisk_file="${SDCARD}/boot/${boot_ramdisk_name}"
+				break
+			fi
+		done
+	else
+		boot_ramdisk_name="uInitrd-${modules_release}"
+		[[ -s "${SDCARD}/boot/${boot_ramdisk_name}" ]] && boot_ramdisk_file="${SDCARD}/boot/${boot_ramdisk_name}"
+	fi
+	[[ -n "$boot_ramdisk_file" ]] || exit_with_error "Custom bootfs requires the KERNEL-derived uInitrd-${modules_release} unless it has an explicit INITRD= assignment"
+	dbai_sync_custom_kernel_uenv "$boot_config" "$modules_release" "$(basename "$boot_kernel_file")" "$(basename "$boot_ramdisk_file")" || exit_with_error "Unable to align /boot/uEnv.txt with the custom kernel and supplied U-Boot ramdisk"
 
 	boot_kernel_sha="$(sha256sum "$boot_kernel_file" | awk '{print $1}')"
 	boot_ramdisk_sha="$(sha256sum "$boot_ramdisk_file" | awk '{print $1}')"

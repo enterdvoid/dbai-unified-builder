@@ -62,6 +62,17 @@ mkdir -p "$root/boot/dtb" "$root/etc"
 printf '%s\n' 'unchanged-kernel-content' > "$root/boot/vmlinuz-6.1.66-DBAI"
 printf '%s\n' 'unchanged-original-uinitrd-content' > "$root/boot/uInitrd-6.1.66-DBAI"
 printf '%s\n' 'custom-dtb' > "$root/boot/dtb/test.dtb"
+cat > "$root/boot/uEnv.txt" <<'UENV'
+KERNEL=stale-release
+LINUX=/Image
+INITRD=/uInitrd
+APPEND=root=UUID=example rw
+UENV
+dbai_sync_custom_kernel_uenv "$root/boot/uEnv.txt" "6.1.66-DBAI" "vmlinuz-6.1.66-DBAI" "uInitrd-6.1.66-DBAI"
+grep -Fxq 'KERNEL=6.1.66-DBAI' "$root/boot/uEnv.txt"
+grep -Fxq 'LINUX=/vmlinuz-6.1.66-DBAI' "$root/boot/uEnv.txt"
+grep -Fxq 'INITRD=/uInitrd-6.1.66-DBAI' "$root/boot/uEnv.txt"
+grep -Fxq 'APPEND=root=UUID=example rw' "$root/boot/uEnv.txt"
 kernel_sha="$(sha256sum "$root/boot/vmlinuz-6.1.66-DBAI" | awk '{print $1}')"
 ramdisk_sha="$(sha256sum "$root/boot/uInitrd-6.1.66-DBAI" | awk '{print $1}')"
 cat > "$root/etc/dbai-custom-kernel-manifest.txt" <<EOF
@@ -87,6 +98,36 @@ dbai_verify_custom_kernel_boot_payload "$root"
 [[ "$(sha256sum "$root/boot/uInitrd-6.1.66-DBAI" | awk '{print $1}')" == "$original_ramdisk_sha" ]]
 [[ ! -e "$root/boot/initrd.img-6.18.57-current-meson64" ]]
 echo "PASS: original kernel/ramdisk filenames and SHA-256 values survive final verification unchanged."
+
+# The production bootfs uses KERNEL-derived names and intentionally omits LINUX/INITRD.
+root_konly="$tmp/root-kernel-only"
+mkdir -p "$root_konly/boot/dtb" "$root_konly/etc"
+printf '%s\n' 'kernel-only-config-kernel' > "$root_konly/boot/vmlinuz-6.1.66-DBAI"
+printf '%s\n' 'kernel-only-config-uinitrd' > "$root_konly/boot/uInitrd-6.1.66-DBAI"
+printf '%s\n' 'kernel-only-config-dtb' > "$root_konly/boot/dtb/test.dtb"
+cat > "$root_konly/boot/uEnv.txt" <<'UENV'
+KERNEL=stale-release
+FDT=/dtb/test.dtb
+APPEND=root=UUID=example rw
+UENV
+dbai_sync_custom_kernel_uenv "$root_konly/boot/uEnv.txt" "6.1.66-DBAI" "vmlinuz-6.1.66-DBAI" "uInitrd-6.1.66-DBAI"
+grep -Fxq 'KERNEL=6.1.66-DBAI' "$root_konly/boot/uEnv.txt"
+if grep -Eq '^[[:space:]]*(LINUX|INITRD)[[:space:]]*=' "$root_konly/boot/uEnv.txt"; then
+  echo "FAIL: sync injected optional LINUX/INITRD keys into the KERNEL-derived production config." >&2
+  exit 1
+fi
+kernel_sha="$(sha256sum "$root_konly/boot/vmlinuz-6.1.66-DBAI" | awk '{print $1}')"
+ramdisk_sha="$(sha256sum "$root_konly/boot/uInitrd-6.1.66-DBAI" | awk '{print $1}')"
+cat > "$root_konly/etc/dbai-custom-kernel-manifest.txt" <<EOF
+Kernel mode: Custom Kernel
+Kernel release: 6.1.66-DBAI
+Boot kernel file: vmlinuz-6.1.66-DBAI
+Boot kernel SHA-256: $kernel_sha
+Boot ramdisk file: uInitrd-6.1.66-DBAI
+Boot ramdisk SHA-256: $ramdisk_sha
+EOF
+dbai_verify_custom_kernel_boot_payload "$root_konly"
+echo "PASS: final verifier accepts the production KERNEL-only boot configuration with versioned payload names."
 
 if declare -F dbai_generate_custom_kernel_initramfs >/dev/null; then
   echo "FAIL: a helper still regenerates the custom initramfs instead of keeping the supplied ramdisk." >&2
