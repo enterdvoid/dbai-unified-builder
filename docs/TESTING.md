@@ -62,6 +62,18 @@ bash tests/test-patch-armbian-motd.sh
 bash tests/test-dbai-apps.sh
 ```
 
+## Fixed rootfs UUID
+
+Every builder image selecting `ext4` or `btrfs` applies `scripts/patch-rootfs-uuid.py` to Armbian's rootfs partitioning function before build. The UUID is passed directly to `mkfs.ext4` or `mkfs.btrfs`, then read back from `blkid` and checked before Armbian uses it to write `/etc/fstab` and the boot configuration:
+
+```text
+19450817-1945-4817-a817-194508170817
+```
+
+This changes the filesystem UUID (not GPT/MBR PARTUUID). The patch is fail-closed if the expected Armbian source anchors change, and the validation test covers ext4, btrfs, fstab/root UUID propagation, idempotence, and unknown source layouts.
+
+Run `bash tests/test-static-rootfs-uuid.sh` to test the patch.
+
 ## 3. Full-build verification
 
 After static validation passes, run an actual workflow build with the exact failing configuration when feasible. A static-validation success is not equivalent to a firmware-build success.
