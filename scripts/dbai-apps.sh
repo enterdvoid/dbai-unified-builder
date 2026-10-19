@@ -57,7 +57,7 @@ compose_profiles() {
   local file
   file="$(target_path /etc/dbai-apps.env)"
   [[ -r "$file" ]] || return 0
-  sed -n 's/^DBAI_COMPOSE_PROFILE=//p' "$file" | head -n 1 | tr -d '"[:space:]'
+  sed -n 's/^DBAI_COMPOSE_PROFILE=//p' "$file" | head -n 1 | sed -e 's/^"//' -e 's/"$//' -e 's/,/ /g'
 }
 
 profile_selected() {
