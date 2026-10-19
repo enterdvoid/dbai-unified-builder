@@ -151,12 +151,12 @@ get_wan_addresses() {
     fi
   fi
   [[ -n "$enabled" ]] || enabled=1
-  [[ "$enabled" == 1 ]] || { printf '|\\n'; return 0; }
-  command -v curl >/dev/null 2>&1 || { printf '|\\n'; return 0; }
+  [[ "$enabled" == 1 ]] || { printf '|\n'; return 0; }
+  command -v curl >/dev/null 2>&1 || { printf '|\n'; return 0; }
 
   # IPv4 and IPv6 run concurrently, each capped at one second, so a missing
   # network cannot stall SSH login for several seconds.
-  tmp="$(mktemp -d 2>/dev/null)" || { printf '|\\n'; return 0; }
+  tmp="$(mktemp -d 2>/dev/null)" || { printf '|\n'; return 0; }
   curl --connect-timeout 1 --max-time 1 -4 -fsS https://ipv4.whatismyip.akamai.com/ -o "$tmp/ipv4" >/dev/null 2>&1 &
   pid4=$!
   curl --connect-timeout 1 --max-time 1 -6 -fsS https://ipv6.whatismyip.akamai.com/ -o "$tmp/ipv6" >/dev/null 2>&1 &
@@ -164,12 +164,12 @@ get_wan_addresses() {
   wait "$pid4" 2>/dev/null || true
   wait "$pid6" 2>/dev/null || true
 
-  [[ -r "$tmp/ipv4" ]] && ipv4="$(tr -d '\\r\\n' < "$tmp/ipv4")"
-  [[ -r "$tmp/ipv6" ]] && ipv6="$(tr -d '\\r\\n' < "$tmp/ipv6")"
-  [[ "$ipv4" =~ ^([0-9]{1,3}\\.){3}[0-9]{1,3}$ ]] || ipv4=''
+  [[ -r "$tmp/ipv4" ]] && ipv4="$(tr -d '\r\n' < "$tmp/ipv4")"
+  [[ -r "$tmp/ipv6" ]] && ipv6="$(tr -d '\r\n' < "$tmp/ipv6")"
+  [[ "$ipv4" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || ipv4=''
   [[ "$ipv6" =~ ^[0-9A-Fa-f:.]+$ && "$ipv6" == *:* ]] || ipv6=''
   rm -rf "$tmp"
-  printf '%s|%s\\n' "$ipv4" "$ipv6"
+  printf '%s|%s\n' "$ipv4" "$ipv6"
 }
 IFS='|' read -r wan4 wan6 < <(get_wan_addresses)
 
