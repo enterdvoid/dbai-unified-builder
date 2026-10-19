@@ -19,13 +19,13 @@ MKFS_LINE = (
 )
 ROOT_UUID_LINE = 'root_part_uuid="$(blkid -s UUID -o value "${LOOP}p${rootpart}")"'
 
-REPLACEMENT_MKFS = f'''{UUID_MARKER}
+REPLACEMENT_MKFS = '''{UUID_MARKER}
         if [[ "$ROOTFS_TYPE" == "ext4" || "$ROOTFS_TYPE" == "btrfs" ]]; then
-            run_host_command_logged "mkfs.${{mkfs[$ROOTFS_TYPE]}}" ${{mkopts[$ROOTFS_TYPE]}} -U "{ROOTFS_UUID}" ${{mkopts_label[$ROOTFS_TYPE]:+${{mkopts_label[$ROOTFS_TYPE]}"$ROOT_FS_LABEL"}}} "${{rootdevice}}"
+            run_host_command_logged "mkfs.${mkfs[$ROOTFS_TYPE]}" ${mkopts[$ROOTFS_TYPE]} -U "@UUID@" ${mkopts_label[$ROOTFS_TYPE]:+${mkopts_label[$ROOTFS_TYPE]}"$ROOT_FS_LABEL"} "${rootdevice}"
         else
-            {MKFS_LINE}
+            __ORIGINAL_MKFS__
         fi
-        # DBAI-STATIC-ROOTFS-UUID-END'''
+        # DBAI-STATIC-ROOTFS-UUID-END'''.replace("{UUID_MARKER}", UUID_MARKER).replace("__ORIGINAL_MKFS__", MKFS_LINE).replace("@UUID@", ROOTFS_UUID)
 
 REPLACEMENT_ROOT_UUID = f'''{ROOT_UUID_LINE}
         if [[ "$ROOTFS_TYPE" == "ext4" || "$ROOTFS_TYPE" == "btrfs" ]]; then
