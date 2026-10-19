@@ -38,11 +38,13 @@ The firmware build step must export `COLUMNS=80` and `LINES=24` before running `
 
 A passing static test confirms the workaround is wired in; it does not replace a full Bullseye image build. Bullseye is currently limited to Minimal and Server matrix rows in the unified builder; application and desktop rows are deliberately not generated for this end-of-service release.
 
-## DBAI MOTD and modular application status
+## DBAI branding on the existing Armbian MOTD
 
-Every image profile enables the `dbai-motd` extension. It installs `/etc/update-motd.d/05-dbai-motd` and disables the duplicate Armbian header/IP/sysinfo/tips/commands sections through the supported `MOTD_DISABLE` setting. The banner uses terminal text, ANSI colors, an optional `figlet` logo, local system files, `uname -r`, and the device-tree model/compatible values to report the active kernel, board model, detected SoC, OS release, cached APT update count, LAN IPs, load, memory, temperature, uptime, logged-in users, and root filesystem usage. If a field cannot be read, it falls back to an unavailable value rather than guessing. WAN IPv4/IPv6 checks run concurrently with a one-second timeout each to preserve the old banner's public-IP information without a long login stall; set `DBAI_MOTD_WAN_CHECK=0` in `/etc/default/dbai-motd` to disable external lookups. OpenSSH remains responsible for the separate “Last login” line.
+DBAI does not replace Armbian's MOTD renderer. The `dbai-branding` extension updates `VENDOR`, `VENDORPRETTYNAME`, and `VENDORCOLOR` in `/etc/armbian-release`, then patches the existing `/etc/update-motd.d/10-armbian-header` and `41-commands` in place. The original Armbian IP, performance, tips, updates, support and command sections remain enabled.
 
-The modular `dbai-apps` command checks application state only when invoked, not on every login. For example:
+The header's existing `figlet` wordmark becomes `DBAI-2K26` and uses the slanted `slant` font when figlet is available. The identity line reads the running kernel via Armbian's existing `uname -r` value, the live model from `/proc/device-tree/model`, and a recognized SoC from `/proc/device-tree/compatible`; `/etc/armbian-release` values remain fallbacks. If the upstream header or command-list layout changes, the patcher fails rather than silently overwriting an unknown format.
+
+A separate `dbai-apps` command is installed in `/usr/local/bin` and appears beside `htop` in Armbian's original Commands section. It checks application state only when invoked:
 
 ```bash
 dbai-apps list
@@ -51,10 +53,10 @@ dbai-apps hermes
 dbai-apps 9router
 ```
 
-The supported state labels are `running`, `stopped`, and `not installed`. The checks use local package/service/process/container state; 9router, LightNVR and the integrated go2rtc status use the DBAI Compose profile/container information. Tests:
+The status labels are `running`, `stopped`, and `not installed`. Tests:
 
 ```bash
-bash tests/test-dbai-motd.sh
+bash tests/test-patch-armbian-motd.sh
 bash tests/test-dbai-apps.sh
 ```
 
