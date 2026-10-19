@@ -50,6 +50,7 @@ PY
 	[[ -s "$dbai_apps_script" ]] || exit_with_error "DBAI app status CLI not found: $dbai_apps_script"
 	[[ -f "$dbai_motd_header" && -f "$dbai_motd_commands" ]] || exit_with_error "Required stock Armbian MOTD files were not found in the target image"
 
+	install -d -m 0755 "${SDCARD}/usr/local/bin"
 	install -m 0755 "$dbai_apps_script" "${SDCARD}/usr/local/bin/dbai-apps"
 	python3 "$dbai_motd_patcher" "$dbai_motd_header" "$dbai_motd_commands"
 	display_alert "DBAI-2K26 branding" "Patched existing Armbian header/commands; preserved stock IP, performance, tips and login sections" "info"
