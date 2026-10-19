@@ -55,6 +55,8 @@ for variable in KERNEL LINUX INITRD; do
   assignment_count="$(awk -F= -v key="$variable" '$1 == key { count++ } END { print count+0 }' "${tmp}/uEnv.txt")"
   [[ "$assignment_count" == "1" ]] || {
     echo "FAIL: bootfs uEnv.txt must contain exactly one $variable assignment (found $assignment_count)." >&2
+    echo "Actual tracked uEnv.txt:" >&2
+    sed -n '1,120p' "${tmp}/uEnv.txt" >&2
     exit 1
   }
 done
