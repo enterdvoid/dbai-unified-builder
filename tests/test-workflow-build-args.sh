@@ -9,16 +9,16 @@ grep -Fq 'DBAI_IMAGE_VERSION: "26.11.0"' "$workflow" || {
   exit 1
 }
 
-grep -Fq 'EXTENSIONS=(dbai-branding dbai-motd)' "$workflow" || {
-  echo "FAIL: every image profile must enable the compact DBAI MOTD extension." >&2
+grep -Fq 'EXTENSIONS=(dbai-branding)' "$workflow" || {
+  echo "FAIL: every image profile must use the existing MOTD branding extension." >&2
   exit 1
 }
-grep -Fq 'cp extensions/dbai-motd.sh armbian-source/userpatches/extensions/' "$workflow" || {
-  echo "FAIL: workflow must stage the DBAI MOTD extension." >&2
+grep -Fq 'cp extensions/dbai-branding.sh armbian-source/userpatches/extensions/' "$workflow" || {
+  echo "FAIL: workflow must stage the existing MOTD branding extension." >&2
   exit 1
 }
-grep -Fq 'cp scripts/dbai-motd.sh scripts/dbai-apps.sh armbian-source/userpatches/tools/' "$workflow" || {
-  echo "FAIL: workflow must stage the MOTD renderer and modular application checker." >&2
+grep -Fq 'cp scripts/patch-armbian-motd.py scripts/dbai-apps.sh armbian-source/userpatches/tools/' "$workflow" || {
+  echo "FAIL: workflow must stage the in-place Armbian MOTD patcher and app-status CLI." >&2
   exit 1
 }
 
