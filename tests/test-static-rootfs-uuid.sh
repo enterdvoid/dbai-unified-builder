@@ -34,11 +34,14 @@ python3 "$repo_root/scripts/patch-rootfs-uuid.py" "$partitioning"
 bash -n "$partitioning"
 grep -Fq 'DBAI-STATIC-ROOTFS-UUID-BEGIN' "$partitioning"
 grep -Fq -- '-U "19450817-1945-4817-a817-194508170817"' "$partitioning"
+# shellcheck disable=SC2016 # Assert literal Bash source preserved by the patch.
 grep -Fq 'root_part_uuid="$(blkid -s UUID -o value "${LOOP}p${rootpart}")"' "$partitioning"
 grep -Fq 'DBAI rootfs UUID verification failed' "$partitioning"
 
 # Ensure the upstream-style fstab/root identifier continues to derive from blkid.
+# shellcheck disable=SC2016 # Assert literal Bash source preserved by the patch.
 grep -Fq 'rootfs="UUID=$(blkid -s UUID -o value "$rootdevice")"' "$partitioning"
+# shellcheck disable=SC2016 # Assert literal Bash source preserved by the patch.
 grep -Fq 'declare -g -r ROOT_PART_UUID="${root_part_uuid}"' "$partitioning"
 
 run_helper="$tmp/run-helper.sh"
