@@ -8,6 +8,15 @@ grep -Fq 'DBAI_IMAGE_VERSION: "26.11.0"' "$workflow" || {
   echo "FAIL: workflow does not pin the stable DBAI image version." >&2
   exit 1
 }
+
+grep -Fq 'export COLUMNS=80' "$workflow" || {
+  echo "FAIL: build step must set a stable terminal width for non-interactive package maintainer scripts." >&2
+  exit 1
+}
+grep -Fq 'export LINES=24' "$workflow" || {
+  echo "FAIL: build step must set a stable terminal height for non-interactive package maintainer scripts." >&2
+  exit 1
+}
 # shellcheck disable=SC2016 # Intentionally match literal variable references in the workflow YAML.
 stable_version_args='REVISION="$DBAI_IMAGE_VERSION" IMAGE_VERSION="$DBAI_IMAGE_VERSION"'
 grep -Fq "$stable_version_args" "$workflow" || {
