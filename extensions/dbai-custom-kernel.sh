@@ -110,9 +110,30 @@ function dbai_detect_kernel_modules_release() {
 	[[ -n "${listing_file}" && -f "${listing_file}" ]] || return 1
 
 	if grep -Eq '^([.]/)?lib/modules/[^/]+/' "${listing_file}"; then
-		release="$(sed -nE 's#^([.]/)?lib/modules/([^/]+)/.*#\2#p' "${listing_file}" | head -n 1)"
+		release="$(awk '
+			{
+				path=$0
+				sub(/^\.\//, "", path)
+				if (path ~ /^lib\/modules\/[^/]+\//) {
+					sub(/^lib\/modules\//, "", path)
+					split(path, parts, "/")
+					print parts[1]
+					exit
+				}
+			}
+		' "${listing_file}")"
 	else
-		release="$(sed -nE 's#^([.]/)?([^/]+)/modules[.]dep$#\2#p; s#^([.]/)?([^/]+)/kernel/.*#\2#p' "${listing_file}" | head -n 1)"
+		release="$(awk '
+			{
+				path=$0
+				sub(/^\.\//, "", path)
+				if (path ~ /^[^/]+\/modules[.]dep$/ || path ~ /^[^/]+\/kernel\//) {
+					split(path, parts, "/")
+					print parts[1]
+					exit
+				}
+			}
+		' "${listing_file}")"
 	fi
 	[[ -n "${release}" && "${release}" =~ ^[A-Za-z0-9._+-]+$ ]] || return 1
 	printf '%s\n' "${release}"
