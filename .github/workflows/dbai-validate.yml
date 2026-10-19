@@ -56,7 +56,7 @@ jobs:
           bash tests/test-custom-kernel-headers-layout.sh
           bash tests/test-desktop-selection.sh
           bash tests/test-workflow-build-args.sh
-          bash tests/test-dbai-motd.sh
+          bash tests/test-patch-armbian-motd.sh
           bash tests/test-dbai-apps.sh
           bash tests/test-custom-kernel-residue-cleanup.sh
       - name: Test Proxmox first-login service-account guard
