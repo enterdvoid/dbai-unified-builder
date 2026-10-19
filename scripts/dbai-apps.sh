@@ -160,7 +160,7 @@ detect_docker() {
 }
 
 detect_homeassistant() {
-  local installed=no running=no state detail
+  local installed=no running=no state
   package_installed homeassistant-supervised && installed=yes
   for unit in hassio-supervisor.service home-assistant@homeassistant.service home-assistant.service; do
     unit_exists "$unit" && installed=yes
@@ -218,7 +218,7 @@ detect_casaos() {
 }
 
 detect_hermes() {
-  local installed=no running=no path home_dir
+  local installed=no running=no path
   package_installed hermes-agent && installed=yes
   file_executable /usr/bin/hermes /usr/local/bin/hermes /root/.local/bin/hermes && installed=yes
   if [[ -z "$ROOT" ]]; then
@@ -361,7 +361,7 @@ print_one() {
 }
 
 print_list() {
-  local app color label
+  local app color
   printf 'DBAI application status (local system check)\n'
   printf '%s%-22s %-15s%s\n' "$C_DIM" 'APPLICATION' 'STATUS' "$C_RESET"
   for app in proxmox docker homeassistant openmediavault casaos hermes 9router lightnvr go2rtc openbox; do
