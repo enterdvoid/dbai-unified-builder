@@ -539,6 +539,8 @@ jobs:
           # Patch Armbian's existing header and command list in place; preserve its other MOTD modules.
           mkdir -p armbian-source/userpatches/tools
           cp scripts/patch-armbian-motd.py scripts/dbai-apps.sh armbian-source/userpatches/tools/
+          # Set the root filesystem UUID at mkfs time, before fstab and boot config are generated.
+          python3 "$GITHUB_WORKSPACE/scripts/patch-rootfs-uuid.py" "$GITHUB_WORKSPACE/armbian-source/lib/functions/image/partitioning.sh"
           if [[ "$KERNEL_MODE" == "Custom Kernel" || "$KERNEL_MODE" == "Recompile Custom Kernel" ]]; then
             mkdir -p armbian-source/userpatches/platform
             cp "$GITHUB_WORKSPACE/platform/bootfs_custom_kernel.tar.gz" armbian-source/userpatches/platform/
