@@ -525,6 +525,7 @@ jobs:
           echo "Using $SOURCE_REPO@$SOURCE_SHA for $BOARD"
 
       # [dbai-smoke-app] Verify MOTD and dbai-apps installation in a real Proxmox Official image.
+      # Re-run on the final WAN-aware MOTD revision for end-to-end image validation.
       - name: Add DBAI build extensions
         shell: bash
         run: |
