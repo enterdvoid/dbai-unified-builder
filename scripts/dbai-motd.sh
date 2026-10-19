@@ -150,7 +150,7 @@ if [[ -r "$load_file" ]]; then
   cpu_count="$(grep -c '^processor' "$cpuinfo_file" 2>/dev/null || true)"
   [[ "$cpu_count" =~ ^[1-9][0-9]*$ ]] || cpu_count=1
   if [[ "$load_1m" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
-    load_percent="$(awk -v load="$load_1m" -v cpus="$cpu_count" 'BEGIN {printf "%d", (load/cpus)*100 + 0.5}')"
+    load_percent="$(awk -v loadavg_value="$load_1m" -v cpus="$cpu_count" 'BEGIN {printf "%d", (loadavg_value/cpus)*100 + 0.5}')"
   fi
 fi
 
