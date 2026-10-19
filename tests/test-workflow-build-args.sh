@@ -10,7 +10,7 @@ grep -Fq 'DBAI_IMAGE_VERSION: "26.11.0"' "$workflow" || {
   exit 1
 }
 
-grep -Fq 'EXTENSIONS=(dbai-branding)' "$workflow" || {
+grep -Fq 'EXTENSIONS=(dbai-platform-overlays dbai-branding)' "$workflow" || {
   echo "FAIL: every image profile must use the existing MOTD branding extension." >&2
   exit 1
 }
@@ -20,6 +20,18 @@ grep -Fq 'cp extensions/dbai-branding.sh armbian-source/userpatches/extensions/'
 }
 grep -Fq 'cp scripts/patch-armbian-motd.py scripts/dbai-apps.sh armbian-source/userpatches/tools/' "$workflow" || {
   echo "FAIL: workflow must stage the in-place Armbian MOTD patcher and app-status CLI." >&2
+  exit 1
+}
+grep -Fq 'bash scripts/validate-platform-archives.sh "$GITHUB_WORKSPACE/platform"' "$workflow" || {
+  echo "FAIL: workflow must validate the U-Boot and Ophub userspace archives before building." >&2
+  exit 1
+}
+grep -Fq 'cp extensions/dbai-platform-overlays.sh armbian-source/userpatches/extensions/' "$workflow" || {
+  echo "FAIL: workflow must stage the platform overlays extension." >&2
+  exit 1
+}
+grep -Fq 'cp "$GITHUB_WORKSPACE/platform/u-boot.tar.gz" "$GITHUB_WORKSPACE/platform/usr.tar.gz" armbian-source/userpatches/platform/' "$workflow" || {
+  echo "FAIL: workflow must stage the U-Boot and userspace archives." >&2
   exit 1
 }
 grep -Fq 'scripts/patch-rootfs-uuid.py' "$workflow" || {

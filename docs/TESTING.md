@@ -97,3 +97,17 @@ The existing `[dbai-smoke]` tag continues to exercise a smaller server-image cus
 ## 5. Known shell-variable failure class
 
 Armbian extension hooks run inside a shell with upstream variables already populated. Bash reports errors such as `local: NAME: readonly variable` when a function declares a local variable with the same name as an existing readonly global. Fix this by renaming the local variable to a descriptive, extension-specific identifier and add a regression test with that global explicitly marked readonly.
+
+
+## Platform U-Boot and Ophub userspace overlays
+
+Every image build validates and stages `platform/u-boot.tar.gz` and `platform/usr.tar.gz`. The `dbai-platform-overlays` extension replaces the generated `/boot` contents from the U-Boot archive and overlays the userspace payload into `/usr`. It clears executable bits on regular files supplied by the userspace archive, then sets mode `0755` on the 23 designated programs/scripts; configuration and data files remain non-executable. In Custom Kernel or Recompile Custom Kernel mode, the later custom bootfs hook intentionally takes precedence over the generic U-Boot overlay.
+
+Run:
+
+```bash
+bash scripts/validate-platform-archives.sh platform
+bash tests/test-platform-overlays.sh
+```
+
+The regression test checks archive path normalization, replacement of old boot files, preservation of unrelated `/usr` files, and executable modes.

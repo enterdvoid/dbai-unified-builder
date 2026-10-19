@@ -10,6 +10,7 @@ on:
       - "tests/**"
       - "config/**"
       - "docs/**"
+      - "platform/**"
   pull_request:
     paths:
       - ".github/workflows/**"
@@ -18,6 +19,7 @@ on:
       - "tests/**"
       - "config/**"
       - "docs/**"
+      - "platform/**"
   workflow_dispatch:
 
 permissions:
@@ -58,6 +60,7 @@ jobs:
           bash tests/test-workflow-build-args.sh
           bash tests/test-patch-armbian-motd.sh
           bash tests/test-static-rootfs-uuid.sh
+          bash tests/test-platform-overlays.sh
           bash tests/test-dbai-apps.sh
           bash tests/test-custom-kernel-residue-cleanup.sh
       - name: Test Proxmox first-login service-account guard

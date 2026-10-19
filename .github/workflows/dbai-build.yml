@@ -216,6 +216,7 @@ jobs:
           echo "Selected image types: $PROFILES_INPUT"
           echo "Desktop environment selection: $DESKTOP_ENVIRONMENT_INPUT; tier: $DESKTOP_TIER_INPUT"
           bash scripts/validate-inputs.sh "$BOARD" "" "$RELEASES_INPUT" "$PROFILES_INPUT" "$FILESYSTEM_INPUT" "$KERNEL_MODE" "$APP_PROFILE"
+          bash scripts/validate-platform-archives.sh "$GITHUB_WORKSPACE/platform"
           if [[ "$KERNEL_MODE" == "Custom Kernel" || "$KERNEL_MODE" == "Recompile Custom Kernel" ]]; then
             bootfs_archive="$GITHUB_WORKSPACE/platform/bootfs_custom_kernel.tar.gz"
             [[ -f "$bootfs_archive" ]] || { echo "::error::Missing $bootfs_archive. Add your custom bootfs archive before using a custom kernel mode."; exit 2; }
@@ -539,6 +540,9 @@ jobs:
           # Patch Armbian's existing header and command list in place; preserve its other MOTD modules.
           mkdir -p armbian-source/userpatches/tools
           cp scripts/patch-armbian-motd.py scripts/dbai-apps.sh armbian-source/userpatches/tools/
+          cp extensions/dbai-platform-overlays.sh armbian-source/userpatches/extensions/
+          mkdir -p armbian-source/userpatches/platform
+          cp "$GITHUB_WORKSPACE/platform/u-boot.tar.gz" "$GITHUB_WORKSPACE/platform/usr.tar.gz" armbian-source/userpatches/platform/
           # Set the root filesystem UUID at mkfs time, before fstab and boot config are generated.
           # The mkfs-time assertion in the patched Armbian source verifies this for every image.
           python3 "$GITHUB_WORKSPACE/scripts/patch-rootfs-uuid.py" "$GITHUB_WORKSPACE/armbian-source/lib/functions/image/partitioning.sh"
@@ -667,7 +671,7 @@ jobs:
             *) echo "::error::Unknown profile $PROFILE"; exit 2 ;;
           esac
 
-          EXTENSIONS=(dbai-branding)
+          EXTENSIONS=(dbai-platform-overlays dbai-branding)
           if [[ "$DESKTOP_OPENBOX" == "yes" ]]; then
             EXTENSIONS+=(dbai-openbox)
           fi
