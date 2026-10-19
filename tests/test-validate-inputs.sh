@@ -111,13 +111,42 @@ tar -czf "$dtb_test_dir/dtb-layouts.tar.gz" -C "$dtb_test_dir" boot/dtb/amlogic/
 tar -tf "$dtb_test_dir/dtb-layouts.tar.gz" | grep -Eq "(^|/)[^/]+[.]dtb"
 rm -rf "$dtb_test_dir"
 
-# The branding extension writes the expected vendor in /etc/armbian-release.
+# Exercise the DBAI branding hook against stock-style Armbian MOTD fixtures.
 brand_tmp="$(mktemp -d)"
 trap 'rm -rf "$brand_tmp"' EXIT
-mkdir -p "$brand_tmp/etc"
+brand_src="$brand_tmp/source"
+mkdir -p "$brand_tmp/etc/update-motd.d" "$brand_src/userpatches/tools"
 printf 'BOARD="aml-s9xx-box"\nVENDOR="Old name"\n' > "$brand_tmp/etc/armbian-release"
-SDCARD="$brand_tmp" bash -c 'source "$1"; post_repo_customize_image__dbai_branding' _ "$ROOT/extensions/dbai-branding.sh"
-grep -qx 'VENDOR="DBAI2K26"' "$brand_tmp/etc/armbian-release"
-grep -qx 'VENDORPRETTYNAME="DBAI2K26"' "$brand_tmp/etc/armbian-release"
+cp "$ROOT/scripts/dbai-apps.sh" "$brand_src/userpatches/tools/dbai-apps.sh"
+cp "$ROOT/scripts/patch-armbian-motd.py" "$brand_src/userpatches/tools/patch-armbian-motd.py"
+cat > "$brand_tmp/etc/update-motd.d/10-armbian-header" <<'HEADER'
+if [[ -n "${VENDORCOLOR:-}" ]]; then
+  printf '\\e[38;2;%sm%s\\e[0m\\n' "${VENDORCOLOR}" "$(figlet -f small " ${VENDOR}")"
+fi
+# --- Board name and version line ---
+if [[ "${VERSION:-}" == *trunk* ]]; then VERSION="${VERSION} rolling"; fi
+printf ' v%s for %s running Armbian Linux %s\\n' "${VERSION}" "${BOARD_NAME}" "${KERNELID}"
+# --- Hardware support status ---
+HEADER
+cat > "$brand_tmp/etc/update-motd.d/41-commands" <<'COMMANDS'
+list=(
+    "Configuration","","armbian-config","true"
+    "Upgrade","","armbian-upgrade","[[ \\"${NUM_UPDATES}\\\" -gt 0 ]]"
+    "Monitoring","","htop","true"
+)
+COMMANDS
+SDCARD="$brand_tmp" SRC="$brand_src" bash -c '
+  exit_with_error() { printf "ERROR: %s\\n" "$*" >&2; exit 1; }
+  display_alert() { :; }
+  source "$1"
+  post_repo_customize_image__dbai_branding
+' _ "$ROOT/extensions/dbai-branding.sh"
+grep -qx 'VENDOR="DBAI-2K26"' "$brand_tmp/etc/armbian-release"
+grep -qx 'VENDORPRETTYNAME="DBAI-2K26"' "$brand_tmp/etc/armbian-release"
+grep -qx 'VENDORCOLOR="255;55;55"' "$brand_tmp/etc/armbian-release"
+test -x "$brand_tmp/usr/local/bin/dbai-apps"
+grep -Fq '# --- DBAI board and version line ---' "$brand_tmp/etc/update-motd.d/10-armbian-header"
+grep -Fq 'figlet -f slant' "$brand_tmp/etc/update-motd.d/10-armbian-header"
+grep -Fq '"Applications","","dbai-apps","true"' "$brand_tmp/etc/update-motd.d/41-commands"
 
 echo "All input, checkbox, naming, and application compatibility tests passed."
