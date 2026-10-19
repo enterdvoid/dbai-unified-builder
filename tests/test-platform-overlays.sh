@@ -51,7 +51,7 @@ exit_with_error() {
 	exit 1
 }
 display_alert() { :; }
-# shellcheck source=../extensions/dbai-platform-overlays.sh
+# shellcheck disable=SC1091 # The repo_root-based source path is resolved at runtime in this fixture.
 source "$repo_root/extensions/dbai-platform-overlays.sh"
 
 extension_prepare_config__dbai_platform_overlays

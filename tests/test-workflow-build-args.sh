@@ -22,6 +22,7 @@ grep -Fq 'cp scripts/patch-armbian-motd.py scripts/dbai-apps.sh armbian-source/u
   echo "FAIL: workflow must stage the in-place Armbian MOTD patcher and app-status CLI." >&2
   exit 1
 }
+# shellcheck disable=SC2016 # Match literal variable references embedded in workflow YAML.
 grep -Fq 'bash scripts/validate-platform-archives.sh "$GITHUB_WORKSPACE/platform"' "$workflow" || {
   echo "FAIL: workflow must validate the U-Boot and Ophub userspace archives before building." >&2
   exit 1
@@ -30,6 +31,7 @@ grep -Fq 'cp extensions/dbai-platform-overlays.sh armbian-source/userpatches/ext
   echo "FAIL: workflow must stage the platform overlays extension." >&2
   exit 1
 }
+# shellcheck disable=SC2016 # Match literal variable references embedded in workflow YAML.
 grep -Fq 'cp "$GITHUB_WORKSPACE/platform/u-boot.tar.gz" "$GITHUB_WORKSPACE/platform/usr.tar.gz" armbian-source/userpatches/platform/' "$workflow" || {
   echo "FAIL: workflow must stage the U-Boot and userspace archives." >&2
   exit 1
