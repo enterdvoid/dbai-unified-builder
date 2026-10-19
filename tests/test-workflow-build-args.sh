@@ -22,10 +22,10 @@ grep -Fq 'cp scripts/patch-armbian-motd.py scripts/dbai-apps.sh armbian-source/u
   echo "FAIL: workflow must stage the in-place Armbian MOTD patcher and app-status CLI." >&2
   exit 1
 }
-grep -Fq 'MOTD_DISABLE' "$repo_root/extensions/dbai-branding.sh" && {
+if grep -Fq 'MOTD_DISABLE' "$repo_root/extensions/dbai-branding.sh"; then
   echo "FAIL: DBAI should preserve the stock Armbian MOTD sections instead of disabling them." >&2
   exit 1
-}
+fi
 
 grep -Fq 'export COLUMNS=80' "$workflow" || {
   echo "FAIL: build step must set a stable terminal width for non-interactive package maintainer scripts." >&2
