@@ -62,6 +62,17 @@ mkdir -p "$root/boot/dtb" "$root/etc"
 printf '%s\n' 'unchanged-kernel-content' > "$root/boot/vmlinuz-6.1.66-DBAI"
 printf '%s\n' 'unchanged-original-uinitrd-content' > "$root/boot/uInitrd-6.1.66-DBAI"
 printf '%s\n' 'custom-dtb' > "$root/boot/dtb/test.dtb"
+cat > "$root/boot/uEnv.txt" <<'UENV'
+KERNEL=stale-release
+LINUX=/Image
+INITRD=/uInitrd
+APPEND=root=UUID=example rw
+UENV
+dbai_sync_custom_kernel_uenv "$root/boot/uEnv.txt" "6.1.66-DBAI" "vmlinuz-6.1.66-DBAI" "uInitrd-6.1.66-DBAI"
+grep -Fxq 'KERNEL=6.1.66-DBAI' "$root/boot/uEnv.txt"
+grep -Fxq 'LINUX=/vmlinuz-6.1.66-DBAI' "$root/boot/uEnv.txt"
+grep -Fxq 'INITRD=/uInitrd-6.1.66-DBAI' "$root/boot/uEnv.txt"
+grep -Fxq 'APPEND=root=UUID=example rw' "$root/boot/uEnv.txt"
 kernel_sha="$(sha256sum "$root/boot/vmlinuz-6.1.66-DBAI" | awk '{print $1}')"
 ramdisk_sha="$(sha256sum "$root/boot/uInitrd-6.1.66-DBAI" | awk '{print $1}')"
 cat > "$root/etc/dbai-custom-kernel-manifest.txt" <<EOF
