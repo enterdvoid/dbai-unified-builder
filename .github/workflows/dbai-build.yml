@@ -626,6 +626,10 @@ jobs:
           SOURCE_SHA: ${{ steps.source.outputs.sha }}
         run: |
           set -euo pipefail
+          # Debian package maintainer scripts may run without a TTY in GitHub Actions.
+          # Keep a deterministic terminal size; Bullseye packages can fail when these are empty.
+          export COLUMNS=80
+          export LINES=24
           cd armbian-source
 
           BUILD_MINIMAL=no
