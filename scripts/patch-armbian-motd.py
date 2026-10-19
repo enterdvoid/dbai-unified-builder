@@ -67,7 +67,7 @@ if [[ "${VERSION:-}" == *trunk* ]]; then
 	VERSION="${VERSION} rolling"
 fi
 
-printf ' Armbian \\e[0;92mv%s\\e[0m | Linux \\e[0;92m%s\\e[0m | running on \\e[0;96m%s\\e[0m\\n' \\
+printf ' Armbian \e[0;92mv%s\e[0m | Linux \e[0;92m%s\e[0m | running on \e[0;96m%s\e[0m\n' \
 	"${VERSION}" "${KERNELID}" "${DBAI_BOARD_DISPLAY}"
 
 """
