@@ -16,6 +16,8 @@ bash tests/test-custom-kernel-residue-cleanup.sh
 bash tests/test-custom-kernel-image-verifier.sh
 bash tests/test-custom-kernel-bundle-integration.sh
 bash tests/test-proxmox-firstlogin-service-user.sh
+bash tests/test-patch-armbian-motd.sh
+bash tests/test-dbai-apps.sh
 ```
 
 The GitHub Actions validation workflow additionally runs actionlint on all workflow YAML files and validates the embedded Docker Compose configuration.
