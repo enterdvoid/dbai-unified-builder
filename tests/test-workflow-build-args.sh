@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 workflow=".github/workflows/dbai-build.yml"
 [[ -s "$workflow" ]] || { echo "FAIL: missing $workflow" >&2; exit 1; }
 
@@ -19,6 +20,10 @@ grep -Fq 'cp extensions/dbai-branding.sh armbian-source/userpatches/extensions/'
 }
 grep -Fq 'cp scripts/patch-armbian-motd.py scripts/dbai-apps.sh armbian-source/userpatches/tools/' "$workflow" || {
   echo "FAIL: workflow must stage the in-place Armbian MOTD patcher and app-status CLI." >&2
+  exit 1
+}
+grep -Fq 'MOTD_DISABLE' "$repo_root/extensions/dbai-branding.sh" && {
+  echo "FAIL: DBAI should preserve the stock Armbian MOTD sections instead of disabling them." >&2
   exit 1
 }
 
