@@ -9,7 +9,7 @@ from __future__ import annotations
 import pathlib
 import sys
 
-ROOTFS_UUID = "19450817-1945-4817-a817-194508170817"
+ROOTFS_UUID = "19450817-1998-4512-a817-202510202026"
 UUID_MARKER = "# DBAI-STATIC-ROOTFS-UUID-BEGIN"
 MKFS_LINE = (
     'run_host_command_logged mkfs.${mkfs[$ROOTFS_TYPE]} '
