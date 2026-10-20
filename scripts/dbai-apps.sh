@@ -515,6 +515,123 @@ print_header_box() {
 }
 
 # --- Update Detection & Application Execution ---
+get_app_version_info() {
+  local app="$1"
+  APP_CUR_VER="-"
+  APP_NEW_VER="-"
+  APP_HAS_UPDATE="no"
+
+  case "$app" in
+    docker)
+      if command -v docker >/dev/null 2>&1; then
+        local raw_v
+        raw_v="$(docker --version 2>/dev/null | awk '{print $3}' | tr -d ',')"
+        APP_CUR_VER="${raw_v:-installed}"
+      fi
+      local cand="" inst=""
+      for pkg in docker-ce docker.io; do
+        inst="$(apt-cache policy "$pkg" 2>/dev/null | grep -i 'Installed:' | awk '{print $2}')"
+        if [[ -n "$inst" && "$inst" != "(none)" ]]; then
+          cand="$(apt-cache policy "$pkg" 2>/dev/null | grep -i 'Candidate:' | awk '{print $2}')"
+          break
+        fi
+      done
+      if [[ -n "$cand" && "$cand" != "(none)" ]]; then
+        local short_cand="${cand%%-*}"
+        APP_NEW_VER="${short_cand:0:14}"
+        if [[ "$cand" != "$inst" ]]; then
+          APP_HAS_UPDATE="yes"
+        fi
+      else
+        APP_NEW_VER="${APP_CUR_VER:0:14}"
+      fi
+      ;;
+    portainer)
+      APP_CUR_VER="latest"
+      APP_NEW_VER="latest"
+      APP_HAS_UPDATE="no"
+      ;;
+    tailscale)
+      if command -v tailscale >/dev/null 2>&1; then
+        APP_CUR_VER="$(tailscale version 2>/dev/null | head -n1 || echo 'installed')"
+        local cand inst
+        cand="$(apt-cache policy tailscale 2>/dev/null | grep -i 'Candidate:' | awk '{print $2}')"
+        inst="$(apt-cache policy tailscale 2>/dev/null | grep -i 'Installed:' | awk '{print $2}')"
+        if [[ -n "$cand" && "$cand" != "(none)" ]]; then
+          APP_NEW_VER="${cand:0:14}"
+          [[ "$cand" != "$inst" ]] && APP_HAS_UPDATE="yes"
+        else
+          APP_NEW_VER="${APP_CUR_VER:0:14}"
+        fi
+      fi
+      ;;
+    cloudflared)
+      if command -v cloudflared >/dev/null 2>&1; then
+        APP_CUR_VER="$(cloudflared --version 2>/dev/null | head -n1 | awk '{print $3}')"
+        APP_NEW_VER="${APP_CUR_VER:0:14}"
+      fi
+      ;;
+    proxmox*|pve*)
+      if command -v pveversion >/dev/null 2>&1; then
+        APP_CUR_VER="$(pveversion 2>/dev/null | awk -F'/' '{print $2}' | awk '{print $1}')"
+      elif package_installed pve-manager; then
+        APP_CUR_VER="$(package_version pve-manager)"
+      fi
+      local cand
+      cand="$(apt-cache policy pve-manager 2>/dev/null | grep -i 'Candidate:' | awk '{print $2}')"
+      if [[ -n "$cand" && "$cand" != "(none)" ]]; then
+        APP_NEW_VER="${cand:0:14}"
+        local inst
+        inst="$(apt-cache policy pve-manager 2>/dev/null | grep -i 'Installed:' | awk '{print $2}')"
+        [[ "$cand" != "$inst" ]] && APP_HAS_UPDATE="yes"
+      else
+        APP_NEW_VER="${APP_CUR_VER:0:14}"
+      fi
+      ;;
+    openmediavault|omv)
+      if package_installed openmediavault; then
+        APP_CUR_VER="$(package_version openmediavault)"
+        local cand inst
+        cand="$(apt-cache policy openmediavault 2>/dev/null | grep -i 'Candidate:' | awk '{print $2}')"
+        inst="$(apt-cache policy openmediavault 2>/dev/null | grep -i 'Installed:' | awk '{print $2}')"
+        if [[ -n "$cand" && "$cand" != "(none)" ]]; then
+          APP_NEW_VER="${cand:0:14}"
+          [[ "$cand" != "$inst" ]] && APP_HAS_UPDATE="yes"
+        else
+          APP_NEW_VER="${APP_CUR_VER:0:14}"
+        fi
+      fi
+      ;;
+    casaos)
+      if command -v casaos >/dev/null 2>&1; then
+        APP_CUR_VER="$(casaos -v 2>/dev/null | awk '{print $NF}' || echo 'installed')"
+      fi
+      APP_NEW_VER="${APP_CUR_VER:0:14}"
+      ;;
+    homeassistant)
+      APP_CUR_VER="installed"
+      APP_NEW_VER="latest"
+      ;;
+    hermes)
+      if command -v hermes >/dev/null 2>&1; then
+        APP_CUR_VER="$(hermes --version 2>/dev/null | awk '{print $NF}' || echo 'installed')"
+      fi
+      APP_NEW_VER="${APP_CUR_VER:0:14}"
+      ;;
+    9router|lightnvr|go2rtc)
+      APP_CUR_VER="container"
+      APP_NEW_VER="latest"
+      ;;
+    *)
+      APP_CUR_VER="installed"
+      APP_NEW_VER="latest"
+      ;;
+  esac
+
+  [[ ${#APP_CUR_VER} -gt 15 ]] && APP_CUR_VER="${APP_CUR_VER:0:12}..."
+  [[ ${#APP_NEW_VER} -gt 14 ]] && APP_NEW_VER="${APP_NEW_VER:0:11}..."
+}
+
 perform_app_update() {
   local app="$1"
   printf '\n%s[MEMPERBARUI]%s %s...\n' "$C_GREEN" "$C_RESET" "$app"
@@ -558,82 +675,21 @@ perform_app_update() {
   esac
   printf '%sPembaruan selesai.%s\n' "$C_GREEN" "$C_RESET"
 }
-
 check_and_offer_update() {
   local app="$1"
-  local update_available=no
-  local cur_ver="installed"
-  local new_ver=""
-
   printf '\n  Memeriksa status pembaruan untuk %s...\n' "$RESULT_NAME"
+  get_app_version_info "$app"
 
-  case "$app" in
-    docker)
-      if command -v apt-get >/dev/null 2>&1; then
-        apt-get update -qq 2>/dev/null || true
-        local cand inst
-        cand="$(apt-cache policy docker-ce 2>/dev/null | grep -i 'Candidate:' | awk '{print $2}')"
-        inst="$(apt-cache policy docker-ce 2>/dev/null | grep -i 'Installed:' | awk '{print $2}')"
-        if [[ -n "$cand" && -n "$inst" && "$cand" != "(none)" && "$cand" != "$inst" ]]; then
-          update_available=yes
-          cur_ver="$inst"
-          new_ver="$cand"
-        fi
-      fi
-      ;;
-    portainer)
-      if command -v docker >/dev/null 2>&1; then
-        cur_ver="local image"
-        new_ver="portainer/portainer-ce:latest"
-        update_available=prompt
-      fi
-      ;;
-    9router|lightnvr)
-      if command -v docker >/dev/null 2>&1; then
-        cur_ver="local image"
-        new_ver="latest"
-        update_available=prompt
-      fi
-      ;;
-    tailscale)
-      if command -v tailscale >/dev/null 2>&1; then
-        local ts_ver
-        ts_ver="$(tailscale version 2>/dev/null | head -n1 || echo 'installed')"
-        cur_ver="$ts_ver"
-        if command -v apt-get >/dev/null 2>&1; then
-          apt-get update -qq 2>/dev/null || true
-          local cand inst
-          cand="$(apt-cache policy tailscale 2>/dev/null | grep -i 'Candidate:' | awk '{print $2}')"
-          inst="$(apt-cache policy tailscale 2>/dev/null | grep -i 'Installed:' | awk '{print $2}')"
-          if [[ -n "$cand" && -n "$inst" && "$cand" != "(none)" && "$cand" != "$inst" ]]; then
-            update_available=yes
-            new_ver="$cand"
-          fi
-        fi
-      fi
-      ;;
-    cloudflared)
-      if command -v cloudflared >/dev/null 2>&1; then
-        cur_ver="$(cloudflared --version 2>/dev/null | head -n1 | awk '{print $3}')"
-        update_available=prompt
-        new_ver="latest GitHub release"
-      fi
-      ;;
-    *)
-      update_available=no
-      ;;
-  esac
-
-  if [[ "$update_available" == yes ]]; then
-    printf '  %sPembaruan tersedia!%s Versi terpasang: %s -> Versi baru: %s\n' "$C_GREEN" "$C_RESET" "$cur_ver" "$new_ver"
+  if [[ "$APP_HAS_UPDATE" == "yes" ]]; then
+    printf '  %sPembaruan tersedia!%s Versi terpasang: %s -> Versi baru: %s\n' "$C_GREEN" "$C_RESET" "$APP_CUR_VER" "$APP_NEW_VER"
     read -r -p "  Apakah Anda ingin memperbarui sekarang? [y/N]: " do_up
     if [[ "$do_up" == "y" || "$do_up" == "Y" ]]; then
       perform_app_update "$app"
     else
       printf '  Pembaruan dilewati.\n'
     fi
-  elif [[ "$update_available" == prompt ]]; then
-    printf '  Versi terpasang: %s.\n' "$cur_ver"
+  elif [[ "$APP_CUR_VER" == "latest" || "$APP_CUR_VER" == "container" ]]; then
+    printf '  Versi terpasang: %s.\n' "$APP_CUR_VER"
     read -r -p "  Tarik image / versi terbaru dari repository? [y/N]: " do_up
     if [[ "$do_up" == "y" || "$do_up" == "Y" ]]; then
       perform_app_update "$app"
@@ -641,7 +697,7 @@ check_and_offer_update() {
       printf '  Pembaruan dilewati.\n'
     fi
   else
-    printf '  %sAplikasi sudah menggunakan versi terkini (%s).%s\n' "$C_GREEN" "$cur_ver" "$C_RESET"
+    printf '  %sAplikasi sudah menggunakan versi terkini (%s).%s\n' "$C_GREEN" "$APP_CUR_VER" "$C_RESET"
   fi
 }
 
@@ -855,19 +911,113 @@ menu_upgrade() {
 
     print_header_box "MENU PEMBARUAN / UPGRADE APLIKASI"
 
+    # Scan installed applications
+    local inst_keys=()
+    local inst_titles=()
+    local inst_cur_vers=()
+    local inst_new_vers=()
+    local inst_updates=()
+    local update_count=0
+
+    local i
+    for i in {0..11}; do
+      local k="${APP_KEYS[$i]}"
+      detect_app "$k" >/dev/null 2>&1 || true
+      if [[ "$RESULT_STATUS" == "running" || "$RESULT_STATUS" == "stopped" ]]; then
+        get_app_version_info "$k"
+        inst_keys+=("$k")
+        inst_titles+=("${APP_TITLES[$i]}")
+        inst_cur_vers+=("$APP_CUR_VER")
+        inst_new_vers+=("$APP_NEW_VER")
+        inst_updates+=("$APP_HAS_UPDATE")
+        [[ "$APP_HAS_UPDATE" == "yes" ]] && ((update_count++))
+      fi
+    done
+
+    local total_inst="${#inst_keys[@]}"
+    local sum_plain="  Status Update: [Aplikasi Terpasang: ${total_inst}]   [Pembaruan Tersedia: ${update_count}]"
+    local pad_end=$(( 76 - ${#sum_plain} ))
+    printf "%s║%s  Status Update: [Aplikasi Terpasang: %b%s%b]   [Pembaruan Tersedia: %b%s%b]%*s%s║%s\n"       "$C_CYAN" "$C_RESET"       "$C_GREEN" "$total_inst" "$C_RESET"       "$C_YELLOW" "$update_count" "$C_RESET"       "$pad_end" ""       "$C_CYAN" "$C_RESET"
+
+    printf "%s%s%s\n" "$C_CYAN" "$div" "$C_RESET"
     printf "%s║%s                                                                            %s║%s\n" "$C_CYAN" "$C_RESET" "$C_CYAN" "$C_RESET"
+
+    if [[ "$total_inst" -eq 0 ]]; then
+      printf "%s║%s   Belum ada aplikasi yang terpasang di sistem.                             %s║%s\n" "$C_CYAN" "$C_RESET" "$C_CYAN" "$C_RESET"
+      printf "%s║%s   Silakan pasang aplikasi terlebih dahulu melalui Menu Penginstalan [1].   %s║%s\n" "$C_CYAN" "$C_RESET" "$C_CYAN" "$C_RESET"
+      printf "%s║%s                                                                            %s║%s\n" "$C_CYAN" "$C_RESET" "$C_CYAN" "$C_RESET"
+      printf "%s%s%s\n" "$C_CYAN" "$div" "$C_RESET"
+      printf "%s║%s   [S] 📦 Perbarui Paket Sistem Host (apt update && upgrade)                %s║%s\n" "$C_CYAN" "$C_RESET" "$C_CYAN" "$C_RESET"
+      printf "%s║%s   [0] 🚪 Kembali ke Menu Utama                                             %s║%s\n" "$C_CYAN" "$C_RESET" "$C_CYAN" "$C_RESET"
+      printf "%s║%s                                                                            %s║%s\n" "$C_CYAN" "$C_RESET" "$C_CYAN" "$C_RESET"
+      printf "%s%s%s\n" "$C_CYAN" "$bot" "$C_RESET"
+
+      read -r -p "Masukkan pilihan Anda [0/S]: " up_opt
+      case "$up_opt" in
+        s|S)
+          printf "\nMemperbarui paket sistem via APT...\n"
+          apt-get update && apt-get upgrade -y
+          read -r -p "Tekan [Enter] untuk melanjutkan..."
+          ;;
+        *) return 0 ;;
+      esac
+      continue
+    fi
+
+    # Display installed applications table
+    printf "%s║%s   #   APLIKASI                  VERSI SAAT INI   VERSI TERBARU   STATUS    %s║%s\n" "$C_CYAN" "$C_RESET" "$C_CYAN" "$C_RESET"
+    printf "%s║%s  ───  ────────────────────────  ───────────────  ──────────────  ────────  %s║%s\n" "$C_CYAN" "$C_RESET" "$C_CYAN" "$C_RESET"
+
+    local j
+    for j in "${!inst_keys[@]}"; do
+      local idx=$((j + 1))
+      local t="${inst_titles[$j]}"
+      local cv="${inst_cur_vers[$j]}"
+      local nv="${inst_new_vers[$j]}"
+      local has_up="${inst_updates[$j]}"
+
+      local stat_str="✓ TERBARU " stat_col="$C_GREEN"
+      if [[ "$has_up" == "yes" ]]; then
+        stat_str="● UPDATE  " stat_col="$C_YELLOW"
+      fi
+
+      printf "%s║%s  %2d   %-24s  %-15s  %-14s  %b%s%b%s║%s\n"         "$C_CYAN" "$C_RESET"         "$idx" "$t" "$cv" "$nv"         "$stat_col" "$stat_str" "$C_RESET"         "$C_CYAN" "$C_RESET"
+    done
+
+    printf "%s║%s                                                                            %s║%s\n" "$C_CYAN" "$C_RESET" "$C_CYAN" "$C_RESET"
+    printf "%s%s%s\n" "$C_CYAN" "$div" "$C_RESET"
     printf "%s║%s  Pilihan Tindakan Pembaruan:                                               %s║%s\n" "$C_CYAN" "$C_RESET" "$C_CYAN" "$C_RESET"
     printf "%s║%s                                                                            %s║%s\n" "$C_CYAN" "$C_RESET" "$C_CYAN" "$C_RESET"
-    printf "%s║%s   [1] 🐋 Perbarui Semua Container Docker (compose pull & up -d)            %s║%s\n" "$C_CYAN" "$C_RESET" "$C_CYAN" "$C_RESET"
-    printf "%s║%s   [2] 📦 Perbarui Paket Sistem & Aplikasi APT (apt update && upgrade)      %s║%s\n" "$C_CYAN" "$C_RESET" "$C_CYAN" "$C_RESET"
-    printf "%s║%s   [3] 🔍 Periksa & Update Aplikasi Tertentu                                %s║%s\n" "$C_CYAN" "$C_RESET" "$C_CYAN" "$C_RESET"
+    printf "%s║%s   [A] 🚀 Perbarui SEMUA Aplikasi yang Memiliki Update                      %s║%s\n" "$C_CYAN" "$C_RESET" "$C_CYAN" "$C_RESET"
+
+    local opt_spec="   [1-${total_inst}] 📦 Perbarui Aplikasi Tertentu Sesuai Nomor"
+    local opt_pad=$(( 75 - ${#opt_spec} ))
+    printf "%s║%s%s%*s%s║%s\n" "$C_CYAN" "$C_RESET" "$opt_spec" "$opt_pad" "" "$C_CYAN" "$C_RESET"
+
+    printf "%s║%s   [C] 🐋 Perbarui Semua Image Container Docker (compose pull & up)         %s║%s\n" "$C_CYAN" "$C_RESET" "$C_CYAN" "$C_RESET"
+    printf "%s║%s   [S] 📦 Perbarui Paket Sistem Host (apt update && upgrade)                %s║%s\n" "$C_CYAN" "$C_RESET" "$C_CYAN" "$C_RESET"
+    printf "%s║%s   [R] 🔄 Refresh / Periksa Ulang Status Pembaruan                          %s║%s\n" "$C_CYAN" "$C_RESET" "$C_CYAN" "$C_RESET"
     printf "%s║%s   [0] 🚪 Kembali ke Menu Utama                                             %s║%s\n" "$C_CYAN" "$C_RESET" "$C_CYAN" "$C_RESET"
     printf "%s║%s                                                                            %s║%s\n" "$C_CYAN" "$C_RESET" "$C_CYAN" "$C_RESET"
     printf "%s%s%s\n" "$C_CYAN" "$bot" "$C_RESET"
 
-    read -r -p "Masukkan pilihan Anda [0-3]: " up_opt
+    read -r -p "Masukkan pilihan Anda [0-${total_inst}/A/C/S/R]: " up_opt
     case "$up_opt" in
-      1)
+      a|A)
+        printf "\nMemperbarui semua aplikasi yang memiliki update...\n"
+        local updated_any=no
+        for j in "${!inst_keys[@]}"; do
+          if [[ "${inst_updates[$j]}" == "yes" ]]; then
+            perform_app_update "${inst_keys[$j]}"
+            updated_any=yes
+          fi
+        done
+        if [[ "$updated_any" == "no" ]]; then
+          printf "Semua aplikasi sudah dalam versi terkini. Tidak ada yang perlu diperbarui.\n"
+        fi
+        read -r -p "Tekan [Enter] untuk melanjutkan..."
+        ;;
+      c|C)
         if [[ -f /opt/dbai/apps/docker-compose.yml ]]; then
           printf "\nMenarik image container terbaru...\n"
           docker compose -f /opt/dbai/apps/docker-compose.yml pull
@@ -877,31 +1027,23 @@ menu_upgrade() {
         fi
         read -r -p "Tekan [Enter] untuk melanjutkan..."
         ;;
-      2)
+      s|S)
         printf "\nMemperbarui paket sistem via APT...\n"
         apt-get update && apt-get upgrade -y
         read -r -p "Tekan [Enter] untuk melanjutkan..."
         ;;
-      3)
-        printf "\nPilih aplikasi yang ingin diperiksa:\n"
-        local idx
-        for idx in "${!APP_KEYS[@]}"; do
-          printf "  [%2d] %s\n" "$((idx+1))" "${APP_TITLES[$idx]}"
-        done
-        read -r -p "Pilihan [1-12]: " chk_app
-        if [[ "$chk_app" =~ ^[1-9]$|^1[0-2]$ ]]; then
-          local akey="${APP_KEYS[$((chk_app-1))]}"
-          detect_app "$akey" >/dev/null 2>&1 || true
-          if [[ "$RESULT_STATUS" == "not installed" ]]; then
-            printf "Aplikasi %s belum terpasang.\n" "${APP_TITLES[$((chk_app-1))]}"
-          else
-            check_and_offer_update "$akey"
-          fi
+      r|R)
+        printf "\nMenyegarkan status pembaruan...\n"
+        sleep 1
+        ;;
+      0|q|exit) return 0 ;;
+      *)
+        if [[ "$up_opt" =~ ^[0-9]+$ ]] && (( up_opt >= 1 && up_opt <= total_inst )); then
+          local sel_key="${inst_keys[$((up_opt-1))]}"
+          perform_app_update "$sel_key"
           read -r -p "Tekan [Enter] untuk melanjutkan..."
         fi
         ;;
-      0|q|exit) return 0 ;;
-      *) ;;
     esac
   done
 }
@@ -969,7 +1111,9 @@ menu_services() {
 
     printf "%s║%s                                                                            %s║%s\n" "$C_CYAN" "$C_RESET" "$C_CYAN" "$C_RESET"
     printf "%s%s%s\n" "$C_CYAN" "$div" "$C_RESET"
-    printf "%s║%s  Pilih nomor layanan [1-%d] untuk kontrol, atau [0] untuk kembali:         %s║%s\n" "$C_CYAN" "$C_RESET" "$((num-1))" "$C_CYAN" "$C_RESET"
+    local svc_prompt="  Pilih nomor layanan [1-$((num-1))] untuk kontrol, atau [0] untuk kembali:"
+    local svc_pad=$(( 76 - ${#svc_prompt} ))
+    printf "%s║%s%s%*s%s║%s\n" "$C_CYAN" "$C_RESET" "$svc_prompt" "$svc_pad" "" "$C_CYAN" "$C_RESET"
     printf "%s%s%s\n" "$C_CYAN" "$bot" "$C_RESET"
 
     read -r -p "Masukkan pilihan Anda [0-$((num-1))]: " sel_svc
