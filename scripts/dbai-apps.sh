@@ -421,9 +421,9 @@ detect_system_os() {
   local ver_id=""
 
   if [[ -r "$os_file" ]]; then
-    CURRENT_OS_ID="$(sed -n 's/^ID=//p' "$os_file" | head -n1 | tr -d '"')"
-    CURRENT_OS_CODENAME="$(sed -n 's/^VERSION_CODENAME=//p' "$os_file" | head -n1 | tr -d '"')"
-    ver_id="$(sed -n 's/^VERSION_ID=//p' "$os_file" | head -n1 | tr -d '"')"
+    CURRENT_OS_ID="$(sed -n 's/^ID=//p' "$os_file" | head -n1 | tr -d '"' | tr -d "'")"
+    CURRENT_OS_CODENAME="$(sed -n 's/^VERSION_CODENAME=//p' "$os_file" | head -n1 | tr -d '"' | tr -d "'")"
+    ver_id="$(sed -n 's/^VERSION_ID=//p' "$os_file" | head -n1 | tr -d '"' | tr -d "'")"
   fi
 
   [[ -z "$CURRENT_OS_ID" ]] && CURRENT_OS_ID="debian"
@@ -477,15 +477,7 @@ check_app_support() {
       fi
       ;;
     openmediavault|omv)
-      if [[ "$CURRENT_OS_ID" == "ubuntu" ]]; then
-        SUPPORT_STATUS="incompatible"
-        if [[ "$CURRENT_OS_CODENAME" == "resolute" ]]; then
-          SUPPORT_REASON="✗ Resolute Blkd "
-        else
-          SUPPORT_REASON="✗ Debian Only   "
-        fi
-        SUPPORT_COLOR="$C_RED"
-      elif [[ "$CURRENT_OS_ID" != "debian" ]]; then
+      if [[ "$CURRENT_OS_ID" == "ubuntu" || "$CURRENT_OS_ID" != "debian" ]]; then
         SUPPORT_STATUS="incompatible"
         SUPPORT_REASON="✗ Debian Only   "
         SUPPORT_COLOR="$C_RED"
@@ -499,20 +491,185 @@ check_app_support() {
   esac
 }
 
+# --- Unified Top Header Box (Exact 78 columns) ---
+print_header_box() {
+  local title="$1"
+  local top="╔════════════════════════════════════════════════════════════════════════════╗"
+  local div="╠════════════════════════════════════════════════════════════════════════════╣"
+
+  printf "%s%s%s\n" "$C_CYAN" "$top" "$C_RESET"
+
+  local p_left=$(( (76 - ${#title}) / 2 ))
+  local p_right=$(( 76 - ${#title} - p_left ))
+  printf "%s║%s%*s%s%*s%s║%s\n" "$C_CYAN" "$C_RESET" "$p_left" "" "$title" "$p_right" "" "$C_CYAN" "$C_RESET"
+
+  local host_line="Host OS: ${CURRENT_OS_PRETTY} | Arch: ${CURRENT_ARCH} | Kernel: ${CURRENT_KERNEL}"
+  if (( ${#host_line} > 74 )); then
+    host_line="${host_line:0:71}..."
+  fi
+  p_left=$(( (76 - ${#host_line}) / 2 ))
+  p_right=$(( 76 - ${#host_line} - p_left ))
+  printf "%s║%s%*s%s%*s%s║%s\n" "$C_CYAN" "$C_RESET" "$p_left" "" "$host_line" "$p_right" "" "$C_CYAN" "$C_RESET"
+
+  printf "%s%s%s\n" "$C_CYAN" "$div" "$C_RESET"
+}
+
+# --- Update Detection & Application Execution ---
+perform_app_update() {
+  local app="$1"
+  printf '\n%s[MEMPERBARUI]%s %s...\n' "$C_GREEN" "$C_RESET" "$app"
+  case "$app" in
+    docker)
+      apt-get update
+      if ! apt-get install --only-upgrade -y docker-ce docker-ce-cli containerd.io; then
+        apt-get install --only-upgrade -y docker.io || true
+      fi
+      systemctl restart docker || true
+      ;;
+    portainer)
+      docker pull portainer/portainer-ce:latest
+      docker stop dbai-portainer 2>/dev/null || true
+      docker rm dbai-portainer 2>/dev/null || true
+      docker run -d -p 9000:9000 -p 9443:9443 --name dbai-portainer --restart unless-stopped -v /var/run/docker.sock:/var/run/docker.sock -v portainer_data:/data portainer/portainer-ce:latest
+      ;;
+    9router|lightnvr)
+      if [[ -f /opt/dbai/apps/docker-compose.yml ]]; then
+        docker compose -f /opt/dbai/apps/docker-compose.yml pull
+        docker compose -f /opt/dbai/apps/docker-compose.yml up -d
+      fi
+      ;;
+    tailscale)
+      apt-get update
+      apt-get install --only-upgrade -y tailscale || true
+      systemctl restart tailscaled || true
+      ;;
+    cloudflared)
+      cloudflared update 2>/dev/null || {
+        local cf_arch="arm64"
+        [[ "$(uname -m)" == "x86_64" ]] && cf_arch="amd64"
+        curl -fsSL "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${cf_arch}" -o /usr/local/bin/cloudflared
+        chmod 755 /usr/local/bin/cloudflared
+      }
+      ;;
+    *)
+      apt-get update
+      apt-get install --only-upgrade -y "$app" 2>/dev/null || true
+      ;;
+  esac
+  printf '%sPembaruan selesai.%s\n' "$C_GREEN" "$C_RESET"
+}
+
+check_and_offer_update() {
+  local app="$1"
+  local update_available=no
+  local cur_ver="installed"
+  local new_ver=""
+
+  printf '\n  Memeriksa status pembaruan untuk %s...\n' "$RESULT_NAME"
+
+  case "$app" in
+    docker)
+      if command -v apt-get >/dev/null 2>&1; then
+        apt-get update -qq 2>/dev/null || true
+        local cand inst
+        cand="$(apt-cache policy docker-ce 2>/dev/null | grep -i 'Candidate:' | awk '{print $2}')"
+        inst="$(apt-cache policy docker-ce 2>/dev/null | grep -i 'Installed:' | awk '{print $2}')"
+        if [[ -n "$cand" && -n "$inst" && "$cand" != "(none)" && "$cand" != "$inst" ]]; then
+          update_available=yes
+          cur_ver="$inst"
+          new_ver="$cand"
+        fi
+      fi
+      ;;
+    portainer)
+      if command -v docker >/dev/null 2>&1; then
+        cur_ver="local image"
+        new_ver="portainer/portainer-ce:latest"
+        update_available=prompt
+      fi
+      ;;
+    9router|lightnvr)
+      if command -v docker >/dev/null 2>&1; then
+        cur_ver="local image"
+        new_ver="latest"
+        update_available=prompt
+      fi
+      ;;
+    tailscale)
+      if command -v tailscale >/dev/null 2>&1; then
+        local ts_ver
+        ts_ver="$(tailscale version 2>/dev/null | head -n1 || echo 'installed')"
+        cur_ver="$ts_ver"
+        if command -v apt-get >/dev/null 2>&1; then
+          apt-get update -qq 2>/dev/null || true
+          local cand inst
+          cand="$(apt-cache policy tailscale 2>/dev/null | grep -i 'Candidate:' | awk '{print $2}')"
+          inst="$(apt-cache policy tailscale 2>/dev/null | grep -i 'Installed:' | awk '{print $2}')"
+          if [[ -n "$cand" && -n "$inst" && "$cand" != "(none)" && "$cand" != "$inst" ]]; then
+            update_available=yes
+            new_ver="$cand"
+          fi
+        fi
+      fi
+      ;;
+    cloudflared)
+      if command -v cloudflared >/dev/null 2>&1; then
+        cur_ver="$(cloudflared --version 2>/dev/null | head -n1 | awk '{print $3}')"
+        update_available=prompt
+        new_ver="latest GitHub release"
+      fi
+      ;;
+    *)
+      update_available=no
+      ;;
+  esac
+
+  if [[ "$update_available" == yes ]]; then
+    printf '  %sPembaruan tersedia!%s Versi terpasang: %s -> Versi baru: %s\n' "$C_GREEN" "$C_RESET" "$cur_ver" "$new_ver"
+    read -r -p "  Apakah Anda ingin memperbarui sekarang? [y/N]: " do_up
+    if [[ "$do_up" == "y" || "$do_up" == "Y" ]]; then
+      perform_app_update "$app"
+    else
+      printf '  Pembaruan dilewati.\n'
+    fi
+  elif [[ "$update_available" == prompt ]]; then
+    printf '  Versi terpasang: %s.\n' "$cur_ver"
+    read -r -p "  Tarik image / versi terbaru dari repository? [y/N]: " do_up
+    if [[ "$do_up" == "y" || "$do_up" == "Y" ]]; then
+      perform_app_update "$app"
+    else
+      printf '  Pembaruan dilewati.\n'
+    fi
+  else
+    printf '  %sAplikasi sudah menggunakan versi terkini (%s).%s\n' "$C_GREEN" "$cur_ver" "$C_RESET"
+  fi
+}
+
 execute_install() {
   local app="$1"
   detect_system_os
-  check_app_support "$app"
+  detect_app "$app" >/dev/null 2>&1 || true
 
+  # 1. Pengecekan: apakah aplikasi sudah terpasang?
+  if [[ "$RESULT_STATUS" == "running" || "$RESULT_STATUS" == "stopped" ]]; then
+    printf '\n%s[INFORMASI SISTEM]%s\n' "$C_YELLOW" "$C_RESET"
+    printf 'Aplikasi %s sudah terpasang di sistem (Status: %s).\n' "$RESULT_NAME" "$RESULT_STATUS"
+    printf 'Instalasi ulang tidak dilanjutkan.\n'
+    check_and_offer_update "$app"
+    return 0
+  fi
+
+  # 2. Pengecekan OS Guardrail
+  check_app_support "$app"
   if [[ "$SUPPORT_STATUS" == "incompatible" ]]; then
     printf '\n%s[PERINGATAN KOMPATIBILITAS OS]%s\n' "$C_RED" "$C_RESET"
-    printf 'Instalasi dibatalkan: Aplikasi %s tidak kompatibel dengan OS host saat ini (%s - %s).\n' "$app" "$CURRENT_OS_ID" "$CURRENT_OS_CODENAME"
+    printf 'Instalasi dibatalkan: Aplikasi %s tidak kompatibel dengan OS host saat ini (%s).\n' "$RESULT_NAME" "$CURRENT_OS_PRETTY"
     case "$app" in
       openmediavault|omv)
-        printf 'Alasan teknis: OpenMediaVault sangat terikat pada stack Debian networking/PAM standard dan tidak kompatibel dengan Netplan / versi PAM Ubuntu modern (%s).\n' "$CURRENT_OS_CODENAME"
+        printf 'Alasan teknis: OpenMediaVault dirancang khusus untuk Debian dan tidak kompatibel dengan stack jaringan Netplan / PAM Ubuntu (%s).\n' "$CURRENT_OS_CODENAME"
         ;;
       proxmox*|pve*)
-        printf 'Alasan teknis: Paket Proxmox VE memerlukan kernel dan repositori Debian resmi (%s), tidak didukung pada Ubuntu.\n' "$CURRENT_OS_CODENAME"
+        printf 'Alasan teknis: Paket Proxmox VE memerlukan kernel dan repositori Debian resmi, tidak didukung pada Ubuntu (%s).\n' "$CURRENT_OS_CODENAME"
         ;;
       *)
         printf 'Alasan teknis: %s\n' "$SUPPORT_REASON"
@@ -522,7 +679,8 @@ execute_install() {
     return 1
   fi
 
-  printf '\n%s[MEMULAI INSTALASI]%s %s pada %s (%s)...\n' "$C_GREEN" "$C_RESET" "$app" "$CURRENT_OS_ID" "$CURRENT_OS_CODENAME"
+  # 3. Eksekusi Instalasi Baru
+  printf '\n%s[MEMULAI INSTALASI]%s %s pada %s...\n' "$C_GREEN" "$C_RESET" "$RESULT_NAME" "$CURRENT_OS_PRETTY"
   case "$app" in
     docker)
       apt-get update
@@ -610,43 +768,75 @@ menu_install() {
   while true; do
     detect_system_os
     clear 2>/dev/null || true
-    local top="╔════════════════════════════════════════════════════════════════════════════╗"
     local div="╠════════════════════════════════════════════════════════════════════════════╣"
     local bot="╚════════════════════════════════════════════════════════════════════════════╝"
 
-    printf "%s%s%s\n" "$C_CYAN" "$top" "$C_RESET"
-    printf "%s║%s                     MENU PENGINSTALAN APLIKASI                             %s║%s\n" "$C_CYAN" "$C_RESET" "$C_CYAN" "$C_RESET"
-    printf "%s║%s       Host OS: %-15s | Arch: %-8s                         %s║%s\n" "$C_CYAN" "$C_RESET" "$CURRENT_OS_PRETTY" "$CURRENT_ARCH" "$C_CYAN" "$C_RESET"
-    printf "%s%s%s\n" "$C_CYAN" "$div" "$C_RESET"
-    printf "%s║%s   #   APLIKASI                  TIPE       OS SUPPORT                      %s║%s\n" "$C_CYAN" "$C_RESET" "$C_CYAN" "$C_RESET"
-    printf "%s║%s  ───  ────────────────────────  ─────────  ──────────────                  %s║%s\n" "$C_CYAN" "$C_RESET" "$C_CYAN" "$C_RESET"
+    print_header_box "MENU PENGINSTALAN APLIKASI"
+
+    # Status scan for the 12 apps
+    local app_states=()
+    local app_reasons=()
+    local app_supp_cols=()
 
     local i
     for i in {0..11}; do
       local k="${APP_KEYS[$i]}"
+      detect_app "$k" >/dev/null 2>&1 || true
+      app_states+=("$RESULT_STATUS")
+
+      check_app_support "$k"
+      app_reasons+=("$SUPPORT_REASON")
+      app_supp_cols+=("$SUPPORT_COLOR")
+    done
+
+    printf "%s║%s                                                                            %s║%s\n" "$C_CYAN" "$C_RESET" "$C_CYAN" "$C_RESET"
+    printf "%s║%s   #   APLIKASI                  TIPE       STATUS          OS SUPPORT      %s║%s\n" "$C_CYAN" "$C_RESET" "$C_CYAN" "$C_RESET"
+    printf "%s║%s  ───  ────────────────────────  ─────────  ──────────────  ──────────────  %s║%s\n" "$C_CYAN" "$C_RESET" "$C_CYAN" "$C_RESET"
+
+    for i in {0..11}; do
+      local idx=$((i + 1))
       local t="${APP_TITLES[$i]}"
       local ty="${APP_TYPES[$i]}"
-      check_app_support "$k"
-      printf "%s║%s  %2d   %-26s%-11s%b%b               %s║%s\n" \
+      local st="${app_states[$i]}"
+      local supp="${app_reasons[$i]}"
+      local supp_col="${app_supp_cols[$i]}"
+
+      local stat_sym="○" stat_str="NOT INSTALLED" stat_col="$C_DIM"
+      case "$st" in
+        running) stat_sym="●"; stat_str="RUNNING"; stat_col="$C_GREEN" ;;
+        stopped) stat_sym="■"; stat_str="STOPPED"; stat_col="$C_YELLOW" ;;
+      esac
+
+      local stat_plain="${stat_sym} ${stat_str}"
+      local stat_pad=$(( 16 - ${#stat_plain} ))
+      local supp_pad=$(( 16 - ${#supp} ))
+
+      printf "%s║%s  %2d   %-26s%-11s%b%b%s║%s\n" \
         "$C_CYAN" "$C_RESET" \
-        "$((i+1))" "$t" "$ty" \
-        "$SUPPORT_COLOR" "$SUPPORT_REASON" \
+        "$idx" "$t" "$ty" \
+        "${stat_col}${stat_plain}$(printf '%*s' "$stat_pad" '')${C_RESET}" \
+        "${supp_col}${supp}$(printf '%*s' "$supp_pad" '')${C_RESET}" \
         "$C_CYAN" "$C_RESET"
     done
 
     printf "%s║%s                                                                            %s║%s\n" "$C_CYAN" "$C_RESET" "$C_CYAN" "$C_RESET"
     printf "%s%s%s\n" "$C_CYAN" "$div" "$C_RESET"
-    printf "%s║%s  Masukkan nomor [1-12] untuk memasang, atau [0] untuk kembali:              %s║%s\n" "$C_CYAN" "$C_RESET" "$C_CYAN" "$C_RESET"
+    printf "%s║%s  Petunjuk:                                                                 %s║%s\n" "$C_CYAN" "$C_RESET" "$C_CYAN" "$C_RESET"
+    printf "%s║%s   • Pilih nomor [1-12] untuk memasang aplikasi baru                         %s║%s\n" "$C_CYAN" "$C_RESET" "$C_CYAN" "$C_RESET"
+    printf "%s║%s   • Jika aplikasi sudah terpasang, sistem otomatis memeriksa pembaruan      %s║%s\n" "$C_CYAN" "$C_RESET" "$C_CYAN" "$C_RESET"
+    printf "%s║%s   • Masukkan [0] untuk kembali ke Menu Utama                                %s║%s\n" "$C_CYAN" "$C_RESET" "$C_CYAN" "$C_RESET"
+    printf "%s║%s                                                                            %s║%s\n" "$C_CYAN" "$C_RESET" "$C_CYAN" "$C_RESET"
     printf "%s%s%s\n" "$C_CYAN" "$bot" "$C_RESET"
-    read -r -p "Pilihan Anda: " inst_choice
+
+    read -r -p "Masukkan pilihan Anda [0-12]: " inst_choice
 
     if [[ "$inst_choice" == "0" || -z "$inst_choice" ]]; then
       return 0
     fi
 
     if [[ "$inst_choice" =~ ^[1-9]$|^1[0-2]$ ]]; then
-      local idx=$((inst_choice - 1))
-      local sel_key="${APP_KEYS[$idx]}"
+      local sel_idx=$((inst_choice - 1))
+      local sel_key="${APP_KEYS[$sel_idx]}"
       execute_install "$sel_key" || true
       read -r -p "Tekan [Enter] untuk melanjutkan..."
     else
@@ -657,74 +847,92 @@ menu_install() {
 }
 
 menu_upgrade() {
-  clear 2>/dev/null || true
-  local top="╔════════════════════════════════════════════════════════════════════════════╗"
-  local div="╠════════════════════════════════════════════════════════════════════════════╣"
-  local bot="╚════════════════════════════════════════════════════════════════════════════╝"
+  while true; do
+    detect_system_os
+    clear 2>/dev/null || true
+    local div="╠════════════════════════════════════════════════════════════════════════════╣"
+    local bot="╚════════════════════════════════════════════════════════════════════════════╝"
 
-  printf "%s%s%s\n" "$C_CYAN" "$top" "$C_RESET"
-  printf "%s║%s                   MENU PEMBARUAN / UPGRADE APLIKASI                        %s║%s\n" "$C_CYAN" "$C_RESET" "$C_CYAN" "$C_RESET"
-  printf "%s%s%s\n" "$C_CYAN" "$div" "$C_RESET"
-  printf "  Memeriksa container & status paket sistem...\n\n"
+    print_header_box "MENU PEMBARUAN / UPGRADE APLIKASI"
 
-  if command -v docker >/dev/null 2>&1; then
-    printf "  [Container Docker Aktif]:\n"
-    for c in dbai-portainer dbai-9router dbai-lightnvr; do
-      local st
-      st="$(container_state "$c")"
-      if [[ "$st" != "absent" ]]; then
-        printf "    • %-18s : Status (%s)\n" "$c" "$st"
-      fi
-    done
-    printf "\n"
-  fi
+    printf "%s║%s                                                                            %s║%s\n" "$C_CYAN" "$C_RESET" "$C_CYAN" "$C_RESET"
+    printf "%s║%s  Pilihan Tindakan Pembaruan:                                               %s║%s\n" "$C_CYAN" "$C_RESET" "$C_CYAN" "$C_RESET"
+    printf "%s║%s                                                                            %s║%s\n" "$C_CYAN" "$C_RESET" "$C_CYAN" "$C_RESET"
+    printf "%s║%s   [1] 🐋 Perbarui Semua Container Docker (compose pull & up -d)            %s║%s\n" "$C_CYAN" "$C_RESET" "$C_CYAN" "$C_RESET"
+    printf "%s║%s   [2] 📦 Perbarui Paket Sistem & Aplikasi APT (apt update && upgrade)      %s║%s\n" "$C_CYAN" "$C_RESET" "$C_CYAN" "$C_RESET"
+    printf "%s║%s   [3] 🔍 Periksa & Update Aplikasi Tertentu                                %s║%s\n" "$C_CYAN" "$C_RESET" "$C_CYAN" "$C_RESET"
+    printf "%s║%s   [0] 🚪 Kembali ke Menu Utama                                             %s║%s\n" "$C_CYAN" "$C_RESET" "$C_CYAN" "$C_RESET"
+    printf "%s║%s                                                                            %s║%s\n" "$C_CYAN" "$C_RESET" "$C_CYAN" "$C_RESET"
+    printf "%s%s%s\n" "$C_CYAN" "$bot" "$C_RESET"
 
-  printf "  Pilihan Tindakan Upgrade:\n"
-  printf "   [1] Perbarui image container Docker (docker compose pull & restart)\n"
-  printf "   [2] Perbarui paket sistem (apt-get update && apt-get upgrade)\n"
-  printf "   [0] Kembali ke Menu Utama\n"
-  printf "%s%s%s\n" "$C_CYAN" "$bot" "$C_RESET"
-  read -r -p "Pilihan Anda: " up_opt
-  case "$up_opt" in
-    1)
-      if [[ -f /opt/dbai/apps/docker-compose.yml ]]; then
-        docker compose -f /opt/dbai/apps/docker-compose.yml pull && docker compose -f /opt/dbai/apps/docker-compose.yml up -d
-      else
-        echo "File compose /opt/dbai/apps/docker-compose.yml tidak ditemukan."
-      fi
-      read -r -p "Tekan [Enter] untuk melanjutkan..."
-      ;;
-    2)
-      apt-get update && apt-get upgrade -y
-      read -r -p "Tekan [Enter] untuk melanjutkan..."
-      ;;
-    *) return 0 ;;
-  esac
+    read -r -p "Masukkan pilihan Anda [0-3]: " up_opt
+    case "$up_opt" in
+      1)
+        if [[ -f /opt/dbai/apps/docker-compose.yml ]]; then
+          printf "\nMenarik image container terbaru...\n"
+          docker compose -f /opt/dbai/apps/docker-compose.yml pull
+          docker compose -f /opt/dbai/apps/docker-compose.yml up -d
+        else
+          echo "File compose /opt/dbai/apps/docker-compose.yml tidak ditemukan."
+        fi
+        read -r -p "Tekan [Enter] untuk melanjutkan..."
+        ;;
+      2)
+        printf "\nMemperbarui paket sistem via APT...\n"
+        apt-get update && apt-get upgrade -y
+        read -r -p "Tekan [Enter] untuk melanjutkan..."
+        ;;
+      3)
+        printf "\nPilih aplikasi yang ingin diperiksa:\n"
+        local idx
+        for idx in "${!APP_KEYS[@]}"; do
+          printf "  [%2d] %s\n" "$((idx+1))" "${APP_TITLES[$idx]}"
+        done
+        read -r -p "Pilihan [1-12]: " chk_app
+        if [[ "$chk_app" =~ ^[1-9]$|^1[0-2]$ ]]; then
+          local akey="${APP_KEYS[$((chk_app-1))]}"
+          detect_app "$akey" >/dev/null 2>&1 || true
+          if [[ "$RESULT_STATUS" == "not installed" ]]; then
+            printf "Aplikasi %s belum terpasang.\n" "${APP_TITLES[$((chk_app-1))]}"
+          else
+            check_and_offer_update "$akey"
+          fi
+          read -r -p "Tekan [Enter] untuk melanjutkan..."
+        fi
+        ;;
+      0|q|exit) return 0 ;;
+      *) ;;
+    esac
+  done
 }
 
 menu_services() {
   while true; do
+    detect_system_os
     clear 2>/dev/null || true
-    local top="╔════════════════════════════════════════════════════════════════════════════╗"
     local div="╠════════════════════════════════════════════════════════════════════════════╣"
     local bot="╚════════════════════════════════════════════════════════════════════════════╝"
 
-    printf "%s%s%s\n" "$C_CYAN" "$top" "$C_RESET"
-    printf "%s║%s              SERVICE CONTROLLER (Start / Stop / Restart)                   %s║%s\n" "$C_CYAN" "$C_RESET" "$C_CYAN" "$C_RESET"
-    printf "%s%s%s\n" "$C_CYAN" "$div" "$C_RESET"
+    print_header_box "SERVICE CONTROLLER (Start / Stop / Restart)"
 
-    printf "  Layanan & Container yang Terdeteksi:\n\n"
+    printf "%s║%s                                                                            %s║%s\n" "$C_CYAN" "$C_RESET" "$C_CYAN" "$C_RESET"
+    printf "%s║%s   #   LAYANAN / CONTAINER       TIPE       STATUS          AKSI            %s║%s\n" "$C_CYAN" "$C_RESET" "$C_CYAN" "$C_RESET"
+    printf "%s║%s  ───  ────────────────────────  ─────────  ──────────────  ──────────────  %s║%s\n" "$C_CYAN" "$C_RESET" "$C_CYAN" "$C_RESET"
+
     local svc_names=("docker" "dbai-portainer" "dbai-9router" "dbai-lightnvr" "tailscaled" "cloudflared" "casaos")
-    local svc_types=("service" "container" "container" "container" "service" "service" "service")
+    local svc_labels=("Docker Daemon" "Portainer CE" "9router Proxy" "LightNVR + go2rtc" "Tailscale Daemon" "Cloudflare Tunnel" "CasaOS Gateway")
+    local svc_types=("System" "Container" "Container" "Container" "Network" "Network" "Service")
+
     local available_indices=()
     local num=1
 
     for s_idx in "${!svc_names[@]}"; do
       local s="${svc_names[$s_idx]}"
+      local slabel="${svc_labels[$s_idx]}"
       local stype="${svc_types[$s_idx]}"
       local state="not installed"
 
-      if [[ "$stype" == "container" ]]; then
+      if [[ "$stype" == "Container" ]]; then
         state="$(container_state "$s")"
       else
         if unit_active "${s}.service" || unit_active "$s"; then
@@ -734,47 +942,75 @@ menu_services() {
         fi
       fi
 
-      if [[ "$state" != "not installed" && "$state" != "absent" ]]; then
-        local col="$C_YELLOW"
-        [[ "$state" == "running" ]] && col="$C_GREEN"
-        printf "   [%d] %-18s (%-9s) : %b%s%b\n" "$num" "$s" "$stype" "$col" "$state" "$C_RESET"
-        available_indices+=("$s|$stype")
-        ((num++))
+      local stat_sym="○" stat_str="NOT INSTALLED" stat_col="$C_DIM"
+      local act_hint="Not Installed "
+      if [[ "$state" == "running" ]]; then
+        stat_sym="●" stat_str="RUNNING" stat_col="$C_GREEN"
+        act_hint="Stop / Restart"
+      elif [[ "$state" == "stopped" ]]; then
+        stat_sym="■" stat_str="STOPPED" stat_col="$C_YELLOW"
+        act_hint="Start Service "
       fi
+
+      local stat_plain="${stat_sym} ${stat_str}"
+      local stat_pad=$(( 16 - ${#stat_plain} ))
+      local act_pad=$(( 16 - ${#act_hint} ))
+
+      printf "%s║%s  %2d   %-26s%-11s%b%s%*s%s║%s\n" \
+        "$C_CYAN" "$C_RESET" \
+        "$num" "$slabel" "$stype" \
+        "${stat_col}${stat_plain}$(printf '%*s' "$stat_pad" '')${C_RESET}" \
+        "$act_hint" "$act_pad" "" \
+        "$C_CYAN" "$C_RESET"
+
+      available_indices+=("$s|$stype|$state|$slabel")
+      ((num++))
     done
 
-    if [[ ${#available_indices[@]} -eq 0 ]]; then
-      printf "   Tidak ada service atau container aktif yang ditemukan untuk dikontrol.\n\n"
-      printf "%s%s%s\n" "$C_CYAN" "$bot" "$C_RESET"
-      read -r -p "Tekan [Enter] untuk kembali..."
-      return 0
-    fi
-
-    printf "\n   [0] Kembali ke Menu Utama\n"
+    printf "%s║%s                                                                            %s║%s\n" "$C_CYAN" "$C_RESET" "$C_CYAN" "$C_RESET"
+    printf "%s%s%s\n" "$C_CYAN" "$div" "$C_RESET"
+    printf "%s║%s  Pilih nomor layanan [1-%d] untuk kontrol, atau [0] untuk kembali:         %s║%s\n" "$C_CYAN" "$C_RESET" "$((num-1))" "$C_CYAN" "$C_RESET"
     printf "%s%s%s\n" "$C_CYAN" "$bot" "$C_RESET"
-    read -r -p "Pilih nomor layanan [0-$((num-1))]: " sel_svc
+
+    read -r -p "Masukkan pilihan Anda [0-$((num-1))]: " sel_svc
     if [[ "$sel_svc" == "0" || -z "$sel_svc" ]]; then return 0; fi
 
     if [[ "$sel_svc" =~ ^[0-9]+$ ]] && (( sel_svc >= 1 && sel_svc < num )); then
       local entry="${available_indices[$((sel_svc-1))]}"
       local tgt_name="${entry%%|*}"
-      local tgt_type="${entry##*|}"
+      local rest="${entry#*|}"
+      local tgt_type="${rest%%|*}"
+      local rest2="${rest#*|}"
+      local tgt_state="${rest2%%|*}"
+      local tgt_label="${rest2#*|}"
 
-      printf "\nPilih Aksi untuk %s:\n" "$tgt_name"
+      printf "\nPilih Aksi untuk %s (%s - Status: %s):\n" "$tgt_label" "$tgt_name" "$tgt_state"
       printf " [1] Start\n"
       printf " [2] Stop\n"
       printf " [3] Restart\n"
       printf " [0] Batal\n"
-      read -r -p "Pilihan Anda: " act
+      read -r -p "Pilihan Aksi [0-3]: " act
       case "$act" in
         1)
-          if [[ "$tgt_type" == "container" ]]; then docker start "$tgt_name"; else systemctl start "$tgt_name"; fi
+          if [[ "$tgt_type" == "Container" ]]; then
+            docker start "$tgt_name" || true
+          else
+            systemctl start "$tgt_name" || true
+          fi
           ;;
         2)
-          if [[ "$tgt_type" == "container" ]]; then docker stop "$tgt_name"; else systemctl stop "$tgt_name"; fi
+          if [[ "$tgt_type" == "Container" ]]; then
+            docker stop "$tgt_name" || true
+          else
+            systemctl stop "$tgt_name" || true
+          fi
           ;;
         3)
-          if [[ "$tgt_type" == "container" ]]; then docker restart "$tgt_name"; else systemctl restart "$tgt_name"; fi
+          if [[ "$tgt_type" == "Container" ]]; then
+            docker restart "$tgt_name" || true
+          else
+            systemctl restart "$tgt_name" || true
+          fi
           ;;
         *) ;;
       esac
@@ -784,42 +1020,47 @@ menu_services() {
 }
 
 menu_tunnels() {
-  clear 2>/dev/null || true
-  local top="╔════════════════════════════════════════════════════════════════════════════╗"
-  local div="╠════════════════════════════════════════════════════════════════════════════╣"
-  local bot="╚════════════════════════════════════════════════════════════════════════════╝"
+  while true; do
+    detect_system_os
+    clear 2>/dev/null || true
+    local div="╠════════════════════════════════════════════════════════════════════════════╣"
+    local bot="╚════════════════════════════════════════════════════════════════════════════╝"
 
-  printf "%s%s%s\n" "$C_CYAN" "$top" "$C_RESET"
-  printf "%s║%s            REMOTE TUNNEL SETUP (Tailscale & Cloudflare Auth)              %s║%s\n" "$C_CYAN" "$C_RESET" "$C_CYAN" "$C_RESET"
-  printf "%s%s%s\n" "$C_CYAN" "$div" "$C_RESET"
-  printf "  Menu Pengaturan Remote Tunnel:\n\n"
-  printf "   [1] Cek Status Tailscale (tailscale status)\n"
-  printf "   [2] Login / Hubungkan Tailscale (tailscale up)\n"
-  printf "   [3] Cek Status Cloudflare Tunnel (cloudflared status)\n"
-  printf "   [4] Otentikasi Cloudflare Tunnel (cloudflared tunnel login)\n"
-  printf "   [0] Kembali ke Menu Utama\n\n"
-  printf "%s%s%s\n" "$C_CYAN" "$bot" "$C_RESET"
-  read -r -p "Pilihan Anda [0-4]: " tun_choice
+    print_header_box "REMOTE TUNNEL SETUP (Tailscale & Cloudflare)"
 
-  case "$tun_choice" in
-    1)
-      if command -v tailscale >/dev/null 2>&1; then tailscale status; else echo "Tailscale belum terpasang."; fi
-      read -r -p "Tekan [Enter] untuk melanjutkan..."
-      ;;
-    2)
-      if command -v tailscale >/dev/null 2>&1; then tailscale up; else echo "Tailscale belum terpasang."; fi
-      read -r -p "Tekan [Enter] untuk melanjutkan..."
-      ;;
-    3)
-      if command -v cloudflared >/dev/null 2>&1; then cloudflared --version; else echo "cloudflared belum terpasang."; fi
-      read -r -p "Tekan [Enter] untuk melanjutkan..."
-      ;;
-    4)
-      if command -v cloudflared >/dev/null 2>&1; then cloudflared tunnel login; else echo "cloudflared belum terpasang."; fi
-      read -r -p "Tekan [Enter] untuk melanjutkan..."
-      ;;
-    *) return 0 ;;
-  esac
+    printf "%s║%s                                                                            %s║%s\n" "$C_CYAN" "$C_RESET" "$C_CYAN" "$C_RESET"
+    printf "%s║%s  Pilihan Pengaturan Remote Tunnel:                                         %s║%s\n" "$C_CYAN" "$C_RESET" "$C_CYAN" "$C_RESET"
+    printf "%s║%s                                                                            %s║%s\n" "$C_CYAN" "$C_RESET" "$C_CYAN" "$C_RESET"
+    printf "%s║%s   [1] 📡 Cek Status & IP Tailscale (tailscale status)                      %s║%s\n" "$C_CYAN" "$C_RESET" "$C_CYAN" "$C_RESET"
+    printf "%s║%s   [2] 🔗 Login / Hubungkan Tailscale Mesh VPN (tailscale up)               %s║%s\n" "$C_CYAN" "$C_RESET" "$C_CYAN" "$C_RESET"
+    printf "%s║%s   [3] 🌐 Cek Status Cloudflare Tunnel Daemon (cloudflared status)          %s║%s\n" "$C_CYAN" "$C_RESET" "$C_CYAN" "$C_RESET"
+    printf "%s║%s   [4] 🔑 Otentikasi Cloudflare Tunnel Login (cloudflared tunnel login)     %s║%s\n" "$C_CYAN" "$C_RESET" "$C_CYAN" "$C_RESET"
+    printf "%s║%s   [0] 🚪 Kembali ke Menu Utama                                             %s║%s\n" "$C_CYAN" "$C_RESET" "$C_CYAN" "$C_RESET"
+    printf "%s║%s                                                                            %s║%s\n" "$C_CYAN" "$C_RESET" "$C_CYAN" "$C_RESET"
+    printf "%s%s%s\n" "$C_CYAN" "$bot" "$C_RESET"
+
+    read -r -p "Masukkan pilihan Anda [0-4]: " tun_choice
+    case "$tun_choice" in
+      1)
+        if command -v tailscale >/dev/null 2>&1; then tailscale status; else echo "Tailscale belum terpasang."; fi
+        read -r -p "Tekan [Enter] untuk melanjutkan..."
+        ;;
+      2)
+        if command -v tailscale >/dev/null 2>&1; then tailscale up; else echo "Tailscale belum terpasang."; fi
+        read -r -p "Tekan [Enter] untuk melanjutkan..."
+        ;;
+      3)
+        if command -v cloudflared >/dev/null 2>&1; then cloudflared --version; else echo "cloudflared belum terpasang."; fi
+        read -r -p "Tekan [Enter] untuk melanjutkan..."
+        ;;
+      4)
+        if command -v cloudflared >/dev/null 2>&1; then cloudflared tunnel login; else echo "cloudflared belum terpasang."; fi
+        read -r -p "Tekan [Enter] untuk melanjutkan..."
+        ;;
+      0|q|exit) return 0 ;;
+      *) ;;
+    esac
+  done
 }
 
 # --- Interactive Main Menu ---
@@ -828,30 +1069,11 @@ interactive_main_menu() {
     detect_system_os
     clear 2>/dev/null || true
 
-    local top="╔════════════════════════════════════════════════════════════════════════════╗"
     local div="╠════════════════════════════════════════════════════════════════════════════╣"
     local bot="╚════════════════════════════════════════════════════════════════════════════╝"
 
-    # Top border
-    printf "%s%s%s\n" "$C_CYAN" "$top" "$C_RESET"
-
-    # Title line centered in 76 chars
-    local title="DBAI APPLICATION MANAGER v${DBAI_APPS_VERSION}"
-    local p_left=$(( (76 - ${#title}) / 2 ))
-    local p_right=$(( 76 - ${#title} - p_left ))
-    printf "%s║%s%*s%s%*s%s║%s\n" "$C_CYAN" "$C_RESET" "$p_left" "" "$title" "$p_right" "" "$C_CYAN" "$C_RESET"
-
-    # Host info line centered in 76 chars
-    local host_line="Host OS: ${CURRENT_OS_PRETTY} | Arch: ${CURRENT_ARCH} | Kernel: ${CURRENT_KERNEL}"
-    if (( ${#host_line} > 74 )); then
-      host_line="${host_line:0:71}..."
-    fi
-    p_left=$(( (76 - ${#host_line}) / 2 ))
-    p_right=$(( 76 - ${#host_line} - p_left ))
-    printf "%s║%s%*s%s%*s%s║%s\n" "$C_CYAN" "$C_RESET" "$p_left" "" "$host_line" "$p_right" "" "$C_CYAN" "$C_RESET"
-
-    # Divider
-    printf "%s%s%s\n" "$C_CYAN" "$div" "$C_RESET"
+    # Top header box (exact 78 cols)
+    print_header_box "DBAI APPLICATION MANAGER v${DBAI_APPS_VERSION}"
 
     # Counters
     local count_active=0 count_stopped=0 count_uninstalled=0
