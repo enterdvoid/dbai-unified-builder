@@ -10,13 +10,16 @@ trap 'rm -rf "$tmp"' EXIT
 # shellcheck disable=SC1091
 source "$repo_root/extensions/dbai-custom-bootfs.sh"
 display_alert() { :; }
+exit_with_error() { echo "ERROR: $*" >&2; exit 1; }
 SRC="$tmp/src"
 readonly SDCARD="$tmp/readonly-sdcard"
 # shellcheck disable=SC2034
 readonly version="Armbian-global-version"
 [[ "$version" == "Armbian-global-version" ]]
 target_root="$tmp/final-image"
-mkdir -p "$SRC/userpatches/platform" "$tmp/boot-payload" "$target_root/boot" "$SDCARD/boot"
+mkdir -p "$SRC/userpatches/platform" "$tmp/boot-payload" "$target_root/boot" "$SDCARD/boot" "$tmp/uboot-payload"
+printf '%s\n' 'boot-config' > "$tmp/uboot-payload/uEnv.txt"
+tar -czf "$SRC/userpatches/platform/u-boot.tar.gz" -C "$tmp/uboot-payload" .
 printf '%s\n' 'old-default-boot-file' > "$target_root/boot/old-default-file"
 printf '%s\n' 'readonly-sdcard-sentinel' > "$SDCARD/boot/should-not-be-touched"
 printf '%s\n' 'boot-script-kernel' > "$tmp/boot-payload/vmlinuz-6.1.66-DBAI"

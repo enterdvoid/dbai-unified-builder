@@ -33,7 +33,7 @@ SOURCE
 python3 "$repo_root/scripts/patch-rootfs-uuid.py" "$partitioning"
 bash -n "$partitioning"
 grep -Fq 'DBAI-STATIC-ROOTFS-UUID-BEGIN' "$partitioning"
-grep -Fq -- '-U "19450817-1945-4817-a817-194508170817"' "$partitioning"
+grep -Fq -- '-U "19450817-1998-4512-a817-202510202026"' "$partitioning"
 # shellcheck disable=SC2016 # Assert literal Bash source preserved by the patch.
 grep -Fq 'root_part_uuid="$(blkid -s UUID -o value "${LOOP}p${rootpart}")"' "$partitioning"
 grep -Fq 'DBAI rootfs UUID verification failed' "$partitioning"
@@ -52,7 +52,7 @@ run_host_command_logged() {
   printf '%s\n' "$*"
 }
 blkid() {
-  printf '%s\n' '19450817-1945-4817-a817-194508170817'
+  printf '%s\n' '19450817-1998-4512-a817-202510202026'
 }
 exit_with_error() {
   printf 'ERROR: %s (%s)\n' "$1" "${2:-}" >&2
@@ -66,9 +66,9 @@ HELPER
 for fs in ext4 btrfs; do
   output="$(bash "$run_helper" "$partitioning" "$fs")"
   grep -Fq "mkfs.$fs" <<< "$output"
-  grep -Fq -- '-U 19450817-1945-4817-a817-194508170817' <<< "$output"
-  grep -Fq 'ROOT_PART_UUID=19450817-1945-4817-a817-194508170817' <<< "$output"
-  grep -Fq 'fstab-root=UUID=19450817-1945-4817-a817-194508170817' <<< "$output"
+  grep -Fq -- '-U 19450817-1998-4512-a817-202510202026' <<< "$output"
+  grep -Fq 'ROOT_PART_UUID=19450817-1998-4512-a817-202510202026' <<< "$output"
+  grep -Fq 'fstab-root=UUID=19450817-1998-4512-a817-202510202026' <<< "$output"
 done
 
 before="$(sha256sum "$partitioning" | awk '{print $1}')"

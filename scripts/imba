@@ -1,0 +1,3515 @@
+#!/usr/bin/env bash
+
+###############################################################################
+# IMBA v0.5.0
+# TV BOX / SBC BENCHMARK
+#
+# Designed for:
+#   - ARM SBC
+#   - TV Box / STB
+#   - Debian / Ubuntu / Armbian
+#
+# Core benchmarks:
+#   CPU single core
+#   CPU all cores
+#   CPU threads
+#   CPU mutex
+#   CPU temperature & frequency
+#   Memory read/write
+#   Filesystem I/O
+#   Raw storage read
+#
+# Hardware information:
+#   CPU
+#   RAM / Swap
+#   Storage
+#   MMC
+#   Network
+#
+# Optional:
+#   iperf3 network benchmark when IMBA_IPERF_SERVER is provided
+#
+# IMPORTANT:
+#   Raw storage benchmark is READ ONLY.
+#   USB storage benchmark is READ ONLY.
+#   IMBA does not modify CPU governor or swap configuration.
+###############################################################################
+
+set -u
+set -o pipefail
+
+SCREEN_NAME="imba666"
+if command -v screen >/dev/null 2>&1; then
+    if [[ "${STY:-}" != *"$SCREEN_NAME"* ]]; then
+        if screen -list | grep -q "\.${SCREEN_NAME}[[:space:]]"; then
+            echo "[INFO] Attaching to existing screen session: $SCREEN_NAME"
+            exec screen -x "$SCREEN_NAME"
+        else
+            echo "[INFO] Starting IMBA in a new screen session: $SCREEN_NAME"
+            exec screen -S "$SCREEN_NAME" bash "$0" "$@"
+        fi
+    fi
+fi
+
+###############################################################################
+# CONFIGURATION
+###############################################################################
+
+IMBA_VERSION="1.0"
+
+CPU_DURATION=60
+MEMORY_DURATION=60
+THREAD_DURATION=60
+FILEIO_DURATION=60
+
+TEMP_INTERVAL=5
+FREQ_INTERVAL=5
+
+FILEIO_SIZE="1G"
+FILEIO_DIR="/var/tmp/imba-fileio"
+
+FIO_SIZE="1G"
+FIO_BS="1M"
+
+MEMORY_TOTAL_SIZE="1T"
+MEMORY_BLOCK="1M"
+
+DISK_SAFETY_MARGIN_MB=512
+
+MUTEX_LOCKS=10000000
+MUTEX_LOOPS=1000
+MUTEX_NUM=4096
+
+###############################################################################
+# CONFIG FILE (imba.conf)
+###############################################################################
+CONF_FILE="$PWD/imba.conf"
+if [[ -f "$CONF_FILE" ]]; then
+    source "$CONF_FILE"
+else
+    cat <<EOF > "$CONF_FILE"
+# IMBA Configuration File
+# Fill these to skip whiptail prompts when running all benchmarks.
+
+IPERF_SERVER=""
+FFMPEG_OUT_DIR=""
+ST_SERVER_ID=""
+
+HA_URL=""
+HA_TOKEN=""
+HA_POWER_ENTITY=""
+EOF
+fi
+
+PROMPT_FILE="$PWD/imba.prompt"
+
+save_config_var() {
+    local key="$1"
+    local val="$2"
+    if [[ -f "$CONF_FILE" ]]; then
+        local escaped_val="$(echo "$val" | sed 's/[/&|]/\\&/g')"
+        sed -i "s|^${key}=.*|${key}=\"${escaped_val}\"|" "$CONF_FILE"
+    fi
+}
+
+IPERF_SERVER="${IMBA_IPERF_SERVER:-${IPERF_SERVER:-}}"
+HA_URL="${IMBA_HA_URL:-${HA_URL:-}}"
+HA_TOKEN="${IMBA_HA_TOKEN:-${HA_TOKEN:-}}"
+HA_POWER_ENTITY="${IMBA_HA_POWER_ENTITY:-${HA_POWER_ENTITY:-}}"
+POWER_MONITOR_ENABLED=0
+
+###############################################################################
+# ROOT CHECK
+###############################################################################
+
+if [[ "${EUID}" -ne 0 ]]; then
+    exec sudo IMBA_IPERF_SERVER="${IMBA_IPERF_SERVER:-}" \
+              IMBA_HA_URL="${IMBA_HA_URL:-}" \
+              IMBA_HA_TOKEN="${IMBA_HA_TOKEN:-}" \
+              IMBA_HA_POWER_ENTITY="${IMBA_HA_POWER_ENTITY:-}" \
+              bash "$0" "$@"
+fi
+
+# CLI Argument Parser
+WANT_CPU=0
+WANT_MEM=0
+WANT_STORAGE=0
+WANT_NET=0
+WANT_REALWORLD=0
+RUN_STRESS=0
+RUN_SPEEDTEST=0
+EXPORT_JSON=0
+JSON_FILE=""
+FFMPEG_OUT_DIR=""
+HAS_FILTER=0
+WANT_MENU=0
+WANT_ALL=0
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --cpu-only) WANT_CPU=1; HAS_FILTER=1; shift ;;
+        --memory-only) WANT_MEM=1; HAS_FILTER=1; shift ;;
+        --storage-only) WANT_STORAGE=1; HAS_FILTER=1; shift ;;
+        --network-only) WANT_NET=1; HAS_FILTER=1; shift ;;
+        --realworld-only) WANT_REALWORLD=1; HAS_FILTER=1; shift ;;
+        --speedtest) RUN_SPEEDTEST=1; shift ;;
+        --stress) RUN_STRESS=1; shift ;;
+        --json) EXPORT_JSON=1; shift ;;
+        --menu) WANT_MENU=1; shift ;;
+        --all) WANT_ALL=1; HAS_FILTER=1; shift ;;
+        --iperf3-server)
+            IPERF_SERVER="$2"
+            export IMBA_IPERF_SERVER="$2"
+            shift 2
+            ;;
+        --speedtest-server)
+            ST_SERVER_ID="$2"
+            shift 2
+            ;;
+        *) shift ;;
+    esac
+done
+
+if [[ "$HAS_FILTER" -eq 0 && "${WANT_ALL:-0}" -eq 0 ]]; then
+    WANT_MENU=1
+fi
+
+if [[ "${WANT_MENU:-0}" -eq 1 ]] && command -v whiptail >/dev/null 2>&1; then
+    CHOICES=$(whiptail --title "IMBA Benchmark Suite" --checklist \
+        "Select the benchmarks you want to run:" 20 60 9 \
+        "CPU" "CPU, Threads, and Mutex tests" ON \
+        "Memory" "RAM Read and Write tests" ON \
+        "Storage" "File I/O and SD/USB tests" ON \
+        "Network" "Local loopback and iperf3 tests" ON \
+        "Speedtest" "Ookla Internet Speedtest" ON \
+        "RealWorld" "FFmpeg Transcoding Benchmarks" ON \
+        "Stress" "15-min Thermal Throttling Test" OFF \
+        "Power" "AC Wall Power via Home Assistant" OFF \
+        "JSON" "Export results to JSON file" ON 3>&1 1>&2 2>&3)
+    if [ $? -eq 0 ]; then
+        HAS_FILTER=1
+        WANT_CPU=0; WANT_MEM=0; WANT_STORAGE=0; WANT_NET=0; RUN_STRESS=0; RUN_SPEEDTEST=0; WANT_REALWORLD=0
+        [[ "$CHOICES" == *"\"CPU\""* ]] && WANT_CPU=1
+        [[ "$CHOICES" == *"\"Memory\""* ]] && WANT_MEM=1
+        [[ "$CHOICES" == *"\"Storage\""* ]] && WANT_STORAGE=1
+        [[ "$CHOICES" == *"\"Network\""* ]] && WANT_NET=1
+        [[ "$CHOICES" == *"\"RealWorld\""* ]] && WANT_REALWORLD=1
+        [[ "$CHOICES" == *"\"Speedtest\""* ]] && RUN_SPEEDTEST=1
+        [[ "$CHOICES" == *"\"Stress\""* ]] && RUN_STRESS=1
+        [[ "$CHOICES" == *"\"JSON\""* ]] && EXPORT_JSON=1
+
+        if [[ "$WANT_NET" -eq 1 ]]; then
+            if [[ -z "$IPERF_SERVER" ]]; then
+                IP_INPUT=$(whiptail --title "Network Benchmark" --inputbox "Enter iperf3 server IP (e.g. 192.168.2.208, leave blank to skip):" 10 70 "${IPERF_SERVER:-}" 3>&1 1>&2 2>&3)
+                if [ $? -eq 0 ] && [ -n "$IP_INPUT" ]; then
+                    IPERF_SERVER="$IP_INPUT"
+                    export IMBA_IPERF_SERVER="$IP_INPUT"
+                    save_config_var "IPERF_SERVER" "$IP_INPUT"
+                fi
+            else
+                export IMBA_IPERF_SERVER="$IPERF_SERVER"
+            fi
+        fi
+
+        if [[ "$WANT_REALWORLD" -eq 1 ]]; then
+            if [[ -z "$FFMPEG_OUT_DIR" ]]; then
+                RW_INPUT=$(whiptail --title "Real World Benchmark" --inputbox "Enter FFmpeg custom output directory (leave blank to use Source Directory):" 10 70 "${FFMPEG_OUT_DIR:-}" 3>&1 1>&2 2>&3)
+                if [ $? -eq 0 ]; then
+                    [[ -z "$RW_INPUT" ]] && FFMPEG_OUT_DIR="" || FFMPEG_OUT_DIR="$RW_INPUT"
+                    save_config_var "FFMPEG_OUT_DIR" "$FFMPEG_OUT_DIR"
+                fi
+            fi
+        fi
+
+        if [[ "$RUN_SPEEDTEST" -eq 1 ]]; then
+            if [[ -z "$ST_SERVER_ID" ]]; then
+                ST_INPUT=$(whiptail --title "Speedtest Benchmark" --inputbox "Enter Speedtest Server ID (e.g. 30400 JKT, 61853 SBY, leave blank for auto):" 10 70 "${ST_SERVER_ID:-}" 3>&1 1>&2 2>&3)
+                if [ $? -eq 0 ] && [ -n "$ST_INPUT" ]; then
+                    ST_SERVER_ID="$ST_INPUT"
+                    save_config_var "ST_SERVER_ID" "$ST_INPUT"
+                fi
+            fi
+        fi
+
+        if [[ "$CHOICES" == *"\"Power\""* ]]; then
+            if [[ -z "$HA_URL" || -z "$HA_TOKEN" || -z "$HA_POWER_ENTITY" ]]; then
+                HA_URL_INPUT=$(whiptail --title "Power Monitor - Home Assistant" --inputbox \
+                    "Enter Home Assistant URL (e.g. http://192.168.2.152):" \
+                    10 70 "${HA_URL:-}" 3>&1 1>&2 2>&3)
+                if [ $? -eq 0 ] && [ -n "$HA_URL_INPUT" ]; then
+                    HA_URL="$HA_URL_INPUT"
+                    export IMBA_HA_URL="$HA_URL_INPUT"
+
+                    HA_TOKEN_INPUT=$(whiptail --title "Power Monitor - Home Assistant" --passwordbox \
+                        "Enter Home Assistant Long-Lived Access Token:" \
+                        10 70 "${HA_TOKEN:-}" 3>&1 1>&2 2>&3)
+                    if [ $? -eq 0 ] && [ -n "$HA_TOKEN_INPUT" ]; then
+                        HA_TOKEN="$HA_TOKEN_INPUT"
+                        export IMBA_HA_TOKEN="$HA_TOKEN_INPUT"
+
+                        HA_ENTITY_INPUT=$(whiptail --title "Power Monitor - Home Assistant" --inputbox \
+                            "Enter Power Entity ID (e.g. sensor.tapo_p110_current_consumption):" \
+                            10 70 "${HA_POWER_ENTITY:-sensor.tapo_p110_current_consumption}" 3>&1 1>&2 2>&3)
+                        if [ $? -eq 0 ] && [ -n "$HA_ENTITY_INPUT" ]; then
+                            HA_POWER_ENTITY="$HA_ENTITY_INPUT"
+                            export IMBA_HA_POWER_ENTITY="$HA_ENTITY_INPUT"
+                            save_config_var "HA_URL" "$HA_URL"
+                            save_config_var "HA_TOKEN" "$HA_TOKEN"
+                            save_config_var "HA_POWER_ENTITY" "$HA_POWER_ENTITY"
+                        fi
+                    fi
+                fi
+            else
+                export IMBA_HA_URL="$HA_URL"
+                export IMBA_HA_TOKEN="$HA_TOKEN"
+                export IMBA_HA_POWER_ENTITY="$HA_POWER_ENTITY"
+            fi
+        fi
+    else
+        echo "Cancelled."
+        exit 0
+    fi
+    clear
+fi
+
+if [[ "$HAS_FILTER" -eq 1 ]]; then
+    RUN_CPU="$WANT_CPU"
+    RUN_MEM="$WANT_MEM"
+    RUN_STORAGE="$WANT_STORAGE"
+    RUN_NET="$WANT_NET"
+    RUN_REALWORLD="$WANT_REALWORLD"
+else
+    RUN_CPU=1; RUN_MEM=1; RUN_STORAGE=1; RUN_NET=1; RUN_REALWORLD=1
+fi
+
+# FFMPEG_OUT_DIR fallback is handled in the Real World execution block
+
+# Determine test label for filename
+TEST_COUNT=$(( RUN_CPU + RUN_MEM + RUN_STORAGE + RUN_NET + RUN_REALWORLD + RUN_SPEEDTEST + RUN_STRESS ))
+BENCH_LABEL=""
+if [[ "$TEST_COUNT" -eq 1 ]]; then
+    [[ "$RUN_CPU" -eq 1 ]] && BENCH_LABEL="-cpu"
+    [[ "$RUN_MEM" -eq 1 ]] && BENCH_LABEL="-memory"
+    [[ "$RUN_STORAGE" -eq 1 ]] && BENCH_LABEL="-storage"
+    [[ "$RUN_NET" -eq 1 ]] && BENCH_LABEL="-network"
+    [[ "$RUN_REALWORLD" -eq 1 ]] && BENCH_LABEL="-real_world"
+    [[ "$RUN_SPEEDTEST" -eq 1 ]] && BENCH_LABEL="-speedtest"
+    [[ "$RUN_STRESS" -eq 1 ]] && BENCH_LABEL="-stress"
+fi
+
+###############################################################################
+# DEVICE INFORMATION
+###############################################################################
+
+DEVICE_MODEL="Unknown Device"
+SOC_NAME="Unknown SoC"
+if [[ -r /proc/device-tree/model ]]; then
+    DEVICE_MODEL="$(tr -d '\0' < /proc/device-tree/model)"
+fi
+# 1. Base Detection via Device Tree Compatible
+if [[ -r /proc/device-tree/compatible ]]; then
+    COMPAT="$(tr -d '\0' < /proc/device-tree/compatible)"
+    if [[ "$COMPAT" == *"bcm2712"* ]]; then SOC_NAME="Broadcom BCM2712 (Raspberry Pi 5)"; fi
+    if [[ "$COMPAT" == *"bcm2711"* ]]; then SOC_NAME="Broadcom BCM2711 (Raspberry Pi 4)"; fi
+    if [[ "$COMPAT" == *"bcm2837"* ]]; then SOC_NAME="Broadcom BCM2837 (Raspberry Pi 3)"; fi
+    if [[ "$COMPAT" == *"bcm2836"* ]]; then SOC_NAME="Broadcom BCM2836 (Raspberry Pi 2)"; fi
+    if [[ "$COMPAT" == *"bcm2835"* ]]; then SOC_NAME="Broadcom BCM2835 (Raspberry Pi 1/Zero)"; fi
+    
+    if [[ "$COMPAT" == *"rk3588"* || "$COMPAT" == *"rk3588s"* ]]; then SOC_NAME="Rockchip RK3588/S"; fi
+    if [[ "$COMPAT" == *"rk3568"* ]]; then SOC_NAME="Rockchip RK3568"; fi
+    if [[ "$COMPAT" == *"rk3566"* ]]; then SOC_NAME="Rockchip RK3566"; fi
+    if [[ "$COMPAT" == *"rk3399"* ]]; then SOC_NAME="Rockchip RK3399"; fi
+    if [[ "$COMPAT" == *"rk3328"* ]]; then SOC_NAME="Rockchip RK3328"; fi
+    if [[ "$COMPAT" == *"rk3288"* ]]; then SOC_NAME="Rockchip RK3288"; fi
+    if [[ "$COMPAT" == *"rk3229"* || "$COMPAT" == *"rk3228"* || "$COMPAT" == *"rk322x"* ]]; then SOC_NAME="Rockchip RK322x"; fi
+    if [[ "$COMPAT" == *"rk3128"* ]]; then SOC_NAME="Rockchip RK3128"; fi
+    
+    if [[ "$COMPAT" == *"sun50i-h618"* ]]; then SOC_NAME="Allwinner H618"; fi
+    if [[ "$COMPAT" == *"sun50i-h616"* ]]; then SOC_NAME="Allwinner H616"; fi
+    if [[ "$COMPAT" == *"sun50i-h6"* ]]; then SOC_NAME="Allwinner H6"; fi
+    if [[ "$COMPAT" == *"sun50i-h5"* ]]; then SOC_NAME="Allwinner H5"; fi
+    if [[ "$COMPAT" == *"sun50i-a64"* ]]; then SOC_NAME="Allwinner A64"; fi
+    if [[ "$COMPAT" == *"sun8i-h3"* ]]; then SOC_NAME="Allwinner H3"; fi
+    if [[ "$COMPAT" == *"sun8i-h2-plus"* ]]; then SOC_NAME="Allwinner H2+"; fi
+    
+    if [[ "$COMPAT" == *"amlogic,s4"* || "$COMPAT" == *"s905w2"* || "$COMPAT" == *"s905y4"* ]]; then SOC_NAME="Amlogic S905W2/Y4"; fi
+    if [[ "$COMPAT" == *"amlogic,sc2"* || "$COMPAT" == *"s905x4"* ]]; then SOC_NAME="Amlogic S905X4"; fi
+    if [[ "$COMPAT" == *"amlogic,g12b"* || "$COMPAT" == *"s922x"* ]]; then SOC_NAME="Amlogic S922X/A311D"; fi
+    if [[ "$COMPAT" == *"amlogic,sm1"* || "$COMPAT" == *"s905x3"* ]]; then SOC_NAME="Amlogic S905X3"; fi
+    if [[ "$COMPAT" == *"amlogic,g12a"* || "$COMPAT" == *"s905x2"* || "$COMPAT" == *"s905y2"* ]]; then SOC_NAME="Amlogic S905X2/Y2"; fi
+    if [[ "$COMPAT" == *"amlogic,gxm"* || "$COMPAT" == *"s912"* ]]; then SOC_NAME="Amlogic S912"; fi
+    if [[ "$COMPAT" == *"amlogic,gxl"* || "$COMPAT" == *"s905x"* || "$COMPAT" == *"s905d"* || "$COMPAT" == *"s905w"* ]]; then SOC_NAME="Amlogic S905X/W/D"; fi
+    if [[ "$COMPAT" == *"amlogic,gxbb"* || "$COMPAT" == *"s905"* ]]; then SOC_NAME="Amlogic S905"; fi
+    if [[ "$COMPAT" == *"amlogic,meson8b"* || "$COMPAT" == *"s805"* ]]; then SOC_NAME="Amlogic S805"; fi
+fi
+[[ -z "$DEVICE_MODEL" ]] && DEVICE_MODEL="Unknown Device"
+
+
+SAFE_DEVICE_NAME="$(
+    echo "$DEVICE_MODEL" |
+    tr '[:space:]' '_' |
+    tr -cd '[:alnum:]_.-' |
+    sed 's/_\{2,\}/_/g'
+)"
+[[ -z "$SAFE_DEVICE_NAME" ]] && SAFE_DEVICE_NAME="Unknown_Device"
+
+HOSTNAME_VALUE="$(hostname 2>/dev/null || echo unknown)"
+DATE_DISPLAY="$(date '+%a %b %d %I:%M:%S %p %Z %Y')"
+DATE_FILE="$(date '+%Y-%m-%d-%H-%M-%S')"
+SCRIPT_START_TIME=$(date +%s)
+
+EXPORT_DIR="$(pwd)/imba_exports"
+mkdir -p "$EXPORT_DIR" 2>/dev/null || true
+LOG_FILE="${EXPORT_DIR}/imba${BENCH_LABEL}_${SAFE_DEVICE_NAME}_${DATE_FILE}.log"
+
+###############################################################################
+# LOGGING
+###############################################################################
+
+exec > >(tee -a "$LOG_FILE") 2>&1
+
+print_banner() {
+    cat << "EOF"
+
+ ________  ___ __ __    _______   ________      
+/_______/\/__//_//_/\ /_______/\ /_______/\     
+\__.::._\/\::\| \| \ \\::: _  \ \\::: _  \ \    
+   \::\ \  \:.      \ \\::(_)  \/_\::(_)  \ \   
+   _\::\ \__\:.\-/\  \ \\::  _  \ \\:: __  \ \  
+  /__\::\__/\\. \  \  \ \\::(_)  \ \\:.\ \  \ \ 
+  \________\/ \__\/ \__\/ \_______\/ \__\/\__\/ 
+EOF
+    echo "   Integrated Multi-Benchmark Analyzer v${IMBA_VERSION}"
+    echo "                     by DBAI"
+}
+
+print_banner
+
+###############################################################################
+# OUTPUT HELPERS
+###############################################################################
+
+C_GREEN="\e[32m"
+C_YELLOW="\e[33m"
+C_RED="\e[31m"
+C_CYAN="\e[36m"
+C_RESET="\e[0m"
+
+section() {
+    echo
+    local title="$1"
+    local title_len=${#title}
+    local dash_count=$(( 60 - 3 - title_len ))
+    local dashes=""
+    for ((i=0; i<dash_count; i++)); do dashes="${dashes}-"; done
+    printf "${C_CYAN}+- ${title} ${dashes}+${C_RESET}\n"
+    SECTION_START_TIME=$(date +%s)
+}
+
+section_end() {
+    local end_time=$(date +%s)
+    local elapsed=$(( end_time - SECTION_START_TIME ))
+    local m=$(( elapsed / 60 ))
+    local s=$(( elapsed % 60 ))
+    printf "${C_CYAN}| %-43s %14s |${C_RESET}\n" " " "Time: ${m}m ${s}s"
+    printf "${C_CYAN}+------------------------------------------------------------+${C_RESET}\n"
+}
+
+print_boxed() {
+    local text="$1"
+    local color="${2:-}"
+    local max_len=58
+    local reset=""
+    
+    if [[ -n "$color" ]]; then reset="$C_RESET"; fi
+    
+    if [[ -z "$text" ]]; then
+        printf "${color}| %*s |${reset}\n" "$max_len" ""
+        return
+    fi
+    
+    echo "$text" | fold -s -w "$max_len" | while IFS= read -r line; do
+        # Remove trailing spaces so padding is accurate
+        line="${line%"${line##*[![:space:]]}"}"
+        local len=${#line}
+        local pad=$(( max_len - len ))
+        (( pad < 0 )) && pad=0
+        printf "${color}| %s%*s |${reset}\n" "$line" "$pad" ""
+    done
+}
+
+subsection() {
+    print_boxed ""
+    print_boxed "$1"
+}
+
+info() {
+    local label="$1"
+    local value="$2"
+    local label_len=${#label}
+    local col_width=14
+    if (( label_len > col_width )); then
+        col_width=$label_len
+    fi
+
+    # max_len in print_boxed is 58.
+    # The prefix "label : " takes col_width + 3 characters.
+    # We add +1 to max_val_len here so it hits 62 total chars perfectly.
+    local max_val_len=$(( 59 - col_width - 3 ))
+
+    if (( ${#value} <= max_val_len )); then
+        local text
+        text=$(printf "%-${col_width}s : %-${max_val_len}s" "$label" "$value")
+        print_boxed "$text"
+    else
+        local first=1
+        while (( ${#value} > 0 )); do
+            local chunk="${value:0:$max_val_len}"
+            value="${value:$max_val_len}"
+            
+            if [[ "$first" -eq 1 ]]; then
+                local text
+                text=$(printf "%-${col_width}s : %-${max_val_len}s" "$label" "$chunk")
+                print_boxed "$text"
+                first=0
+            else
+                local text
+                text=$(printf "%-${col_width}s   %-${max_val_len}s" "" "$chunk")
+                print_boxed "$text"
+            fi
+        done
+    fi
+}
+
+ok() {
+    print_boxed "[OK] $*" "$C_GREEN"
+}
+
+warn() {
+    print_boxed "[WARNING] $*" "$C_YELLOW"
+}
+
+skip() {
+    print_boxed "[SKIPPED] $*" "$C_YELLOW"
+}
+
+fail() {
+    print_boxed "[FAILED] $*" "$C_RED"
+}
+
+command_exists() {
+    command -v "$1" >/dev/null 2>&1
+}
+
+###############################################################################
+# TEMPORARY FILES & CLEANUP
+###############################################################################
+
+TEMP_ROOT="/var/tmp/imba-runtime"
+mkdir -p "$TEMP_ROOT"
+USB_MNT_POINTS=""
+
+cleanup() {
+    if [[ -n "${USB_MNT_POINTS:-}" ]]; then
+        for mp in ${USB_MNT_POINTS:-}; do
+            umount "$mp" 2>/dev/null || true
+            rmdir "$mp" 2>/dev/null || true
+        done
+    fi
+    rm -rf "$TEMP_ROOT" 2>/dev/null || true
+    if [[ -d "$FILEIO_DIR" ]]; then
+        rm -rf "$FILEIO_DIR" 2>/dev/null || true
+    fi
+    if command_exists sed; then
+        SED_ESC=$(printf '\033')
+        sed -i "s/${SED_ESC}\[[0-9;]*m//g" "$LOG_FILE" 2>/dev/null || true
+    fi
+}
+
+trap cleanup EXIT INT TERM
+
+###############################################################################
+# DEPENDENCY CHECK (Silent if all installed)
+###############################################################################
+
+APT_UPDATED=0
+DEPENDENCY_FAILED=0
+SECTION_DEPENDENCY_PRINTED=0
+
+install_package_for_command() {
+    local command_name="$1"
+    local package_name="$2"
+
+    if command_exists "$command_name"; then
+        return 0
+    fi
+
+    if [[ "$SECTION_DEPENDENCY_PRINTED" -eq 0 ]]; then
+        section "DEPENDENCY CHECK"
+        SECTION_DEPENDENCY_PRINTED=1
+    fi
+    warn "Missing dependency: $command_name"
+    info "Installing" "$package_name..."
+    if [[ "$APT_UPDATED" -eq 0 ]]; then
+        export DEBIAN_FRONTEND=noninteractive
+        apt-get update -qq >/dev/null 2>&1
+        if [[ "$?" -ne 0 ]]; then
+            fail "apt-get update failed."
+            return 1
+        fi
+        APT_UPDATED=1
+    fi
+
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get install -y -qq "$package_name" >/dev/null 2>&1
+
+    if command_exists "$command_name"; then
+        ok "$package_name installed."
+        return 0
+    fi
+
+    fail "Unable to install $package_name."
+    return 1
+}
+
+install_package_for_command screen screen || DEPENDENCY_FAILED=1
+install_package_for_command hexdump bsdmainutils || DEPENDENCY_FAILED=1
+install_package_for_command sysbench sysbench || DEPENDENCY_FAILED=1
+install_package_for_command fio fio || DEPENDENCY_FAILED=1
+install_package_for_command lsblk util-linux || DEPENDENCY_FAILED=1
+install_package_for_command ntfs-3g ntfs-3g || DEPENDENCY_FAILED=1
+
+if [[ "${RUN_REALWORLD:-0}" -eq 1 ]]; then
+    install_package_for_command ffmpeg ffmpeg || DEPENDENCY_FAILED=1
+    install_package_for_command unzip unzip || DEPENDENCY_FAILED=1
+    install_package_for_command wget wget || DEPENDENCY_FAILED=1
+fi
+install_package_for_command blkid util-linux || DEPENDENCY_FAILED=1
+install_package_for_command findmnt util-linux || DEPENDENCY_FAILED=1
+install_package_for_command lscpu util-linux || DEPENDENCY_FAILED=1
+install_package_for_command ip iproute2 || DEPENDENCY_FAILED=1
+install_package_for_command ethtool ethtool || DEPENDENCY_FAILED=1
+install_package_for_command lspci pciutils || DEPENDENCY_FAILED=1
+install_package_for_command lsusb usbutils || DEPENDENCY_FAILED=1
+install_package_for_command iw iw || DEPENDENCY_FAILED=1
+install_package_for_command iwconfig wireless-tools || DEPENDENCY_FAILED=1
+install_package_for_command iperf3 iperf3 || DEPENDENCY_FAILED=1
+install_package_for_command taskset util-linux || DEPENDENCY_FAILED=1
+install_package_for_command gcc gcc || DEPENDENCY_FAILED=1
+install_package_for_command make make || DEPENDENCY_FAILED=1
+install_package_for_command git git || DEPENDENCY_FAILED=1
+
+# Build mhz (real clockspeed measurement tool by Willy Tarreau)
+MHZ_BIN="/tmp/imba-mhz/mhz"
+if [[ ! -x "$MHZ_BIN" ]]; then
+    if command_exists gcc && command_exists make && command_exists git; then
+        if [[ "$SECTION_DEPENDENCY_PRINTED" -eq 0 ]]; then
+            section "DEPENDENCY CHECK"
+            SECTION_DEPENDENCY_PRINTED=1
+        fi
+        info "Building" "mhz (real clockspeed tool)..."
+        rm -rf /tmp/imba-mhz 2>/dev/null
+        git clone --depth 1 https://github.com/wtarreau/mhz /tmp/imba-mhz >/dev/null 2>&1
+        if [[ -d /tmp/imba-mhz ]]; then
+            make -C /tmp/imba-mhz >/dev/null 2>&1
+            if [[ -x "$MHZ_BIN" ]]; then
+                ok "mhz built successfully."
+            else
+                warn "Failed to compile mhz. Real clockspeed detection disabled."
+            fi
+        else
+            warn "Failed to clone mhz repository. Real clockspeed detection disabled."
+        fi
+    fi
+fi
+
+# Build ampart (Amlogic partition tool by 7Ji)
+if [[ "$SOC_NAME" == *"Amlogic"* || "${COMPAT:-}" == *"amlogic"* ]]; then
+    if ! command_exists ampart; then
+        if command_exists gcc && command_exists make && command_exists git; then
+            if [[ "$SECTION_DEPENDENCY_PRINTED" -eq 0 ]]; then
+                section "DEPENDENCY CHECK"
+                SECTION_DEPENDENCY_PRINTED=1
+            fi
+            info "Building" "ampart (Amlogic partition tool)..."
+            rm -rf /tmp/imba-ampart 2>/dev/null
+            git clone --depth 1 https://github.com/7Ji/ampart /tmp/imba-ampart >/dev/null 2>&1
+            if [[ -d /tmp/imba-ampart ]]; then
+                make -C /tmp/imba-ampart >/dev/null 2>&1
+                if [[ -x "/tmp/imba-ampart/ampart" ]]; then
+                    mv /tmp/imba-ampart/ampart /usr/local/bin/ampart
+                    chmod +x /usr/local/bin/ampart
+                    ok "ampart built and installed."
+                else
+                    warn "Failed to compile ampart. Amlogic eMMC safe-write disabled."
+                fi
+            else
+                warn "Failed to clone ampart repository. Amlogic eMMC safe-write disabled."
+            fi
+        fi
+    fi
+fi
+
+if [[ "$RUN_SPEEDTEST" -eq 1 ]]; then
+    IS_OOKLA=0
+    if command_exists speedtest; then
+        if speedtest --version 2>/dev/null | grep -qi "Ookla"; then IS_OOKLA=1; fi
+    fi
+    
+    if [[ "$IS_OOKLA" -eq 0 ]]; then
+        if [[ "$SECTION_DEPENDENCY_PRINTED" -eq 0 ]]; then
+            section "DEPENDENCY CHECK"
+            SECTION_DEPENDENCY_PRINTED=1
+        fi
+        
+        info "Installing" "Ookla Speedtest..."
+        ARCH=$(uname -m)
+        case "$ARCH" in
+            x86_64|amd64) OOKLA_ARCH="x86_64" ;;
+            i*86) OOKLA_ARCH="i386" ;;
+            aarch64|arm64) OOKLA_ARCH="aarch64" ;;
+            armv7l|armv6l|armhf) OOKLA_ARCH="armhf" ;;
+            *) OOKLA_ARCH="" ;;
+        esac
+        
+        if [[ -n "$OOKLA_ARCH" ]]; then
+            OOKLA_URL="https://install.speedtest.net/app/cli/ookla-speedtest-1.2.0-linux-${OOKLA_ARCH}.tgz"
+            wget -qO- "$OOKLA_URL" | tar -xz -C /tmp 2>/dev/null
+            if [[ -f "/tmp/speedtest" ]]; then
+                mv /tmp/speedtest /usr/local/bin/speedtest
+                chmod +x /usr/local/bin/speedtest
+                rm -f /tmp/speedtest*
+                ok "Ookla Speedtest installed."
+            else
+                warn "Failed to download Ookla Speedtest."
+                install_package_for_command speedtest-cli speedtest-cli || DEPENDENCY_FAILED=1
+            fi
+        else
+            warn "Architecture $ARCH not supported by Ookla binary."
+            install_package_for_command speedtest-cli speedtest-cli || DEPENDENCY_FAILED=1
+        fi
+    fi
+fi
+
+if [[ "$DEPENDENCY_FAILED" -ne 0 ]]; then
+    fail "One or more required dependencies could not be installed."
+    if [[ "$SECTION_DEPENDENCY_PRINTED" -ne 0 ]]; then section_end; fi
+    exit 1
+fi
+
+if [[ "$SECTION_DEPENDENCY_PRINTED" -ne 0 ]]; then
+    section_end
+fi
+
+###############################################################################
+# 0. PRE-FLIGHT SAFETY CHECKS
+###############################################################################
+
+section "PRE-FLIGHT CHECKS"
+PREFLIGHT_WARN=0
+
+if command_exists awk; then
+    load_1m=$(awk '{print $1}' /proc/loadavg)
+    load_int=${load_1m%%.*}
+    if [[ "$load_int" -ge 2 ]]; then
+        warn "High CPU load ($load_1m). Background tasks may affect results."
+        PREFLIGHT_WARN=1
+    else
+        ok "CPU load is normal ($load_1m)."
+    fi
+fi
+
+if command_exists vcgencmd; then
+    throttled=$(vcgencmd get_throttled 2>/dev/null || echo "0x0")
+    if [[ "$throttled" != "0x0" && "$throttled" != "throttled=0x0" ]]; then
+        warn "Undervoltage or throttling detected ($throttled)."
+        PREFLIGHT_WARN=1
+    fi
+fi
+
+if [[ "$PREFLIGHT_WARN" -eq 0 ]]; then
+    ok "All pre-flight safety checks passed."
+fi
+section_end
+
+###############################################################################
+# Deep Hardware Interrogation (EFUSE/NVMEM/SOCINFO)
+###############################################################################
+if [[ "$SOC_NAME" == *"Allwinner"* ]]; then
+    AW_NVMEM_FILE="/sys/bus/nvmem/devices/sunxi-sid0/nvmem"
+    if [[ -r "$AW_NVMEM_FILE" ]]; then
+        if command_exists hexdump; then
+            AW_NVMEM="$(hexdump -C < "$AW_NVMEM_FILE" 2>/dev/null | head -n1)"
+            if [[ -n "$AW_NVMEM" ]]; then
+                # Extract SID from hex bytes
+                AW_SID="${AW_NVMEM:19:2}${AW_NVMEM:16:2}${AW_NVMEM:13:2}${AW_NVMEM:10:2}"
+                [[ -n "$AW_SID" ]] && SOC_NAME="${SOC_NAME} (SID: ${AW_SID})"
+            else
+                SOC_NAME="${SOC_NAME} (SID: hexdump empty)"
+            fi
+        else
+            SOC_NAME="${SOC_NAME} (SID: hexdump missing)"
+        fi
+    else
+        SOC_NAME="${SOC_NAME} (SID: File Not Readable)"
+    fi
+elif [[ "$SOC_NAME" == *"Rockchip"* || "$COMPAT" == *"rockchip"* ]]; then
+    RK_NVMEM_FILE="$(find /sys/bus/nvmem/devices/rockchip*/* -name nvmem 2>/dev/null | head -n1)"
+    if [[ -e "$RK_NVMEM_FILE" ]]; then
+        if command_exists hexdump; then
+            RK_CHIP="$(hexdump -C < "$RK_NVMEM_FILE" 2>/dev/null | head -n1 | cut -d'|' -f2 | grep -oE '^(RK|RV)[0-9]+[A-Z0-9]*')"
+            if [[ -n "$RK_CHIP" ]]; then
+                SOC_NAME="Rockchip $RK_CHIP"
+            else
+                SOC_NAME="${SOC_NAME} (hexdump empty)"
+            fi
+        fi
+    fi
+elif [[ "$SOC_NAME" == *"Amlogic"* || "$COMPAT" == *"amlogic"* ]]; then
+    if [[ -r /sys/devices/soc0/soc_id ]]; then
+        AML_ID="$(cat /sys/devices/soc0/soc_id 2>/dev/null | tr -d '\0' | xargs)"
+        AML_REV="$(cat /sys/devices/soc0/revision 2>/dev/null | tr -d '\0' | xargs)"
+        if [[ -n "$AML_ID" ]]; then
+            SOC_NAME="Amlogic $AML_ID"
+            [[ -n "$AML_REV" ]] && SOC_NAME="${SOC_NAME} (Rev: $AML_REV)"
+        fi
+    fi
+fi
+
+init_power_monitor() {
+    # Requires all three env vars to activate
+    if [[ -z "$HA_URL" || -z "$HA_TOKEN" || -z "$HA_POWER_ENTITY" ]]; then
+        POWER_MONITOR_ENABLED=0
+        return
+    fi
+
+    # Validate connection and response
+    local http_code
+    http_code=$(curl -s -o /dev/null -w "%{http_code}" \
+        --connect-timeout 5 --max-time 10 \
+        -H "Authorization: Bearer $HA_TOKEN" \
+        "${HA_URL}/api/states/${HA_POWER_ENTITY}" 2>/dev/null || echo "000")
+
+    if [[ "$http_code" == "200" ]]; then
+        local response unit device_class
+        response=$(curl -s --connect-timeout 5 --max-time 10 \
+            -H "Authorization: Bearer $HA_TOKEN" \
+            "${HA_URL}/api/states/${HA_POWER_ENTITY}" 2>/dev/null)
+
+        if command_exists jq; then
+            unit=$(echo "$response" | jq -r '.attributes.unit_of_measurement // ""' 2>/dev/null)
+            device_class=$(echo "$response" | jq -r '.attributes.device_class // ""' 2>/dev/null)
+        else
+            unit=$(echo "$response" | grep -o '"unit_of_measurement"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | grep -o '"[^"]*"$' | tr -d '"')
+            device_class=$(echo "$response" | grep -o '"device_class"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | grep -o '"[^"]*"$' | tr -d '"')
+        fi
+
+        if [[ "$unit" == "W" && "$device_class" == "power" ]]; then
+            POWER_MONITOR_ENABLED=1
+            local friendly_name=""
+            if command_exists jq; then
+                friendly_name=$(echo "$response" | jq -r '.attributes.friendly_name // ""' 2>/dev/null)
+                # Clean up common HA sensor suffixes for a cleaner display
+                friendly_name="${friendly_name% Current consumption}"
+                friendly_name="${friendly_name% current consumption}"
+                friendly_name="${friendly_name% Power}"
+                friendly_name="${friendly_name% power}"
+            fi
+            ok "Power Monitor : Enabled"
+            info "Source" "Home Assistant"
+            info "Entity" "$HA_POWER_ENTITY"
+            if [[ -n "$friendly_name" ]]; then
+                info "Device" "$friendly_name"
+            fi
+        else
+            warn "Power entity unit/class mismatch (unit=${unit}, class=${device_class}). Power monitoring disabled."
+            POWER_MONITOR_ENABLED=0
+        fi
+    elif [[ "$http_code" == "401" ]]; then
+        warn "Home Assistant: Unauthorized (401). Check your IMBA_HA_TOKEN."
+        POWER_MONITOR_ENABLED=0
+    elif [[ "$http_code" == "404" ]]; then
+        warn "Home Assistant: Entity not found (404). Check IMBA_HA_POWER_ENTITY."
+        POWER_MONITOR_ENABLED=0
+    else
+        warn "Home Assistant: Connection failed (HTTP ${http_code}). Power monitoring disabled."
+        POWER_MONITOR_ENABLED=0
+    fi
+}
+
+read_power() {
+    if [[ "$POWER_MONITOR_ENABLED" -ne 1 ]]; then
+        echo ""
+        return
+    fi
+    local response state
+    response=$(curl -s --connect-timeout 3 --max-time 5 \
+        -H "Authorization: Bearer $HA_TOKEN" \
+        "${HA_URL}/api/states/${HA_POWER_ENTITY}" 2>/dev/null)
+
+    if command_exists jq; then
+        state=$(echo "$response" | jq -r '.state // ""' 2>/dev/null)
+    else
+        state=$(echo "$response" | grep -o '"state"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | grep -o '"[^"]*"$' | tr -d '"')
+    fi
+
+    # Validate numeric value
+    if [[ "$state" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+        echo "$state"
+    else
+        echo ""
+    fi
+}
+
+###############################################################################
+# AUTO MOUNT FLASH DRIVES
+###############################################################################
+
+ensure_fd_mounted() {
+    for dev in /sys/block/*; do
+        local bn="$(basename "$dev")"
+        [[ "$bn" == mmcblk* || "$bn" == loop* || "$bn" == zram* || "$bn" == ram* || "$bn" == *boot* ]] && continue
+        
+        local mnt_point=""
+        local target_part=""
+        
+        for part in /dev/${bn}*; do
+            [[ -b "$part" ]] || continue
+            mnt_point="$(findmnt -n -o TARGET "$part" 2>/dev/null | head -n1)"
+            if [[ -n "$mnt_point" ]]; then
+                target_part="$part"
+                break
+            fi
+        done
+        
+        if [[ -z "$mnt_point" ]]; then
+            target_part="$(lsblk -b -n -l -o NAME,TYPE,SIZE /dev/${bn} 2>/dev/null | awk '$2=="part" {print $3, $1}' | sort -n -r | head -n1 | awk '{print $2}')"
+            [[ -n "$target_part" ]] && target_part="/dev/$target_part"
+            [[ -z "$target_part" ]] && target_part="/dev/${bn}"
+            
+            if [[ -b "$target_part" ]]; then
+                mnt_point="/mnt/imba_usb_${bn}"
+                mkdir -p "$mnt_point"
+                
+                local fstype="$(blkid -s TYPE -o value "$target_part" 2>/dev/null)"
+                local mounted=0
+                
+                if [[ "$fstype" == "ntfs" || "$fstype" == "exfat" ]]; then
+                    if [[ "$fstype" == "ntfs" ]] && command_exists ntfsfix; then
+                        ntfsfix -d "$target_part" >/dev/null 2>&1 || true
+                    fi
+                    if mount -t ntfs3 "$target_part" "$mnt_point" 2>/dev/null; then mounted=1; fi
+                    if [[ "$mounted" -eq 0 ]] && mount -t ntfs-3g "$target_part" "$mnt_point" 2>/dev/null; then mounted=1; fi
+                fi
+                
+                if [[ "$mounted" -eq 0 ]] && mount "$target_part" "$mnt_point" 2>/dev/null; then
+                    mounted=1
+                fi
+                
+                if [[ "$mounted" -eq 1 ]]; then
+                    USB_MNT_POINTS="${USB_MNT_POINTS:-} $mnt_point"
+                else
+                    rmdir "$mnt_point" 2>/dev/null || true
+                fi
+            fi
+        fi
+    done
+}
+
+ensure_fd_mounted
+
+###############################################################################
+# 1. SYSTEM INFORMATION
+###############################################################################
+
+
+section "SYSTEM INFORMATION"
+
+OS_NAME="Unknown Linux"
+if [[ -f /etc/os-release ]]; then
+    # shellcheck disable=SC1091
+    source /etc/os-release
+    if [[ -n "${VERSION_ID:-}" ]] && [[ -n "${VERSION_CODENAME:-}" ]]; then
+        OS_NAME="${NAME:-Unknown} ${VERSION_ID} (${VERSION_CODENAME})"
+    else
+        OS_NAME="${PRETTY_NAME:-Unknown Linux}"
+    fi
+fi
+
+info "Device" "$DEVICE_MODEL"
+if [[ "$SOC_NAME" != "Unknown SoC" ]]; then
+    info "SoC" "$SOC_NAME"
+fi
+info "OS" "$OS_NAME"
+info "Hostname" "$HOSTNAME_VALUE"
+info "Kernel" "$(uname -r)"
+info "Architecture" "$(uname -m)"
+
+CPU_MODEL="$(lscpu 2>/dev/null | awk -F: '/Model name:/ {print $2}' | xargs)"
+[[ -z "$CPU_MODEL" ]] && CPU_MODEL="Unknown"
+info "CPU" "$(nproc)x $CPU_MODEL"
+
+RAM_TOTAL_KB="$(awk '/^MemTotal:/ {print $2}' /proc/meminfo)"
+RAM_AVAILABLE_KB="$(awk '/^MemAvailable:/ {print $2}' /proc/meminfo)"
+SWAP_TOTAL_KB="$(awk '/^SwapTotal:/ {print $2}' /proc/meminfo)"
+SWAP_FREE_KB="$(awk '/^SwapFree:/ {print $2}' /proc/meminfo)"
+
+RAM_TOTAL_MB=$((RAM_TOTAL_KB / 1024))
+RAM_AVAILABLE_MB=$((RAM_AVAILABLE_KB / 1024))
+SWAP_TOTAL_MB=$((SWAP_TOTAL_KB / 1024))
+SWAP_FREE_MB=$((SWAP_FREE_KB / 1024))
+SWAP_USED_MB=$((SWAP_TOTAL_MB - SWAP_FREE_MB))
+SWAP_PCT=0
+[[ "$SWAP_TOTAL_MB" -gt 0 ]] && SWAP_PCT=$((SWAP_USED_MB * 100 / SWAP_TOTAL_MB))
+
+info "RAM" "${RAM_TOTAL_MB} MB"
+info "Swap" "${SWAP_TOTAL_MB} MB | ${SWAP_PCT}% used"
+
+ROOT_DEV="$(df -P / 2>/dev/null | tail -n 1 | awk '{print $1}')"
+printf "| %-58s |\n" "Storage List"
+
+for StorageDevice in /dev/mmcblk? ; do
+    [[ -e "${StorageDevice}" ]] || continue
+    if [[ -x /sys/block/${StorageDevice##*/}/device ]]; then
+        pushd /sys/block/${StorageDevice##*/}/device >/dev/null || continue
+        declare mmc_serial="" mmc_manfid="" mmc_oemid="" mmc_type="" mmc_name=""
+        eval $(grep . * 2>/dev/null | grep -v uevent | sed -e 's/:/=/' -e 's/^/mmc_/' -e 's/\ //g')
+        popd >/dev/null
+        
+        mmc_size=$(lsblk -b -n -d -o SIZE "$StorageDevice" 2>/dev/null | awk '{ printf "%.1fGB", $1 / 1073741824 }')
+        
+        Manufacturer="Unknown"
+        case "${mmc_manfid,,}/${mmc_oemid,,}" in
+            0x000001*) Manufacturer="Panasonic" ;;
+            0x000002/0x544d) Manufacturer="Toshiba" ;;
+            0x000003/0x5344|0x000003/0x5744) Manufacturer="SanDisk" ;;
+            0x000011/0x0037|0x000011/0x0038) Manufacturer="AData" ;;
+            0x000018/0x0000) Manufacturer="Kingston" ;;
+            0x00001b/0x534d|0x000015/0x0100|0x000011/0x0100) Manufacturer="Samsung" ;;
+            0x000027/0x5048) Manufacturer="Phison" ;;
+            0x000028/0x4245) Manufacturer="Lexar" ;;
+            0x000041/0x3432|0x000070/0x0100) Manufacturer="Kingston" ;;
+            0x000073/0x0001|0x000073/0x4247) Manufacturer="Hama/Transcend" ;;
+            0x000074/0x4a45) Manufacturer="Transcend" ;;
+            0x00008c/0x0000|0x00008c/0x5352) Manufacturer="Strontium" ;;
+            0x00008f/0x0000) Manufacturer="Sony" ;;
+            0x00009c/0x534f) Manufacturer="Sony" ;;
+            0x00009e/0x4749) Manufacturer="Lexar" ;;
+            0x000090/0x014a) Manufacturer="SK Hynix" ;;
+            0x0000fe/0x014e) Manufacturer="Micron" ;;
+            0x000045/0x0100) Manufacturer="SanDisk" ;;
+            0x000088/0x0100|0x000088/0x0103) Manufacturer="Foresee" ;;
+            0x0000ad/0x4c53) Manufacturer="Longsys" ;;
+            *) Manufacturer="Unknown (${mmc_manfid}/${mmc_oemid})" ;;
+        esac
+        
+        type_str="Card"
+        [[ "${mmc_type,,}" == "mmc" ]] && type_str="eMMC"
+        [[ "${mmc_type,,}" == "sd" ]] && type_str="HS SD card"
+        
+        # Format nice description
+        mmc_desc="${Manufacturer} ${mmc_name}"
+        # Trim multiple spaces
+        mmc_desc="$(echo "$mmc_desc" | xargs)"
+        
+        dev_name="${StorageDevice##*/}"
+        left_str="${dev_name} ${mmc_size}"
+        right_str="\"${mmc_desc}\" ${type_str}"
+        
+        if [[ -n "$ROOT_DEV" && "${ROOT_DEV}" == "${StorageDevice}"* ]]; then
+            right_str="${right_str} (OS)"
+        fi
+        
+        printf "| %-15s : %-40s |\n" "$left_str" "$right_str"
+    fi
+done
+
+for StorageDevice in /dev/sd? ; do
+    [[ -e "${StorageDevice}" ]] || continue
+    if [[ -b "${StorageDevice}" ]]; then
+        sd_size=$(lsblk -b -n -d -o SIZE "$StorageDevice" 2>/dev/null | awk '{ printf "%.1fGB", $1 / 1073741824 }')
+        sd_model=$(cat /sys/block/${StorageDevice##*/}/device/model 2>/dev/null | xargs)
+        sd_vendor=$(cat /sys/block/${StorageDevice##*/}/device/vendor 2>/dev/null | xargs)
+        
+        is_usb=0
+        if readlink -f /sys/block/${StorageDevice##*/} 2>/dev/null | grep -q "usb"; then
+            is_usb=1
+        fi
+        
+        type_str="Drive"
+        [[ "$is_usb" -eq 1 ]] && type_str="USB Drive"
+        
+        dev_name="${StorageDevice##*/}"
+        left_str="${dev_name} ${sd_size}"
+        right_str="\"${sd_vendor} ${sd_model}\" ${type_str}"
+        
+        # Trim spaces in quotes
+        right_str="$(echo "$right_str" | sed 's/  */ /g')"
+        
+        if [[ -n "$ROOT_DEV" && "${ROOT_DEV}" == "${StorageDevice}"* ]]; then
+            right_str="${right_str} (OS)"
+        fi
+        
+        printf "| %-15s : %-40s |\n" "$left_str" "$right_str"
+    fi
+done
+
+# Initialize Power Monitor (optional — requires IMBA_HA_URL, IMBA_HA_TOKEN, IMBA_HA_POWER_ENTITY)
+if [[ -n "$HA_URL" && -n "$HA_TOKEN" && -n "$HA_POWER_ENTITY" ]]; then
+    subsection "Power Monitor"
+    init_power_monitor
+    if [[ "$POWER_MONITOR_ENABLED" -eq 1 ]]; then
+        IDLE_POWER="$(read_power)"
+        if [[ -n "$IDLE_POWER" ]]; then
+            info "Idle Power" "${IDLE_POWER} W (AC Wall)"
+            echo "$IDLE_POWER" > "$TEMP_ROOT/idle_power"
+        fi
+    fi
+fi
+
+section_end
+
+###############################################################################
+# 2. CPU BENCHMARK
+###############################################################################
+
+
+
+find_temperature_sensor() {
+    local zone
+    local type
+    for zone in /sys/class/thermal/thermal_zone*; do
+        [[ -r "$zone/temp" ]] || continue
+        type="$(cat "$zone/type" 2>/dev/null || echo unknown)"
+        case "$type" in
+            cpu*|CPU*|soc*|SOC*|*cpu*|*CPU*)
+                echo "$zone"
+                return
+                ;;
+        esac
+    done
+    for zone in /sys/class/thermal/thermal_zone*; do
+        [[ -r "$zone/temp" ]] || continue
+        echo "$zone"
+        return
+    done
+}
+
+read_temperature() {
+    local zone="$1"
+    local raw
+    raw="$(cat "$zone/temp" 2>/dev/null || echo 0)"
+    if [[ "$raw" =~ ^[0-9]+$ ]]; then
+        awk "BEGIN { printf \"%.1f\", $raw / 1000 }"
+    else
+        echo "N/A"
+    fi
+}
+
+TEMP_ZONE="$(find_temperature_sensor)"
+
+# Capture idle temperature before any benchmarks start
+if [[ -n "$TEMP_ZONE" ]]; then
+    IDLE_TEMP="$(read_temperature "$TEMP_ZONE")"
+    echo "$IDLE_TEMP" > "$TEMP_ROOT/idle_temp"
+fi
+
+
+read_cpu_frequency() {
+    local cpu="$1"
+    local file="/sys/devices/system/cpu/cpu${cpu}/cpufreq/scaling_cur_freq"
+    if [[ -r "$file" ]]; then
+        local value
+        value="$(cat "$file" 2>/dev/null || echo 0)"
+        if [[ "$value" =~ ^[0-9]+$ ]]; then
+            echo "$((value / 1000))"
+            return
+        fi
+    fi
+    awk -v c="$cpu" '
+        BEGIN { RS=""; FS="\n" }
+        NR==c+1 {
+            for (i=1; i<=NF; i++) {
+                if ($i ~ /cpu MHz/) {
+                    split($i,a,":")
+                    printf "%.0f", a[2]
+                    exit
+                }
+            }
+        }
+    ' /proc/cpuinfo 2>/dev/null
+}
+
+read_cpu_freq_range() {
+    local policy="/sys/devices/system/cpu/cpufreq/policy0"
+    local min_f max_f gov
+    if [[ -r "$policy/cpuinfo_min_freq" ]]; then
+        min_f=$(( $(cat "$policy/cpuinfo_min_freq") / 1000 ))
+        max_f=$(( $(cat "$policy/cpuinfo_max_freq") / 1000 ))
+        gov=$(cat "$policy/scaling_governor" 2>/dev/null || echo "unknown")
+        echo "${min_f}-${max_f} MHz (governor: ${gov})"
+    else
+        echo "N/A"
+    fi
+}
+
+MONITOR_FILE=""
+MONITOR_PID=""
+
+start_cpu_monitor() {
+    local label="$1"
+    MONITOR_FILE="$TEMP_ROOT/${label}_monitor.txt"
+    : > "$MONITOR_FILE"
+    (
+        trap - EXIT INT TERM
+        trap 'exit 0' TERM
+        local start_ns now_ns elapsed temp line cpu freq cpu_count ram_used power_val
+        cpu_count="$(nproc)"
+        start_ns="$(date +%s%N)"
+        echo "Time|Temp|Frequencies|RAM|Power" >> "$MONITOR_FILE"
+
+        while true; do
+            sleep "$TEMP_INTERVAL"
+            now_ns="$(date +%s%N)"
+            elapsed=$(((now_ns - start_ns) / 1000000000))
+            temp="$(read_temperature "$TEMP_ZONE")"
+            line=""
+            for ((cpu=0; cpu<cpu_count; cpu++)); do
+                freq="$(read_cpu_frequency "$cpu")"
+                [[ -z "$freq" ]] && freq="N/A"
+                if [[ -z "$line" ]]; then
+                    line="CPU${cpu}=${freq}"
+                else
+                    line="${line},CPU${cpu}=${freq}"
+                fi
+            done
+            ram_used="$(free -m | awk '/^Mem:/{print $3}')"
+            power_val="$(read_power)"
+            printf "%02d:%02d|%s|%s|%sMB|%s\n" "$((elapsed / 60))" "$((elapsed % 60))" "$temp" "$line" "$ram_used" "${power_val:-}" >> "$MONITOR_FILE"
+        done
+    ) &
+    MONITOR_PID=$!
+}
+
+stop_cpu_monitor() {
+    if [[ -n "$MONITOR_PID" ]]; then
+        kill "$MONITOR_PID" 2>/dev/null || true
+        wait "$MONITOR_PID" 2>/dev/null || true
+        MONITOR_PID=""
+    fi
+}
+
+print_cpu_monitor() {
+    local file="$1"
+    echo
+    echo "  > Temperature / Frequency Monitoring"
+    if [[ ! -s "$file" ]]; then
+        echo "    No monitoring data."
+        return
+    fi
+    if [[ "$POWER_MONITOR_ENABLED" -eq 1 ]]; then
+        printf "%-8s %-10s %-10s %-10s %s\n" "Time" "Temp" "RAM" "Power" "CPU Frequency"
+        tail -n +2 "$file" | while IFS='|' read -r time temp freq ram power; do
+            local pwr_display="N/A"
+            [[ -n "$power" && "$power" =~ ^[0-9] ]] && pwr_display="${power}W"
+            printf "%-8s %-10s %-10s %-10s %s\n" "$time" "${temp} C" "${ram:-N/A}" "$pwr_display" "$freq"
+        done
+    else
+        printf "%-8s %-10s %-10s %s\n" "Time" "Temp" "RAM" "CPU Frequency"
+        tail -n +2 "$file" | while IFS='|' read -r time temp freq ram power; do
+            printf "%-8s %-10s %-10s %s\n" "$time" "${temp} C" "${ram:-N/A}" "$freq"
+        done
+    fi
+}
+
+summarize_temperature() {
+    local file="$1"
+    local min="" max="" sum="0" count=0
+    while IFS='|' read -r time temp freq; do
+        [[ "$time" == "Time" ]] && continue
+        [[ "$temp" == "N/A" ]] && continue
+        if [[ "$temp" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+            if [[ -z "$min" ]] || awk "BEGIN {exit !($temp < $min)}"; then
+                min="$temp"
+            fi
+            if [[ -z "$max" ]] || awk "BEGIN {exit !($temp > $max)}"; then
+                max="$temp"
+            fi
+            sum="$(awk "BEGIN { printf \"%.3f\", $sum + $temp }")"
+            count=$((count + 1))
+        fi
+    done < "$file"
+
+    if [[ "$count" -gt 0 ]]; then
+        local avg="$(awk "BEGIN { printf \"%.1f\", $sum / $count }")"
+        info "Samples" "$count"
+        info "Minimum" "${min} C"
+        info "Maximum" "${max} C"
+        info "Average" "${avg} C"
+        echo "$avg" > "$TEMP_ROOT/last_temp_avg"
+        echo "$max" > "$TEMP_ROOT/last_temp_max"
+    else
+        info "Samples" "0"
+    fi
+}
+
+print_monitor_summary() {
+    local file="$1"
+    subsection "Temperature Summary"
+    summarize_temperature "$file"
+    summarize_frequency "$file"
+    summarize_ram "$file"
+    summarize_power "$file"
+}
+
+summarize_power() {
+    local file="$1"
+    [[ "$POWER_MONITOR_ENABLED" -ne 1 ]] && return
+
+    subsection "Power Summary"
+    local values min max avg count
+
+    values="$(tail -n +2 "$file" 2>/dev/null | awk -F'|' '{print $5}' | grep -E '^[0-9]+(\.[0-9]+)?$')"
+    if [[ -z "$values" ]]; then
+        info "Status" "No power data collected"
+        return
+    fi
+
+    count="$(echo "$values" | wc -l)"
+    min="$(echo "$values" | sort -g | head -1)"
+    max="$(echo "$values" | sort -g | tail -1)"
+    avg="$(echo "$values" | awk '{sum+=$1; n++} END {if(n) printf "%.1f", sum/n}')"
+
+    info "Samples" "$count"
+    info "Minimum" "${min} W"
+    info "Maximum" "${max} W"
+    info "Average" "${avg} W"
+    info "Source" "AC Wall Power (via Home Assistant)"
+
+    echo "$avg" > "$TEMP_ROOT/last_power_avg"
+    echo "$max" > "$TEMP_ROOT/last_power_max"
+    echo "$min" > "$TEMP_ROOT/last_power_min"
+}
+
+summarize_ram() {
+    local file="$1"
+    local values avg min max
+    subsection "RAM Usage Summary"
+
+    if tail -n +2 "$file" 2>/dev/null | awk -F'|' '{print $4}' | grep -q 'MB'; then
+        values="$(tail -n +2 "$file" | awk -F'|' '{print $4}' | tr -d 'MB')"
+        if [[ -n "$values" ]]; then
+            min="$(echo "$values" | sort -n | head -1)"
+            max="$(echo "$values" | sort -n | tail -1)"
+            avg="$(echo "$values" | awk '{sum+=$1; n++} END {if(n) printf "%.0f", sum/n}')"
+            info "RAM Used" "min=${min} max=${max} avg=${avg} MB"
+        else
+            info "Status" "RAM usage data not available"
+        fi
+    else
+        info "Status" "RAM usage data not available"
+    fi
+}
+
+summarize_frequency() {
+    local file="$1"
+    local cpu values avg min max cpu_count has_freq_data
+    cpu_count="$(nproc)"
+    subsection "Frequency Summary"
+
+    has_freq_data=0
+    if tail -n +2 "$file" 2>/dev/null | grep -qE 'CPU[0-9]+=[0-9]'; then
+        has_freq_data=1
+    fi
+
+    if [[ "$has_freq_data" -eq 0 ]]; then
+        info "Status" "Live CPU frequency not available on this device"
+        return
+    fi
+
+    for ((cpu=0; cpu<cpu_count; cpu++)); do
+        values="$(
+            tail -n +2 "$file" |
+            awk -F'|' -v cpu="CPU${cpu}" '
+                {
+                    n=split($3,a,",")
+                    for (i=1; i<=n; i++) {
+                        split(a[i],b,"=")
+                        if (b[1] == cpu && b[2] ~ /^[0-9]+$/) {
+                            print b[2]
+                        }
+                    }
+                }
+            '
+        )"
+        if [[ -z "$values" ]]; then
+            info "CPU${cpu}" "N/A"
+            continue
+        fi
+        min="$(echo "$values" | sort -n | head -1)"
+        max="$(echo "$values" | sort -n | tail -1)"
+        avg="$(echo "$values" | awk '{sum+=$1; n++} END {if(n) printf "%.0f", sum/n}')"
+        info "CPU${cpu}" "min=${min} max=${max} avg=${avg} MHz"
+    done
+}
+
+
+
+if [[ "$RUN_CPU" -eq 1 ]]; then
+section "CPU BENCHMARK"
+
+CPU_FREQ_RANGE="$(read_cpu_freq_range)"
+info "CPU Freq Range" "$CPU_FREQ_RANGE"
+
+run_cpu_benchmark() {
+    local label="$1"
+    local threads="$2"
+    local monitor_label
+
+    subsection "$label"
+    info "Threads" "$threads"
+    info "Duration" "${CPU_DURATION} seconds"
+    info "Temperature Interval" "${TEMP_INTERVAL} seconds"
+    info "CPU Frequency Interval" "${FREQ_INTERVAL} seconds"
+
+    if [[ -n "$TEMP_ZONE" ]]; then
+        info "Temperature Sensor" "$TEMP_ZONE"
+    else
+        warn "No thermal sensor found."
+    fi
+
+    if [[ "$threads" -eq 1 ]]; then
+        monitor_label="cpu_single"
+    else
+        monitor_label="cpu_all"
+    fi
+
+    start_cpu_monitor "$monitor_label"
+
+    local sys_out
+    sys_out="$(sysbench cpu \
+        --threads="$threads" \
+        --time="$CPU_DURATION" \
+        --cpu-max-prime=20000 \
+        run)"
+    echo "$sys_out" > "$TEMP_ROOT/${monitor_label}_raw.txt"
+
+    local score
+    score="$(echo "$sys_out" | awk '/events per second:/ {print $NF}')"
+
+    if [[ -n "$score" ]]; then
+        info "Result" "${score} events/s"
+        if [[ "$threads" -eq 1 ]]; then
+            echo "$score" > "$TEMP_ROOT/single_score"
+        else
+            echo "$score" > "$TEMP_ROOT/all_score"
+        fi
+    else
+        info "Result" "FAILED"
+    fi
+
+    stop_cpu_monitor
+
+    print_monitor_summary "$MONITOR_FILE"
+
+    if [[ -f "$TEMP_ROOT/last_temp_avg" ]]; then
+        if [[ "$threads" -eq 1 ]]; then
+            cp "$TEMP_ROOT/last_temp_avg" "$TEMP_ROOT/cpu_single_avg_temp"
+        else
+            cp "$TEMP_ROOT/last_temp_avg" "$TEMP_ROOT/cpu_all_avg_temp"
+        fi
+    fi
+}
+
+run_cpu_benchmark "Single Core" 1
+run_cpu_benchmark "All Cores ($(nproc) threads)" "$(nproc)"
+
+###############################################################################
+# 2a. BIG.LITTLE CLUSTER DETECTION & PER-CLUSTER BENCHMARK
+###############################################################################
+
+detect_cpu_clusters() {
+    # Detect unique CPU clusters via cpufreq policies
+    # Each policy directory represents a distinct frequency domain (cluster)
+    declare -gA CLUSTER_CORES=()      # CLUSTER_CORES[policy_id]="0 1 2 3"
+    declare -gA CLUSTER_MAX_FREQ=()   # CLUSTER_MAX_FREQ[policy_id]="1800000"
+    declare -ga CLUSTER_ORDER=()      # Sorted policy IDs (lowest freq first)
+
+    local policy_dir="/sys/devices/system/cpu/cpufreq"
+    if [[ ! -d "$policy_dir" ]]; then
+        return 1
+    fi
+
+    local policy max_freq cores
+    for policy in "$policy_dir"/policy*; do
+        [[ -d "$policy" ]] || continue
+        local policy_id="${policy##*/policy}"
+        max_freq="$(cat "$policy/cpuinfo_max_freq" 2>/dev/null || echo 0)"
+        cores="$(cat "$policy/related_cpus" 2>/dev/null || echo "")"
+        [[ -z "$cores" ]] && continue
+
+        CLUSTER_CORES[$policy_id]="$cores"
+        CLUSTER_MAX_FREQ[$policy_id]="$max_freq"
+    done
+
+    # Need at least 2 clusters with different max frequencies for big.LITTLE
+    if [[ ${#CLUSTER_CORES[@]} -lt 2 ]]; then
+        return 1
+    fi
+
+    # Check if clusters actually have different max frequencies
+    local unique_freqs
+    unique_freqs="$(printf '%s\n' "${CLUSTER_MAX_FREQ[@]}" | sort -un | wc -l)"
+    if [[ "$unique_freqs" -lt 2 ]]; then
+        return 1
+    fi
+
+    # Sort clusters by max frequency (LITTLE first, big last)
+    CLUSTER_ORDER=($(
+        for pid in "${!CLUSTER_MAX_FREQ[@]}"; do
+            echo "$pid ${CLUSTER_MAX_FREQ[$pid]}"
+        done | sort -k2 -n | awk '{print $1}'
+    ))
+
+    return 0
+}
+
+get_cluster_label() {
+    # Assign human-readable label based on position in sorted cluster list
+    local idx="$1"
+    local total="${#CLUSTER_ORDER[@]}"
+    if [[ "$total" -eq 2 ]]; then
+        if [[ "$idx" -eq 0 ]]; then echo "LITTLE"; else echo "big"; fi
+    elif [[ "$total" -eq 3 ]]; then
+        case "$idx" in
+            0) echo "LITTLE" ;;
+            1) echo "mid" ;;
+            2) echo "big" ;;
+        esac
+    else
+        echo "cluster$idx"
+    fi
+}
+
+get_core_type_from_cpuinfo() {
+    # Try to identify core type (e.g. Cortex-A53, Cortex-A73) from lscpu
+    local cpu_id="$1"
+    # On ARM, /sys/devices/system/cpu/cpu*/regs/identification/midr_el1 can help
+    local midr_file="/sys/devices/system/cpu/cpu${cpu_id}/regs/identification/midr_el1"
+    if [[ -r "$midr_file" ]]; then
+        local midr
+        midr="$(cat "$midr_file" 2>/dev/null)"
+        # Extract part number (bits [15:4])
+        local part_hex
+        part_hex="$(printf '%03x' $(( (midr >> 4) & 0xFFF )) 2>/dev/null)"
+        case "$part_hex" in
+            d03) echo "Cortex-A53" ;;
+            d04) echo "Cortex-A35" ;;
+            d05) echo "Cortex-A55" ;;
+            d07) echo "Cortex-A57" ;;
+            d08) echo "Cortex-A72" ;;
+            d09) echo "Cortex-A73" ;;
+            d0a) echo "Cortex-A75" ;;
+            d0b) echo "Cortex-A76" ;;
+            d0d) echo "Cortex-A77" ;;
+            d40) echo "Cortex-A76(N1)" ;;
+            d41) echo "Cortex-A78" ;;
+            d44) echo "Cortex-X1" ;;
+            d46) echo "Cortex-A510" ;;
+            d47) echo "Cortex-A710" ;;
+            d48) echo "Cortex-X2" ;;
+            d4d) echo "Cortex-A715" ;;
+            d4e) echo "Cortex-X3" ;;
+            *) echo "" ;;
+        esac
+    fi
+}
+
+IS_BIG_LITTLE=0
+if detect_cpu_clusters; then
+    IS_BIG_LITTLE=1
+
+    subsection "CPU Topology (big.LITTLE)"
+    info "Clusters" "${#CLUSTER_ORDER[@]}"
+
+    for ((ci=0; ci<${#CLUSTER_ORDER[@]}; ci++)); do
+        pid="${CLUSTER_ORDER[$ci]}"
+        label="$(get_cluster_label "$ci")"
+        cores_list="${CLUSTER_CORES[$pid]}"
+        max_mhz="$(( ${CLUSTER_MAX_FREQ[$pid]} / 1000 ))"
+        core_count="$(echo "$cores_list" | wc -w)"
+        first_core="$(echo "$cores_list" | awk '{print $1}')"
+
+        # Try to detect core type
+        core_type="$(get_core_type_from_cpuinfo "$first_core")"
+        type_suffix=""
+        [[ -n "$core_type" ]] && type_suffix=" ($core_type)"
+
+        info "$label" "${core_count} cores [${cores_list}] @ ${max_mhz} MHz${type_suffix}"
+    done
+
+    # Run per-cluster pinned benchmarks
+    subsection "Per-Cluster Single Core Benchmark"
+    for ((ci=0; ci<${#CLUSTER_ORDER[@]}; ci++)); do
+        pid="${CLUSTER_ORDER[$ci]}"
+        label="$(get_cluster_label "$ci")"
+        cores_list="${CLUSTER_CORES[$pid]}"
+        first_core="$(echo "$cores_list" | awk '{print $1}')"
+        max_mhz="$(( ${CLUSTER_MAX_FREQ[$pid]} / 1000 ))"
+
+        core_type="$(get_core_type_from_cpuinfo "$first_core")"
+        type_suffix=""
+        [[ -n "$core_type" ]] && type_suffix=" / $core_type"
+
+        info "Testing" "${label} cluster (CPU${first_core}${type_suffix} @ ${max_mhz} MHz)"
+
+        # Pin sysbench to the first core of this cluster
+        cluster_out="$(taskset -c "$first_core" sysbench cpu \
+            --threads=1 \
+            --time="$CPU_DURATION" \
+            --cpu-max-prime=20000 \
+            run 2>/dev/null)"
+
+        cluster_score="$(echo "$cluster_out" | awk '/events per second:/ {print $NF}')"
+
+        if [[ -n "$cluster_score" ]]; then
+            info "${label} Score" "${cluster_score} events/s"
+            echo "$cluster_score" > "$TEMP_ROOT/cluster_${label}_score"
+        else
+            info "${label} Score" "FAILED"
+        fi
+
+        echo "$cluster_out" > "$TEMP_ROOT/cluster_${label}_raw.txt"
+    done
+fi
+
+###############################################################################
+# 2a2. REAL CLOCKSPEED VERIFICATION (mhz)
+###############################################################################
+
+MHZ_BIN="/tmp/imba-mhz/mhz"
+CLOCKSPEED_FAKE=0
+if [[ -x "$MHZ_BIN" ]] && command_exists taskset; then
+    subsection "Real Clockspeed Verification"
+    info "Tool" "mhz by Willy Tarreau (wtarreau)"
+
+    if [[ "$IS_BIG_LITTLE" -eq 1 ]]; then
+        # Measure each cluster separately
+        for ((ci=0; ci<${#CLUSTER_ORDER[@]}; ci++)); do
+            pid="${CLUSTER_ORDER[$ci]}"
+            label="$(get_cluster_label "$ci")"
+            cores_list="${CLUSTER_CORES[$pid]}"
+            first_core="$(echo "$cores_list" | awk '{print $1}')"
+            os_freq_khz="${CLUSTER_MAX_FREQ[$pid]}"
+            os_freq_mhz="$(( os_freq_khz / 1000 ))"
+
+            # Warm up first, then measure (3 runs, pick best)
+            taskset -c "$first_core" "$MHZ_BIN" 1 1000000 >/dev/null 2>&1
+            measured_raw="$(taskset -c "$first_core" "$MHZ_BIN" 3 1000000 2>/dev/null \
+                | awk -F'cpu_MHz=' '{print $2}' | awk '{print $1}' | sort -rn | head -1)"
+
+            if [[ -n "$measured_raw" ]]; then
+                measured_mhz="$(printf '%.0f' "$measured_raw" 2>/dev/null || echo "$measured_raw")"
+                diff_pct="$(awk "BEGIN { d = ($os_freq_mhz - $measured_mhz) / $os_freq_mhz * 100; printf \"%.1f\", (d < 0 ? -d : d) }")"
+
+                if awk "BEGIN { exit !($diff_pct > 5) }"; then
+                    warn "${label}: OS reports ${os_freq_mhz} MHz but hardware measures ${measured_mhz} MHz (${diff_pct}% off)"
+                    CLOCKSPEED_FAKE=1
+                else
+                    ok "${label}: ${measured_mhz} MHz verified (OS: ${os_freq_mhz} MHz)"
+                fi
+                echo "${label}:${os_freq_mhz}:${measured_mhz}" >> "$TEMP_ROOT/mhz_results.txt"
+            else
+                info "${label}" "Measurement failed"
+            fi
+        done
+    else
+        # Single cluster - measure on CPU 0
+        os_freq_khz="$(cat /sys/devices/system/cpu/cpufreq/policy0/cpuinfo_max_freq 2>/dev/null || echo 0)"
+        os_freq_mhz="$(( os_freq_khz / 1000 ))"
+
+        taskset -c 0 "$MHZ_BIN" 1 1000000 >/dev/null 2>&1
+        measured_raw="$(taskset -c 0 "$MHZ_BIN" 3 1000000 2>/dev/null \
+            | awk -F'cpu_MHz=' '{print $2}' | awk '{print $1}' | sort -rn | head -1)"
+
+        if [[ -n "$measured_raw" ]]; then
+            measured_mhz="$(printf '%.0f' "$measured_raw" 2>/dev/null || echo "$measured_raw")"
+            diff_pct="$(awk "BEGIN { d = ($os_freq_mhz - $measured_mhz) / $os_freq_mhz * 100; printf \"%.1f\", (d < 0 ? -d : d) }")"
+
+            if awk "BEGIN { exit !($diff_pct > 5) }"; then
+                warn "OS reports ${os_freq_mhz} MHz but hardware measures ${measured_mhz} MHz (${diff_pct}% off)"
+                CLOCKSPEED_FAKE=1
+            else
+                ok "CPU0: ${measured_mhz} MHz verified (OS: ${os_freq_mhz} MHz)"
+            fi
+            echo "CPU0:${os_freq_mhz}:${measured_mhz}" >> "$TEMP_ROOT/mhz_results.txt"
+        else
+            info "CPU0" "Measurement failed"
+        fi
+    fi
+
+    if [[ "$CLOCKSPEED_FAKE" -eq 1 ]]; then
+        warn "FAKE CLOCKSPEED DETECTED! Benchmark results may be misleading."
+        warn "The SoC firmware/bootloader is limiting actual CPU frequency."
+    fi
+fi
+
+subsection "CPU Scaling"
+
+SINGLE_SCORE="$(cat "$TEMP_ROOT/single_score" 2>/dev/null || echo "")"
+ALL_SCORE="$(cat "$TEMP_ROOT/all_score" 2>/dev/null || echo "")"
+
+if [[ "$SINGLE_SCORE" =~ ^[0-9]+([.][0-9]+)?$ ]] &&
+   [[ "$ALL_SCORE" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+
+    SCALE="$(awk "BEGIN { printf \"%.2f\", $ALL_SCORE / $SINGLE_SCORE }")"
+    EFFICIENCY="$(awk "BEGIN { printf \"%.1f\", (($ALL_SCORE / $SINGLE_SCORE) / $(nproc)) * 100 }")"
+
+    info "Single Core" "${SINGLE_SCORE} events/s"
+    info "All Core" "${ALL_SCORE} events/s"
+    info "Scaling" "${SCALE}x"
+    info "Linear Scaling Efficiency" "${EFFICIENCY}%"
+
+    echo "$SCALE" > "$TEMP_ROOT/cpu_scale"
+    echo "$EFFICIENCY" > "$TEMP_ROOT/cpu_efficiency"
+else
+    info "Scaling" "FAILED"
+fi
+
+subsection "CPU Thermal Summary"
+
+IDLE_TEMP_VALUE="N/A"
+SINGLE_TEMP_VALUE="N/A"
+ALL_TEMP_VALUE="N/A"
+
+if [[ -f "$TEMP_ROOT/idle_temp" ]]; then
+    IDLE_TEMP_VALUE="$(cat "$TEMP_ROOT/idle_temp")"
+fi
+if [[ -f "$TEMP_ROOT/cpu_single_avg_temp" ]]; then
+    SINGLE_TEMP_VALUE="$(cat "$TEMP_ROOT/cpu_single_avg_temp")"
+fi
+if [[ -f "$TEMP_ROOT/cpu_all_avg_temp" ]]; then
+    ALL_TEMP_VALUE="$(cat "$TEMP_ROOT/cpu_all_avg_temp")"
+fi
+
+info "Idle Temperature" "${IDLE_TEMP_VALUE} C"
+info "Single Core Avg" "${SINGLE_TEMP_VALUE} C"
+info "All Core Avg" "${ALL_TEMP_VALUE} C"
+
+if [[ "$IDLE_TEMP_VALUE" != "N/A" ]] && [[ "$ALL_TEMP_VALUE" != "N/A" ]]; then
+    TEMP_RISE="$(awk "BEGIN { printf \"%.1f\", $ALL_TEMP_VALUE - $IDLE_TEMP_VALUE }")"
+    info "Idle -> All Core Rise" "+${TEMP_RISE} C"
+fi
+
+###############################################################################
+# 2b. THREADS BENCHMARK (part of CPU)
+###############################################################################
+
+subsection "Threads"
+info "Threads" "$(nproc)"
+info "Duration" "${THREAD_DURATION} seconds"
+info "Temperature Interval" "${TEMP_INTERVAL} seconds"
+info "CPU Frequency Interval" "${FREQ_INTERVAL} seconds"
+
+if [[ -n "$TEMP_ZONE" ]]; then
+    info "Temperature Sensor" "$TEMP_ZONE"
+fi
+
+start_cpu_monitor "threads"
+
+THREADS_OUT="$(sysbench threads \
+    --threads="$(nproc)" \
+    --thread-yields=100 \
+    --thread-locks=8 \
+    --time="$THREAD_DURATION" \
+    run)"
+echo "$THREADS_OUT" > "$TEMP_ROOT/threads_raw.txt"
+
+THREADS_EVENTS="$(echo "$THREADS_OUT" | awk '/total number of events:/ {print $NF}')"
+THREADS_TIME="$(echo "$THREADS_OUT" | awk '/total time:/ {print $NF}' | tr -d 's')"
+
+if [[ -n "$THREADS_EVENTS" && -n "$THREADS_TIME" && "$THREADS_TIME" != "0.0000" ]]; then
+    THREADS_SCORE="$(awk "BEGIN { printf \"%.2f\", $THREADS_EVENTS / $THREADS_TIME }")"
+    info "Result" "$THREADS_SCORE events/s"
+    echo "$THREADS_SCORE" > "$TEMP_ROOT/threads_score"
+else
+    info "Result" "FAILED"
+fi
+
+stop_cpu_monitor
+
+print_monitor_summary "$MONITOR_FILE"
+
+###############################################################################
+# 2c. MUTEX BENCHMARK (part of CPU)
+###############################################################################
+
+subsection "Mutex"
+info "Threads" "$(nproc)"
+info "Mutexes" "$MUTEX_NUM"
+info "Locks per thread" "$MUTEX_LOCKS"
+info "Loops per lock" "$MUTEX_LOOPS"
+info "Temperature Interval" "${TEMP_INTERVAL} seconds"
+info "CPU Frequency Interval" "${FREQ_INTERVAL} seconds"
+
+if [[ -n "$TEMP_ZONE" ]]; then
+    info "Temperature Sensor" "$TEMP_ZONE"
+fi
+
+start_cpu_monitor "mutex"
+
+MUTEX_OUT="$(sysbench mutex \
+    --threads="$(nproc)" \
+    --mutex-num="$MUTEX_NUM" \
+    --mutex-locks="$MUTEX_LOCKS" \
+    --mutex-loops="$MUTEX_LOOPS" \
+    run)"
+echo "$MUTEX_OUT" > "$TEMP_ROOT/mutex_raw.txt"
+
+MUTEX_EVENTS="$(echo "$MUTEX_OUT" | awk '/total number of events:/ {print $NF}')"
+MUTEX_TIME="$(echo "$MUTEX_OUT" | awk '/total time:/ {print $NF}' | tr -d 's')"
+
+if [[ -n "$MUTEX_EVENTS" && -n "$MUTEX_TIME" && "$MUTEX_TIME" != "0.0000" ]]; then
+    MUTEX_SCORE="$(awk "BEGIN { printf \"%.2f\", $MUTEX_EVENTS / $MUTEX_TIME }")"
+    info "Actual Time" "${MUTEX_TIME} seconds"
+    info "Total Events" "$MUTEX_EVENTS"
+    info "Result" "$MUTEX_SCORE events/s"
+    echo "$MUTEX_SCORE" > "$TEMP_ROOT/mutex_score"
+else
+    info "Result" "FAILED"
+fi
+
+stop_cpu_monitor
+
+print_monitor_summary "$MONITOR_FILE"
+
+section_end
+
+echo
+echo "Raw sysbench output (Single Core):"
+cat "$TEMP_ROOT/cpu_single_raw.txt" 2>/dev/null || true
+print_cpu_monitor "$TEMP_ROOT/cpu_single_monitor.txt"
+echo
+echo "Raw sysbench output (All Cores):"
+cat "$TEMP_ROOT/cpu_all_raw.txt" 2>/dev/null || true
+print_cpu_monitor "$TEMP_ROOT/cpu_all_monitor.txt"
+echo
+echo "Raw sysbench output (Threads):"
+cat "$TEMP_ROOT/threads_raw.txt" 2>/dev/null || true
+print_cpu_monitor "$TEMP_ROOT/threads_monitor.txt"
+echo
+echo "Raw sysbench output (Mutex):"
+cat "$TEMP_ROOT/mutex_raw.txt" 2>/dev/null || true
+print_cpu_monitor "$TEMP_ROOT/mutex_monitor.txt"
+# Raw output for per-cluster benchmarks (big.LITTLE)
+for raw_file in "$TEMP_ROOT"/cluster_*_raw.txt; do
+    [[ -f "$raw_file" ]] || continue
+    cl_name="$(basename "$raw_file" | sed 's/cluster_//;s/_raw\.txt//')"
+    echo
+    echo "Raw sysbench output (Cluster: ${cl_name}):"
+    cat "$raw_file" 2>/dev/null || true
+done
+fi
+
+###############################################################################
+# 2.5 THERMAL STRESS TEST
+###############################################################################
+
+if [[ "$RUN_STRESS" -eq 1 ]]; then
+    section "THERMAL STRESS TEST"
+    info "Duration" "15 Minutes"
+    info "Workload" "sysbench cpu (all cores)"
+    info "Status" "Running (Please wait...)"
+    
+    # Run sysbench in background for 900 seconds
+    sysbench cpu --cpu-max-prime=20000 --threads="$(nproc)" --time=900 run > "$TEMP_ROOT/stress_raw.txt" 2>&1 &
+    BENCH_PID=$!
+    
+    echo "  > Monitoring System (every 5s)..."
+    if [[ "$POWER_MONITOR_ENABLED" -eq 1 ]]; then
+        printf "  %-5s | %-6s | %-6s | %-6s | %s\n" "Time" "Temp" "RAM" "Power" "CPU Freq"
+    else
+        printf "  %-5s | %-6s | %-6s | %s\n" "Time" "Temp" "RAM" "CPU Freq"
+    fi
+    START_TIME=$(date +%s)
+    
+    while kill -0 $BENCH_PID 2>/dev/null; do
+        NOW=$(date +%s)
+        ELAPSED=$((NOW - START_TIME))
+        M=$(printf "%02d" $((ELAPSED / 60)))
+        S=$(printf "%02d" $((ELAPSED % 60)))
+        
+        TEMP_RAW="$(read_temperature "$TEMP_ZONE")"
+        if [[ "$TEMP_RAW" != "N/A" ]]; then
+            TEMP_VAL="${TEMP_RAW}C"
+        else
+            TEMP_VAL="N/A"
+        fi
+        
+        RAM_USED="$(free -m | awk '/^Mem:/{print $3}')"
+        RAM_VAL="${RAM_USED}MB"
+        
+        # Extract unique frequencies to save space (e.g. 1800,2400 MHz for big.LITTLE)
+        FREQ_LIST=$(for ((i=0; i<$(nproc); i++)); do read_cpu_frequency "$i"; done | grep -v '^$' | sort -nu | tr '\n' ',' | sed 's/,$//')
+        [[ -z "$FREQ_LIST" ]] && FREQ_LIST="N/A"
+        FREQS="${FREQ_LIST} MHz"
+        
+        if [[ "$POWER_MONITOR_ENABLED" -eq 1 ]]; then
+            PWR_RAW="$(read_power)"
+            PWR_VAL="N/A"
+            [[ -n "$PWR_RAW" && "$PWR_RAW" =~ ^[0-9] ]] && PWR_VAL="${PWR_RAW}W"
+            printf "  %-5s | %-6s | %-6s | %-6s | %s\n" "${M}:${S}" "$TEMP_VAL" "$RAM_VAL" "$PWR_VAL" "$FREQS"
+        else
+            printf "  %-5s | %-6s | %-6s | %s\n" "${M}:${S}" "$TEMP_VAL" "$RAM_VAL" "$FREQS"
+        fi
+        
+        sleep 5
+    done
+    
+    wait $BENCH_PID
+    ok "Stress Test Completed"
+    
+    echo
+    echo "Raw sysbench output (Stress Test):"
+    cat "$TEMP_ROOT/stress_raw.txt" 2>/dev/null || true
+    section_end
+fi
+
+###############################################################################
+# 3. MEMORY BENCHMARK
+###############################################################################
+
+if [[ "$RUN_MEM" -eq 1 ]]; then
+section "MEMORY BENCHMARK"
+
+if [[ "$RAM_AVAILABLE_MB" -lt 256 ]]; then
+    MEMORY_BLOCK="512K"
+elif [[ "$RAM_AVAILABLE_MB" -lt 512 ]]; then
+    MEMORY_BLOCK="512K"
+else
+    MEMORY_BLOCK="1M"
+fi
+
+info "Memory Block" "$MEMORY_BLOCK"
+info "Memory Workload Limit" "$MEMORY_TOTAL_SIZE (Total processed data limit over duration)"
+
+if [[ "$RAM_AVAILABLE_MB" -lt 256 ]]; then
+    warn "Very low available RAM detected."
+    warn "Memory benchmark will use a small block size."
+fi
+
+start_cpu_monitor "memory"
+
+subsection "Memory Read"
+MEM_READ_OUT="$(sysbench memory \
+    --threads="$(nproc)" \
+    --memory-block-size="$MEMORY_BLOCK" \
+    --memory-total-size="$MEMORY_TOTAL_SIZE" \
+    --time="$MEMORY_DURATION" \
+    --memory-oper=read \
+    run)"
+echo "$MEM_READ_OUT" > "$TEMP_ROOT/mem_read_raw.txt"
+MEM_READ_SCORE="$(echo "$MEM_READ_OUT" | awk '/MiB transferred/ {print $4}' | tr -d '()')"
+if [[ -n "$MEM_READ_SCORE" ]]; then
+    info "Result" "$MEM_READ_SCORE MiB/s"
+    echo "$MEM_READ_SCORE" > "$TEMP_ROOT/mem_read"
+else
+    info "Result" "FAILED"
+fi
+
+subsection "Memory Write"
+MEM_WRITE_OUT="$(sysbench memory \
+    --threads="$(nproc)" \
+    --memory-block-size="$MEMORY_BLOCK" \
+    --memory-total-size="$MEMORY_TOTAL_SIZE" \
+    --time="$MEMORY_DURATION" \
+    --memory-oper=write \
+    run)"
+echo "$MEM_WRITE_OUT" > "$TEMP_ROOT/mem_write_raw.txt"
+MEM_WRITE_SCORE="$(echo "$MEM_WRITE_OUT" | awk '/MiB transferred/ {print $4}' | tr -d '()')"
+if [[ -n "$MEM_WRITE_SCORE" ]]; then
+    info "Result" "$MEM_WRITE_SCORE MiB/s"
+    echo "$MEM_WRITE_SCORE" > "$TEMP_ROOT/mem_write"
+else
+    info "Result" "FAILED"
+fi
+
+stop_cpu_monitor
+print_monitor_summary "$MONITOR_FILE"
+
+section_end
+
+echo
+echo "Raw sysbench output (Memory Read):"
+cat "$TEMP_ROOT/mem_read_raw.txt" 2>/dev/null || true
+echo
+echo "Raw sysbench output (Memory Write):"
+cat "$TEMP_ROOT/mem_write_raw.txt" 2>/dev/null || true
+print_cpu_monitor "$TEMP_ROOT/memory_monitor.txt"
+fi
+
+###############################################################################
+# 4. STORAGE BENCHMARK
+###############################################################################
+
+if [[ "$RUN_STORAGE" -eq 1 ]]; then
+section "STORAGE BENCHMARK"
+
+ROOT_PARTITION="$(findmnt -n -o SOURCE / 2>/dev/null || echo unknown)"
+ROOT_PARENT="$(lsblk -no PKNAME "$ROOT_PARTITION" 2>/dev/null || true)"
+if [[ -n "$ROOT_PARENT" ]]; then
+    ROOT_DEVICE="/dev/$ROOT_PARENT"
+else
+    ROOT_DEVICE="$ROOT_PARTITION"
+fi
+
+info "Root Partition" "$ROOT_PARTITION"
+info "Root Device" "$ROOT_DEVICE"
+
+subsection "MMC Configuration"
+MMC_FOUND=0
+for mmc in /sys/class/mmc_host/mmc*; do
+    [[ -d "$mmc" ]] || continue
+    MMC_FOUND=1
+    for card in "$mmc"/mmc*; do
+        [[ -d "$card" ]] || continue
+        CARD_NAME="$(basename "$card")"
+        subsection "MMC Card $CARD_NAME"
+        [[ -r "$card/name" ]] && info "Name" "$(cat "$card/name")"
+        [[ -r "$card/type" ]] && info "Type" "$(cat "$card/type")"
+        [[ -r "$card/cid" ]] && info "CID" "$(cat "$card/cid")"
+        [[ -r "$card/csd" ]] && info "CSD" "$(cat "$card/csd")"
+        [[ -r "$card/date" ]] && info "Manufacture" "$(cat "$card/date")"
+        [[ -r "$card/hwrev" ]] && info "HW Revision" "$(cat "$card/hwrev")"
+    done
+done
+if [[ "$MMC_FOUND" -eq 0 ]]; then
+    info "MMC" "No MMC information available"
+fi
+
+get_free_space_mb() {
+    local path="$1"
+    df -Pm "$path" 2>/dev/null | awk 'NR==2 {print $4}'
+}
+
+subsection "Dynamic Storage Benchmark"
+
+warn "Sequential Read tests are performed on all detected block devices."
+warn "Random Read tests (QD1/QD32) are performed on all detected block devices."
+warn "Random Write tests are performed ONLY on the Root Partition (File I/O) and verified Android Userdata partitions."
+
+start_cpu_monitor "storage"
+
+STORAGE_DEVICES=()
+for dev in /sys/block/*; do
+    bn="$(basename "$dev")"
+    [[ "$bn" == loop* || "$bn" == zram* || "$bn" == ram* || "$bn" == *boot* ]] && continue
+
+    STORAGE_DEVICES+=("$bn")
+done
+
+for bn in "${STORAGE_DEVICES[@]}"; do
+    device="/dev/$bn"
+    [[ -b "$device" ]] || continue
+    
+    subsection "Device: $device"
+    
+    dev_type="Drive"
+    if [[ "$bn" == mmcblk* ]]; then
+        type_file="/sys/block/$bn/device/type"
+        if [[ -f "$type_file" ]]; then
+            t="$(cat "$type_file")"
+            [[ "$t" == "MMC" ]] && dev_type="eMMC" || dev_type="SD Card"
+        else
+            dev_type="SD/eMMC"
+        fi
+    elif [[ "$bn" == nvme* ]]; then
+        dev_type="NVMe SSD"
+    elif [[ "$bn" == sd* ]]; then
+        tran="$(lsblk -ndo TRAN "$device" 2>/dev/null || true)"
+        rota="$(lsblk -ndo ROTA "$device" 2>/dev/null || true)"
+        if [[ "$tran" == "usb" ]]; then
+            dev_type="USB Drive"
+        elif [[ "$tran" == "sata" ]]; then
+            [[ "$rota" == "1" ]] && dev_type="SATA HDD" || dev_type="SATA SSD"
+        fi
+    fi
+    
+    size="$(lsblk -ndo SIZE "$device" 2>/dev/null || echo unknown)"
+    model="$(lsblk -ndo MODEL "$device" 2>/dev/null | xargs 2>/dev/null || echo unknown)"
+    if [[ "$model" == "unknown" || -z "$model" ]]; then
+        model="$(cat /sys/block/$bn/device/name 2>/dev/null || echo unknown)"
+    fi
+    
+    info "Type" "$dev_type"
+    info "Model" "$model"
+    info "Size" "$size"
+    
+    # --- SEQUENTIAL READ ---
+    info "Status" "Running Sequential Read..."
+    FIO_SEQ_OUT="$(fio \
+        --name="${bn}_seqread" \
+        --filename="$device" \
+        --direct=1 \
+        --rw=read \
+        --bs="$FIO_BS" \
+        --size="$FIO_SIZE" \
+        --iodepth=1 \
+        --ioengine=libaio \
+        --runtime=0 \
+        --time_based=0 \
+        --group_reporting 2>/dev/null || true)"
+    echo "$FIO_SEQ_OUT" > "$TEMP_ROOT/${bn}_seq_raw.txt"
+    FIO_SEQ_VAL="$(echo "$FIO_SEQ_OUT" | awk '/read: IOPS=/ {
+        iops=$2; gsub(/IOPS=|,/, "", iops);
+        bw=$3; gsub(/BW=/, "", bw);
+        print iops " IOPS (" bw ")"
+    }')"
+    if [[ -n "$FIO_SEQ_VAL" ]]; then
+        info "Seq Read" "$FIO_SEQ_VAL"
+    else
+        FIO_SEQ_VAL="SKIPPED"
+        info "Seq Read" "FAILED/SKIPPED"
+    fi
+
+    # --- RANDOM 4K QD1 READ ---
+    info "Status" "Running Random 4K QD1 Read..."
+    FIO_QD1_OUT="$(fio \
+        --name="${bn}_randread_qd1" \
+        --filename="$device" \
+        --direct=1 \
+        --rw=randread \
+        --bs=4k \
+        --size="$FIO_SIZE" \
+        --iodepth=1 \
+        --ioengine=libaio \
+        --runtime=60 \
+        --time_based=1 \
+        --group_reporting 2>/dev/null || true)"
+    echo "$FIO_QD1_OUT" > "$TEMP_ROOT/${bn}_qd1_raw.txt"
+    FIO_QD1_VAL="$(echo "$FIO_QD1_OUT" | awk '/read: IOPS=/ {
+        iops=$2; gsub(/IOPS=|,/, "", iops);
+        bw=$3; gsub(/BW=/, "", bw);
+        print iops " IOPS (" bw ")"
+    }')"
+    if [[ -n "$FIO_QD1_VAL" ]]; then
+        info "Rand 4K QD1" "$FIO_QD1_VAL"
+    else
+        FIO_QD1_VAL="SKIPPED"
+        info "Rand 4K QD1" "FAILED/SKIPPED"
+    fi
+
+    # --- RANDOM 4K QD32 READ ---
+    info "Status" "Running Random 4K QD32 Read..."
+    FIO_QD32_OUT="$(fio \
+        --name="${bn}_randread_qd32" \
+        --filename="$device" \
+        --direct=1 \
+        --rw=randread \
+        --bs=4k \
+        --size="$FIO_SIZE" \
+        --iodepth=32 \
+        --ioengine=libaio \
+        --runtime=60 \
+        --time_based=1 \
+        --group_reporting 2>/dev/null || true)"
+    echo "$FIO_QD32_OUT" > "$TEMP_ROOT/${bn}_qd32_raw.txt"
+    FIO_QD32_VAL="$(echo "$FIO_QD32_OUT" | awk '/read: IOPS=/ {
+        iops=$2; gsub(/IOPS=|,/, "", iops);
+        bw=$3; gsub(/BW=/, "", bw);
+        print iops " IOPS (" bw ")"
+    }')"
+    if [[ -n "$FIO_QD32_VAL" ]]; then
+        info "Rand 4K QD32" "$FIO_QD32_VAL"
+    else
+        FIO_QD32_VAL="SKIPPED"
+        info "Rand 4K QD32" "FAILED/SKIPPED"
+    fi
+    
+    # --- WRITE BENCHMARK ---
+    FIO_WRITE_VAL="SKIPPED"
+    
+    if [[ "$device" == "$ROOT_DEVICE" ]]; then
+        info "Status" "Root device detected. Running sysbench fileio write on \$TEMP_ROOT..."
+        if ! cd "$TEMP_ROOT" 2>/dev/null; then
+            info "File I/O Random" "SKIPPED (Read-only or permission denied)"
+        else
+            sysbench fileio --file-total-size=1G prepare > /dev/null 2>&1
+            FILEIO_OUT="$(sysbench fileio --file-total-size=1G --file-test-mode=rndwr --time=30 --max-requests=0 run 2>&1 || true)"
+            sysbench fileio --file-total-size=1G cleanup > /dev/null 2>&1
+            cd - > /dev/null || true
+            
+            echo "$FILEIO_OUT" > "$TEMP_ROOT/${bn}_write_raw.txt"
+            wr_iops="$(echo "$FILEIO_OUT" | awk '/writes\/s:/ {print $2}')"
+            wr_bw="$(echo "$FILEIO_OUT" | awk '/written, MiB\/s:/ {print $3}')"
+            
+            if [[ -n "$wr_iops" && -n "$wr_bw" ]]; then
+                FIO_WRITE_VAL="${wr_iops} IOPS (${wr_bw}MiB/s)"
+                info "File I/O Random" "$FIO_WRITE_VAL"
+            else
+                info "File I/O Random" "FAILED"
+            fi
+        fi
+        
+    elif [[ "$dev_type" == "eMMC" ]]; then
+        andr_part=""
+        loop_device_created=""
+        if command_exists blkid; then
+            andr_part="$(blkid -t PARTLABEL=userdata -o device 2>/dev/null | grep "$bn" | head -n1)"
+            [[ -z "$andr_part" ]] && andr_part="$(blkid -t PARTLABEL=data -o device 2>/dev/null | grep "$bn" | head -n1)"
+            [[ -z "$andr_part" ]] && andr_part="$(blkid -t PARTLABEL=UDISK -o device 2>/dev/null | grep "$bn" | head -n1)"
+        fi
+        
+        if [[ -z "$andr_part" ]] && command_exists ampart && command_exists losetup; then
+            info "Status" "Using ampart to probe Amlogic eMMC partitions..."
+            ampart_out="$(ampart "$device" 2>&1 || true)"
+            if [[ -n "$ampart_out" ]]; then
+                data_line="$(echo "$ampart_out" | grep -iE '^[[:space:]]*[0-9]+:[[:space:]]+(data|userdata)[[:space:]]+' | tail -n1)"
+                if [[ -n "$data_line" ]]; then
+                    data_clean="$(echo "$data_line" | sed 's/([^)]*)//g')"
+                    offset_hex="$(echo "$data_clean" | awk '{print $3}')"
+                    size_hex="$(echo "$data_clean" | awk '{print $4}')"
+                    if [[ -n "$offset_hex" && -n "$size_hex" ]]; then
+                        offset_hex="0x${offset_hex#0x}"
+                        size_hex="0x${size_hex#0x}"
+                        offset_dec=$(( offset_hex ))
+                        size_dec=$(( size_hex ))
+                        if [[ "$offset_dec" -gt 0 && "$size_dec" -gt 0 ]]; then
+                            info "Status" "Mapping userdata via loopback (${offset_hex})..."
+                            andr_part="$(losetup -f --show --offset "$offset_dec" --sizelimit "$size_dec" "$device" 2>/dev/null)"
+                            loop_device_created="$andr_part"
+                        fi
+                    fi
+                fi
+            fi
+        fi
+        
+        if [[ -n "$andr_part" ]]; then
+            info "Status" "Android userdata partition ($andr_part) detected. Safe Write testing..."
+            ANDROID_MNT="/mnt/imba_android_$bn"
+            mkdir -p "$ANDROID_MNT"
+            if mount -o ro "$andr_part" "$ANDROID_MNT" 2>/dev/null; then
+                if [[ -d "$ANDROID_MNT/app" && -d "$ANDROID_MNT/dalvik-cache" ]]; then
+                    mount -o remount,rw "$ANDROID_MNT" 2>/dev/null
+                    FREE_MB=$(df -m "$ANDROID_MNT" | awk 'NR==2 {print $4}')
+                    if [[ -n "$FREE_MB" && "$FREE_MB" -gt 500 ]]; then
+                        TEST_SIZE=$(( FREE_MB / 2 ))
+                        [[ "$TEST_SIZE" -gt 1024 ]] && TEST_SIZE=1024
+                        
+                        BENCH_DIR="$ANDROID_MNT/imba_test"
+                        if ! mkdir -p "$BENCH_DIR" 2>/dev/null || ! cd "$BENCH_DIR" 2>/dev/null; then
+                            info "File I/O Random" "SKIPPED (Read-only filesystem)"
+                            umount "$ANDROID_MNT" 2>/dev/null || true
+                            rmdir "$ANDROID_MNT" 2>/dev/null || true
+                            continue
+                        fi
+                        
+                        sysbench fileio --file-total-size=${TEST_SIZE}M prepare > /dev/null 2>&1
+                        ANDROID_WR_OUT="$(sysbench fileio --file-total-size=${TEST_SIZE}M --file-test-mode=rndwr --time=30 --max-requests=0 run 2>&1 || true)"
+                        sysbench fileio --file-total-size=${TEST_SIZE}M cleanup > /dev/null 2>&1
+                        cd - > /dev/null || true
+                        
+                        echo "$ANDROID_WR_OUT" > "$TEMP_ROOT/${bn}_write_raw.txt"
+                        wr_iops="$(echo "$ANDROID_WR_OUT" | awk '/writes\/s:/ {print $2}')"
+                        wr_bw="$(echo "$ANDROID_WR_OUT" | awk '/written, MiB\/s:/ {print $3}')"
+                        
+                        if [[ -n "$wr_iops" && -n "$wr_bw" ]]; then
+                            FIO_WRITE_VAL="${wr_iops} IOPS (${wr_bw}MiB/s)"
+                            info "File I/O Random" "$FIO_WRITE_VAL"
+                        else
+                            info "File I/O Random" "FAILED"
+                        fi
+                    else
+                        info "File I/O Random" "SKIPPED (Available space < 500MB)"
+                    fi
+                else
+                    info "File I/O Random" "SKIPPED (Fingerprint mismatch)"
+                fi
+                umount "$ANDROID_MNT" 2>/dev/null || true
+                rmdir "$ANDROID_MNT" 2>/dev/null || true
+            else
+                info "File I/O Random" "SKIPPED (Mount failed)"
+            fi
+        else
+            info "File I/O Random" "SKIPPED (No userdata partition found)"
+        fi
+        
+        if [[ -n "$loop_device_created" ]]; then
+            losetup -d "$loop_device_created" 2>/dev/null || true
+        fi
+    else
+        target_part=""
+        mnt_point=""
+        
+        # Look for an already mounted partition (should be mounted by ensure_fd_mounted globally)
+        for part in /dev/${bn}*; do
+            [[ -b "$part" ]] || continue
+            mnt_point="$(findmnt -n -o TARGET "$part" 2>/dev/null | head -n1)"
+            if [[ -n "$mnt_point" ]]; then
+                target_part="$part"
+                break
+            fi
+        done
+        
+        if [[ -n "$mnt_point" ]]; then
+            info "Status" "Found mounted $target_part at $mnt_point. Running safe write test..."
+            FREE_MB=$(df -m "$mnt_point" | awk 'NR==2 {print $4}')
+            if [[ -n "$FREE_MB" && "$FREE_MB" -gt 500 ]]; then
+                TEST_SIZE=$(( FREE_MB / 2 ))
+                [[ "$TEST_SIZE" -gt 1024 ]] && TEST_SIZE=1024
+                
+                BENCH_DIR="$mnt_point/imba_test_$$"
+                if ! mkdir -p "$BENCH_DIR" 2>/dev/null || ! cd "$BENCH_DIR" 2>/dev/null; then
+                    info "File I/O Random" "SKIPPED (Read-only filesystem)"
+                else
+                    sysbench fileio --file-total-size=${TEST_SIZE}M prepare > /dev/null 2>&1
+                    USB_WR_OUT="$(sysbench fileio --file-total-size=${TEST_SIZE}M --file-test-mode=rndwr --time=30 --max-requests=0 run 2>&1 || true)"
+                    sysbench fileio --file-total-size=${TEST_SIZE}M cleanup > /dev/null 2>&1
+                    cd - > /dev/null || true
+                    rmdir "$BENCH_DIR" 2>/dev/null || true
+                    
+                    echo "$USB_WR_OUT" > "$TEMP_ROOT/${bn}_write_raw.txt"
+                    wr_iops="$(echo "$USB_WR_OUT" | awk '/writes\/s:/ {print $2}')"
+                    wr_bw="$(echo "$USB_WR_OUT" | awk '/written, MiB\/s:/ {print $3}')"
+                    
+                    if [[ -n "$wr_iops" && -n "$wr_bw" ]]; then
+                        FIO_WRITE_VAL="${wr_iops} IOPS (${wr_bw}MiB/s)"
+                        info "File I/O Random" "$FIO_WRITE_VAL"
+                    else
+                        info "File I/O Random" "FAILED"
+                    fi
+                fi
+            else
+                info "File I/O Random" "SKIPPED (Available space < 500MB)"
+            fi
+            
+
+        else
+            info "File I/O Random" "SKIPPED (Could not mount $dev_type)"
+        fi
+    fi
+    
+    echo "${dev_type}|${model}|${size}|${FIO_SEQ_VAL}|${FIO_QD1_VAL}|${FIO_QD32_VAL}|${FIO_WRITE_VAL}" > "$TEMP_ROOT/storage_result_${bn}"
+done
+
+stop_cpu_monitor
+print_monitor_summary "$MONITOR_FILE"
+
+section_end
+
+echo
+echo "Storage Topology (lsblk):"
+lsblk --ascii -o NAME,MODEL,SIZE,TYPE,FSTYPE,TRAN,ROTA,MOUNTPOINTS 2>/dev/null || lsblk -o NAME,MODEL,SIZE,TYPE,FSTYPE,TRAN,ROTA,MOUNTPOINTS
+echo
+
+for raw in "$TEMP_ROOT"/*_seq_raw.txt; do
+    [[ -f "$raw" ]] || continue
+    bn="$(basename "$raw" "_seq_raw.txt")"
+    echo "Raw fio output (Sequential Read $bn):"
+    cat "$raw" 2>/dev/null || true
+    echo
+done
+for raw in "$TEMP_ROOT"/*_qd1_raw.txt; do
+    [[ -f "$raw" ]] || continue
+    bn="$(basename "$raw" "_qd1_raw.txt")"
+    echo "Raw fio output (Random 4K QD1 Read $bn):"
+    cat "$raw" 2>/dev/null || true
+    echo
+done
+for raw in "$TEMP_ROOT"/*_qd32_raw.txt; do
+    [[ -f "$raw" ]] || continue
+    bn="$(basename "$raw" "_qd32_raw.txt")"
+    echo "Raw fio output (Random 4K QD32 Read $bn):"
+    cat "$raw" 2>/dev/null || true
+    echo
+done
+for raw in "$TEMP_ROOT"/*_write_raw.txt; do
+    [[ -f "$raw" ]] || continue
+    bn="$(basename "$raw" "_write_raw.txt")"
+    echo "Raw sysbench output (Write $bn):"
+    cat "$raw" 2>/dev/null || true
+    echo
+done
+print_cpu_monitor "$TEMP_ROOT/storage_monitor.txt"
+fi
+
+###############################################################################
+# 5. NETWORK
+###############################################################################
+
+if [[ "$RUN_NET" -eq 1 ]]; then
+section "NETWORK"
+
+start_cpu_monitor "network"
+
+subsection "Network Interfaces"
+NETWORK_FOUND=0
+for iface_path in /sys/class/net/*; do
+    iface="$(basename "$iface_path")"
+    [[ "$iface" == "lo" ]] && continue
+    # Skip virtual/container interfaces
+    [[ -d "/sys/devices/virtual/net/$iface" ]] && continue
+    NETWORK_FOUND=1
+    subsection "Interface $iface"
+    
+    # 1. Gather Type, Wi-Fi Band & Standard
+    if [[ -d "/sys/class/net/$iface/wireless" || -d "/sys/class/net/$iface/phy80211" ]]; then
+        info "Type" "Wi-Fi (Wireless LAN)"
+        if command_exists iwconfig; then
+            wifi_std="$(iwconfig "$iface" 2>/dev/null | grep -io 'IEEE 802.11[a-z]*')"
+            [[ -n "$wifi_std" ]] && info "Standard" "$wifi_std"
+        fi
+        if command_exists iw; then
+            wifi_link="$(iw dev "$iface" link 2>/dev/null)"
+            if [[ "$wifi_link" == *"Connected to"* || "$wifi_link" == *"SSID:"* ]]; then
+                wifi_ssid="$(echo "$wifi_link" | awk -F 'SSID: ' '/SSID:/ {print $2}')"
+                wifi_freq="$(echo "$wifi_link" | awk '/freq:/ {print $2}')"
+                wifi_sig="$(echo "$wifi_link" | awk '/signal:/ {print $2 " " $3}')"
+                wifi_tx="$(echo "$wifi_link" | grep -i 'tx bitrate:' | awk '{print $3 " " $4}')"
+                wifi_rx="$(echo "$wifi_link" | grep -i 'rx bitrate:' | awk '{print $3 " " $4}')"
+
+                [[ -n "$wifi_ssid" ]] && info "SSID" "$wifi_ssid"
+
+                if [[ -n "$wifi_freq" ]]; then
+                    band="Unknown"
+                    chan="?"
+                    if [[ "$wifi_freq" -ge 2412 && "$wifi_freq" -le 2472 ]]; then 
+                        band="2.4 GHz"; chan=$(((wifi_freq - 2407) / 5))
+                    elif [[ "$wifi_freq" -eq 2484 ]]; then
+                        band="2.4 GHz"; chan=14
+                    elif [[ "$wifi_freq" -ge 5000 && "$wifi_freq" -le 5900 ]]; then 
+                        band="5 GHz"; chan=$(((wifi_freq - 5000) / 5))
+                    elif [[ "$wifi_freq" -ge 5900 && "$wifi_freq" -le 7200 ]]; then 
+                        band="6 GHz"
+                    fi
+                    
+                    if [[ "$chan" != "?" ]]; then
+                        info "Wi-Fi Band" "$band (Ch $chan, $wifi_freq MHz)"
+                    else
+                        info "Wi-Fi Band" "$band ($wifi_freq MHz)"
+                    fi
+                fi
+                
+                [[ -n "$wifi_sig" ]] && info "Signal" "$wifi_sig"
+                [[ -n "$wifi_tx" ]] && info "Tx Speed" "$wifi_tx"
+                [[ -n "$wifi_rx" ]] && info "Rx Speed" "$wifi_rx"
+            else
+                info "Wi-Fi Status" "Not connected"
+            fi
+        fi
+    else
+        # If not wireless, usually Ethernet
+        info "Type" "Ethernet (Wired LAN)"
+    fi
+
+    # 2. Gather Chipset / Hardware Info
+    if [[ -L "/sys/class/net/$iface/device" ]]; then
+        dev_path="$(readlink -f "/sys/class/net/$iface/device" 2>/dev/null)"
+        chip_info=""
+        if [[ "$dev_path" == *"/pci"* ]] && command_exists lspci; then
+            pci_id="$(basename "$dev_path")"
+            chip_info="$(lspci -s "$pci_id" 2>/dev/null | cut -d':' -f3- | sed 's/^[ \t]*//')"
+            [[ -n "$chip_info" ]] && info "Chipset" "$chip_info"
+        elif [[ "$dev_path" == *"/usb"* ]] && command_exists lsusb; then
+            vid="$(cat "$dev_path/idVendor" 2>/dev/null || true)"
+            pid="$(cat "$dev_path/idProduct" 2>/dev/null || true)"
+            if [[ -n "$vid" && -n "$pid" ]]; then
+                chip_info="$(lsusb -d "${vid}:${pid}" 2>/dev/null | head -n1 | cut -d':' -f3- | sed 's/^[ \t]*//')"
+                [[ -n "$chip_info" ]] && info "Chipset" "$chip_info"
+            fi
+        fi
+        
+        # SDIO detection (e.g. Broadcom/Realtek SDIO)
+        if [[ -z "$chip_info" && -f "$dev_path/vendor" && -f "$dev_path/device" ]]; then
+            ven="$(cat "$dev_path/vendor" 2>/dev/null || true)"
+            dev="$(cat "$dev_path/device" 2>/dev/null || true)"
+            if [[ -n "$ven" && -n "$dev" && "$ven" != "0x0000" ]]; then
+                info "SDIO ID" "${ven}:${dev}"
+                # Broadcom SDIO Dictionary for brcmfmac
+                if [[ "${ven,,}" == "0x02d0" || "${ven,,}" == "0x0489" ]]; then
+                    case "${dev,,}" in
+                        "0xa9a6") chip_info="Broadcom BCM43455 (Wi-Fi 5 SDIO)" ;;
+                        "0xa9a4") chip_info="Broadcom BCM43430 (Wi-Fi 4 SDIO)" ;;
+                        "0x4330") chip_info="Broadcom BCM4330 (Wi-Fi 4 SDIO)" ;;
+                        "0x4343") chip_info="Broadcom BCM43438 (Wi-Fi 4 SDIO)" ;;
+                        "0x4345") chip_info="Broadcom BCM4345 (Wi-Fi 5 SDIO)" ;;
+                        "0x4354") chip_info="Broadcom BCM4354 (Wi-Fi 5 SDIO)" ;;
+                        "0x4356") chip_info="Broadcom BCM4356 (Wi-Fi 5 SDIO)" ;;
+                        "0x4359"|"0xa816"|"0xa822") chip_info="Broadcom BCM4359 (Wi-Fi 5 SDIO)" ;;
+                        "0x4373") chip_info="Broadcom BCM4373 (Wi-Fi 5 SDIO)" ;;
+                        "0x4375") chip_info="Broadcom BCM4375 (Wi-Fi 6 SDIO)" ;;
+                    esac
+                    [[ -n "$chip_info" ]] && info "Chipset" "$chip_info"
+                fi
+            fi
+        fi
+        
+        driver_name="$(basename "$(readlink -f "$dev_path/driver" 2>/dev/null)" 2>/dev/null || true)"
+        
+        # Embedded SBC Wi-Fi Heuristic (SDIO chips lack a public lssdio database)
+        if [[ -z "$chip_info" && -n "$driver_name" ]]; then
+            case "$driver_name" in
+                "unisoc_wifi"|"uwe5622") chip_info="Unisoc UWE5622 (SDIO)" ;;
+                "uwe5621") chip_info="Unisoc UWE5621 (SDIO)" ;;
+                "rtw88_8822cs"|"8822cs") chip_info="Realtek RTL8822CS (Wi-Fi 5 SDIO)" ;;
+                "rtw88_8822bs"|"8822bs") chip_info="Realtek RTL8822BS (Wi-Fi 5 SDIO)" ;;
+                "rtw88_8723cs"|"8723cs") chip_info="Realtek RTL8723CS (Wi-Fi 4 SDIO)" ;;
+                "rtw89_8852bs"|"8852bs") chip_info="Realtek RTL8852BS (Wi-Fi 6 SDIO)" ;;
+                "rtw89_8852cs"|"8852cs") chip_info="Realtek RTL8852CS (Wi-Fi 6 SDIO)" ;;
+                "rtl8189fs"|"8189fs") chip_info="Realtek RTL8189FS (Wi-Fi 4 SDIO)" ;;
+                "rtl8189es"|"8189es") chip_info="Realtek RTL8189ES (Wi-Fi 4 SDIO)" ;;
+                "rtl8821cs"|"8821cs") chip_info="Realtek RTL8821CS (Wi-Fi 5 SDIO)" ;;
+                "brcmfmac") chip_info="Broadcom / Cypress AP62xx (SDIO)" ;;
+                "dhd"|"bcmdhd") chip_info="Broadcom / Ampak BCM (SDIO)" ;;
+                "xradio_wlan") chip_info="Allwinner XR819 (SDIO)" ;;
+                "mwifiex_sdio") chip_info="Marvell / NXP Wi-Fi (SDIO)" ;;
+                "wl18xx") chip_info="Texas Instruments WL18xx (SDIO)" ;;
+                "aic8800") chip_info="AIC Semi AIC8800 (Wi-Fi 6 SDIO/USB)" ;;
+                "mt7668"|"mt7668sn") chip_info="MediaTek MT7668 (Wi-Fi 5 SDIO)" ;;
+                "mt7601u") chip_info="MediaTek MT7601U (Wi-Fi 4 USB)" ;;
+                "ssv6051") chip_info="SSV6051 (Wi-Fi 4 SDIO)" ;;
+                "qca9377") chip_info="Qualcomm QCA9377 (Wi-Fi 5 SDIO)" ;;
+                "wcn36xx"|"wcn3990") chip_info="Qualcomm WCN (SDIO)" ;;
+            esac
+            [[ -n "$chip_info" ]] && info "Chipset" "$chip_info"
+        fi
+
+        # Platform device detection (e.g. Allwinner internal Ethernet MAC)
+        if [[ -z "$chip_info" && -f "$dev_path/of_node/compatible" ]]; then
+            # compatible strings are null-terminated, grab the first one
+            compat="$(tr '\0' '\n' < "$dev_path/of_node/compatible" | head -n 1 2>/dev/null)"
+            [[ -n "$compat" ]] && info "MAC (SoC)" "$compat"
+        fi
+        
+        [[ -n "$driver_name" ]] && info "Driver" "$driver_name"
+    fi
+
+    # 3. Gather Ethernet PHY Chip Info (if external PHY exists)
+    if [[ -L "/sys/class/net/$iface/phydev" ]]; then
+        phy_drv="$(basename "$(readlink -f "/sys/class/net/$iface/phydev/driver" 2>/dev/null)" 2>/dev/null || true)"
+        phy_id="$(cat "/sys/class/net/$iface/phydev/phy_id" 2>/dev/null || true)"
+        if [[ -n "$phy_drv" ]]; then
+            # Sometimes driver name is very descriptive like "Motorola Ethernet PHY"
+            info "PHY Chip" "$phy_drv"
+        fi
+        if [[ -n "$phy_id" ]]; then
+            info "PHY ID" "$phy_id"
+        fi
+    fi
+
+    state="$(cat "$iface_path/operstate" 2>/dev/null || echo unknown)"
+    info "State" "$state"
+    if command_exists ethtool; then
+        SPEED="$(ethtool "$iface" 2>/dev/null | awk -F': ' '/Speed:/ {print $2; exit}')"
+        DUPLEX="$(ethtool "$iface" 2>/dev/null | awk -F': ' '/Duplex:/ {print $2; exit}')"
+        LINK="$(ethtool "$iface" 2>/dev/null | awk -F': ' '/Link detected:/ {print $2; exit}')"
+        [[ -n "$SPEED" && "$SPEED" != "Unknown!" ]] && info "Speed" "$SPEED"
+        [[ -n "$DUPLEX" && "$DUPLEX" != "Unknown!" ]] && info "Duplex" "$DUPLEX"
+        [[ -n "$LINK" ]] && info "Link" "$LINK"
+    fi
+    if command_exists ip; then
+        ip_addr="$(ip -brief addr show "$iface" 2>/dev/null | awk '{print $3}')"
+        [[ -n "$ip_addr" ]] && info "IP Address" "$ip_addr"
+    fi
+done
+if [[ "$NETWORK_FOUND" -eq 0 ]]; then
+    info "Network" "No interface detected"
+fi
+
+subsection "Local Loopback (Internal iperf3)"
+if command_exists iperf3; then
+    iperf3 --server --daemon --one-off 2>/dev/null
+    sleep 1
+
+    IPERF_LOCAL_OUT="$(iperf3 --client 127.0.0.1 --time 10 --format m 2>&1 || true)"
+    echo "$IPERF_LOCAL_OUT" > "$TEMP_ROOT/iperf_local_raw.txt"
+
+    IPERF_LOCAL_VAL="$(echo "$IPERF_LOCAL_OUT" | awk '/receiver/ {print $(NF-2) " " $(NF-1)}')"
+    if [[ -n "$IPERF_LOCAL_VAL" ]]; then
+        info "Loopback TCP" "$IPERF_LOCAL_VAL"
+        echo "$IPERF_LOCAL_VAL" > "$TEMP_ROOT/net_local"
+    else
+        fail "Local loopback test failed."
+    fi
+else
+    skip "iperf3 command unavailable."
+fi
+
+subsection "Local Network Benchmark (iperf3)"
+if [[ -z "$IPERF_SERVER" ]]; then
+    skip "iperf3 benchmark: no server configured."
+    info "Usage" "IMBA_IPERF_SERVER=192.168.1.10 ./imba.sh"
+elif ! command_exists iperf3; then
+    skip "iperf3 command unavailable."
+else
+    info "iperf3 Server" "$IPERF_SERVER"
+
+    DEFAULT_IFACE=$(ip -4 route show default 2>/dev/null | awk '{print $5}' | head -n1)
+    [[ -z "$DEFAULT_IFACE" ]] && DEFAULT_IFACE="unknown"
+    echo "$DEFAULT_IFACE" > "$TEMP_ROOT/net_iface"
+
+    subsection "Active Interface Download ($DEFAULT_IFACE)"
+    IPERF_DL_OUT="$(iperf3 \
+        --client "$IPERF_SERVER" \
+        --time 30 \
+        --format m \
+        --reverse 2>&1 || true)"
+    echo "$IPERF_DL_OUT" > "$TEMP_ROOT/iperf_dl_raw.txt"
+
+    IPERF_DL_VAL="$(echo "$IPERF_DL_OUT" | awk '/receiver/ {print $(NF-2) " " $(NF-1)}')"
+    if [[ -n "$IPERF_DL_VAL" ]]; then
+        info "Result" "$IPERF_DL_VAL"
+        echo "$IPERF_DL_VAL" > "$TEMP_ROOT/net_down"
+    else
+        info "Result" "FAILED"
+    fi
+
+    subsection "Active Interface Upload ($DEFAULT_IFACE)"
+    IPERF_UL_OUT="$(iperf3 \
+        --client "$IPERF_SERVER" \
+        --time 30 \
+        --format m 2>&1 || true)"
+    echo "$IPERF_UL_OUT" > "$TEMP_ROOT/iperf_ul_raw.txt"
+
+    IPERF_UL_VAL="$(echo "$IPERF_UL_OUT" | awk '/receiver/ {print $(NF-2) " " $(NF-1)}')"
+    if [[ -n "$IPERF_UL_VAL" ]]; then
+        info "Result" "$IPERF_UL_VAL"
+        echo "$IPERF_UL_VAL" > "$TEMP_ROOT/net_up"
+    else
+        info "Result" "FAILED"
+    fi
+
+    if command_exists nmcli; then
+        subsection "WiFi Auto-Cycle (Local iperf3)"
+        saved_wifis=$(nmcli -t -f NAME,TYPE connection show 2>/dev/null | awk -F: '$2=="802-11-wireless" {print $1}')
+        if [[ -z "$saved_wifis" ]]; then
+            info "WiFi Auto-Cycle" "No saved WiFi profiles found."
+        else
+            available_wifi_data=$(nmcli -t -f SSID,FREQ,SIGNAL dev wifi 2>/dev/null)
+            in_range_wifis=""
+            for wifi in $saved_wifis; do
+                if echo "$available_wifi_data" | awk -F: -v w="$wifi" '$1==w' | grep -q .; then
+                    in_range_wifis="${in_range_wifis}${wifi} "
+                fi
+            done
+            
+            count=$(echo "$in_range_wifis" | wc -w)
+            target_wifis=""
+            
+            if [[ $count -le 1 ]]; then
+                target_wifis="$in_range_wifis"
+            else
+                best_24=""
+                best_24_sig=0
+                best_50=""
+                best_50_sig=0
+                
+                for wifi in $in_range_wifis; do
+                    IFS=: read -r w_ssid w_freq w_sig <<< $(echo "$available_wifi_data" | awk -F: -v w="$wifi" '$1==w' | sort -t: -k3 -nr | head -n1)
+                    w_freq_num=$(echo "$w_freq" | tr -dc '0-9')
+                    if [[ -n "$w_freq_num" ]]; then
+                        if [[ $w_freq_num -lt 3000 ]]; then
+                            if [[ $w_sig -gt $best_24_sig ]]; then
+                                best_24_sig=$w_sig
+                                best_24="$wifi"
+                            fi
+                        else
+                            if [[ $w_sig -gt $best_50_sig ]]; then
+                                best_50_sig=$w_sig
+                                best_50="$wifi"
+                            fi
+                        fi
+                    fi
+                done
+                target_wifis="$best_24 $best_50"
+            fi
+
+            for wifi in $target_wifis; do
+                [[ -z "$wifi" ]] && continue
+                was_active=0
+                if nmcli -t -f NAME,STATE connection show --active 2>/dev/null | grep -Fqx "${wifi}:activated"; then
+                    was_active=1
+                fi
+                
+                if [[ "$was_active" -eq 0 ]]; then
+                    info "Connecting" "$wifi"
+                    nmcli connection up "$wifi" >/dev/null 2>&1
+                    CONN_STATUS=$?
+                    sleep 3
+                else
+                    info "Using active WiFi" "$wifi"
+                    CONN_STATUS=0
+                fi
+
+                if [[ $CONN_STATUS -eq 0 ]]; then
+                    wifi_iface=$(nmcli -t -f DEVICE,CONNECTION dev 2>/dev/null | awk -F: -v w="$wifi" '$2==w {print $1}')
+                    if [[ -n "$wifi_iface" ]]; then
+                        wifi_ip=$(ip -brief addr show "$wifi_iface" 2>/dev/null | awk '{print $3}' | cut -d/ -f1 | head -n1)
+                        if [[ -n "$wifi_ip" ]]; then
+                            info "Testing" "$wifi ($wifi_ip)"
+                            
+                            ip rule add from "$wifi_ip" table 100 2>/dev/null
+                            ip route flush table 100 2>/dev/null
+                            ip route show dev "$wifi_iface" 2>/dev/null | grep -v 'default' | while read -r route_line; do
+                                ip route add $route_line table 100 2>/dev/null
+                            done
+                            wifi_gw=$(ip -4 route show dev "$wifi_iface" | awk '/default/ {print $3; exit}')
+                            if [[ -n "$wifi_gw" ]]; then
+                                ip route add default via "$wifi_gw" dev "$wifi_iface" table 100 2>/dev/null
+                            fi
+                            
+                            info "Ping Check" "Verifying server via $wifi_iface..."
+                            if iperf3 -c "$IPERF_SERVER" --bind "$wifi_ip" -n 1K >/dev/null 2>&1; then
+                                DL_OUT="$(iperf3 --client "$IPERF_SERVER" --bind "$wifi_ip" --time 15 --format m --reverse 2>&1)"
+                                DL_VAL="$(echo "$DL_OUT" | awk '/receiver/ {print $(NF-2) " " $(NF-1)}')"
+                                [[ -n "$DL_VAL" ]] && info "Download" "$DL_VAL" || info "Download" "FAILED"
+                                
+                                UL_OUT="$(iperf3 --client "$IPERF_SERVER" --bind "$wifi_ip" --time 15 --format m 2>&1)"
+                                UL_VAL="$(echo "$UL_OUT" | awk '/receiver/ {print $(NF-2) " " $(NF-1)}')"
+                                [[ -n "$UL_VAL" ]] && info "Upload" "$UL_VAL" || info "Upload" "FAILED"
+                                
+                                freq_mhz=$(iw dev "$wifi_iface" link 2>/dev/null | grep -i 'freq:' | awk '{print $2}')
+                                label="[$wifi]"
+                                if [[ -n "$freq_mhz" ]]; then
+                                    if [[ $freq_mhz -lt 3000 ]]; then label="[$wifi (2.4GHz)]"
+                                    else label="[$wifi (5GHz+)]"; fi
+                                fi
+                                echo "$label DL: ${DL_VAL:-FAILED} | UL: ${UL_VAL:-FAILED}" >> "$TEMP_ROOT/net_wifi_cycle"
+                            else
+                                warn "Server unreachable via $wifi, skipping benchmark."
+                                echo "[$wifi] DL: SKIP (No Route) | UL: SKIP" >> "$TEMP_ROOT/net_wifi_cycle"
+                            fi
+                            
+                            ip rule del from "$wifi_ip" table 100 2>/dev/null
+                            ip route flush table 100 2>/dev/null
+                        else
+                            warn "No IP assigned to $wifi_iface"
+                        fi
+                    fi
+                    if [[ "$was_active" -eq 0 ]]; then
+                        info "Disconnecting" "$wifi"
+                        nmcli connection down "$wifi" >/dev/null 2>&1
+                    fi
+                else
+                    warn "Failed to connect to $wifi"
+                fi
+            done
+        fi
+    fi
+
+fi
+
+stop_cpu_monitor
+print_monitor_summary "$MONITOR_FILE"
+
+section_end
+
+if [[ -f "$TEMP_ROOT/iperf_local_raw.txt" ]]; then
+    echo
+    echo "Raw iperf3 output (Local Loopback):"
+    cat "$TEMP_ROOT/iperf_local_raw.txt" 2>/dev/null || true
+fi
+
+if [[ -n "$IPERF_SERVER" ]] && command_exists iperf3; then
+    echo
+    echo "Raw iperf3 output (TCP Download):"
+    cat "$TEMP_ROOT/iperf_dl_raw.txt" 2>/dev/null || true
+    echo
+    echo "Raw iperf3 output (TCP Upload):"
+    cat "$TEMP_ROOT/iperf_ul_raw.txt" 2>/dev/null || true
+fi
+print_cpu_monitor "$TEMP_ROOT/network_monitor.txt"
+fi
+
+###############################################################################
+# 5.5 INTERNET BENCHMARK (SPEEDTEST)
+###############################################################################
+
+if [[ "$RUN_SPEEDTEST" -eq 1 ]]; then
+    section "INTERNET BENCHMARK"
+    
+    IS_OOKLA=0
+    if command_exists speedtest; then
+        if speedtest --version 2>/dev/null | grep -qi "Ookla"; then
+            IS_OOKLA=1
+        fi
+    fi
+    
+    if [[ "$IS_OOKLA" -eq 1 ]]; then
+        info "Tool" "speedtest (Ookla)"
+        info "Status" "Testing... (Please wait)"
+        
+        ST_CMD="speedtest --accept-license --accept-gdpr"
+        if [[ -n "${ST_SERVER_ID:-}" ]]; then
+            ST_CMD="$ST_CMD -s $ST_SERVER_ID"
+        fi
+        
+        start_cpu_monitor "speedtest"
+        SPEEDTEST_OUT="$($ST_CMD 2>/dev/null)"
+        stop_cpu_monitor
+        
+        echo "$SPEEDTEST_OUT" > "$TEMP_ROOT/speedtest_raw.txt"
+        
+        ST_DL=$(echo "$SPEEDTEST_OUT" | sed -nE 's/.*Download:[ \t]*([0-9.]+[ \t]+[a-zA-Z/]+).*/\1/p')
+        ST_UL=$(echo "$SPEEDTEST_OUT" | sed -nE 's/.*Upload:[ \t]*([0-9.]+[ \t]+[a-zA-Z/]+).*/\1/p')
+        ST_PING=$(echo "$SPEEDTEST_OUT" | sed -nE 's/.*Latency:[ \t]*([0-9.]+[ \t]+ms).*/\1/p')
+        ST_SERVER=$(echo "$SPEEDTEST_OUT" | sed -nE 's/^[ \t]*Server:[ \t]*(.*)/\1/p')
+        ST_ISP=$(echo "$SPEEDTEST_OUT" | sed -nE 's/^[ \t]*ISP:[ \t]*(.*)/\1/p')
+        ST_URL=$(echo "$SPEEDTEST_OUT" | awk '/Result URL:/ {print $3}')
+        
+        info "ISP" "${ST_ISP:-N/A}"
+        info "Server" "${ST_SERVER:-N/A}"
+        info "Latency" "${ST_PING:-N/A}"
+        info "Download" "${ST_DL:-N/A}"
+        info "Upload" "${ST_UL:-N/A}"
+        info "Result URL" "${ST_URL:-N/A}"
+        
+        echo "$ST_DL" > "$TEMP_ROOT/net_st_dl"
+        echo "$ST_UL" > "$TEMP_ROOT/net_st_ul"
+        echo "${ST_ISP:-N/A}" > "$TEMP_ROOT/net_st_isp"
+        echo "${ST_SERVER:-N/A}" > "$TEMP_ROOT/net_st_server"
+        echo "${ST_URL:-N/A}" > "$TEMP_ROOT/net_st_url"
+        
+    elif command_exists speedtest-cli || command_exists speedtest; then
+        # Use speedtest-cli if available, otherwise the 'speedtest' symlink
+        ST_BIN="speedtest-cli"
+        if ! command_exists speedtest-cli; then ST_BIN="speedtest"; fi
+        
+        info "Tool" "speedtest-cli"
+        info "Status" "Testing... (Please wait)"
+        
+        ST_CMD="$ST_BIN --share"
+        if [[ -n "${ST_SERVER_ID:-}" ]]; then
+            ST_CMD="$ST_CMD --server $ST_SERVER_ID"
+        fi
+        
+        start_cpu_monitor "speedtest"
+        SPEEDTEST_OUT="$($ST_CMD 2>/dev/null)"
+        stop_cpu_monitor
+        
+        echo "$SPEEDTEST_OUT" > "$TEMP_ROOT/speedtest_raw.txt"
+        
+        ST_DL=$(echo "$SPEEDTEST_OUT" | sed -nE 's/.*Download:[ \t]*([0-9.]+[ \t]+[a-zA-Z/]+).*/\1/p')
+        ST_UL=$(echo "$SPEEDTEST_OUT" | sed -nE 's/.*Upload:[ \t]*([0-9.]+[ \t]+[a-zA-Z/]+).*/\1/p')
+        ST_PING=$(echo "$SPEEDTEST_OUT" | grep "Hosted by" | awk -F': ' '{print $2}')
+        ST_SERVER=$(echo "$SPEEDTEST_OUT" | grep "Hosted by" | sed 's/Hosted by //;s/: .*//')
+        ST_ISP=$(echo "$SPEEDTEST_OUT" | grep "Testing from" | sed 's/Testing from //;s/ (.*//')
+        ST_URL=$(echo "$SPEEDTEST_OUT" | grep "Share results:" | awk '{print $3}')
+        
+        info "ISP" "${ST_ISP:-N/A}"
+        info "Server" "${ST_SERVER:-N/A}"
+        info "Latency" "${ST_PING:-N/A}"
+        info "Download" "${ST_DL:-N/A}"
+        info "Upload" "${ST_UL:-N/A}"
+        info "Result URL" "${ST_URL:-N/A}"
+        
+        echo "$ST_DL" > "$TEMP_ROOT/net_st_dl"
+        echo "$ST_UL" > "$TEMP_ROOT/net_st_ul"
+        echo "${ST_ISP:-N/A}" > "$TEMP_ROOT/net_st_isp"
+        echo "${ST_SERVER:-N/A}" > "$TEMP_ROOT/net_st_server"
+        echo "${ST_URL:-N/A}" > "$TEMP_ROOT/net_st_url"
+    else
+        fail "Could not install speedtest."
+    fi
+    
+    # Print the environmental summary for the speedtest block
+    print_monitor_summary "$MONITOR_FILE"
+    
+    section_end
+    
+    if [[ -f "$TEMP_ROOT/speedtest_raw.txt" ]]; then
+        echo
+        echo "Raw Speedtest output:"
+        cat "$TEMP_ROOT/speedtest_raw.txt" 2>/dev/null || true
+    fi
+fi
+
+###############################################################################
+# 6. ENVIRONMENT STATUS
+###############################################################################
+
+section "ENVIRONMENT STATUS"
+
+if [[ "$SWAP_TOTAL_MB" -gt 0 ]]; then
+    SWAP_PERCENT=$((SWAP_USED_MB * 100 / SWAP_TOTAL_MB))
+    if [[ "$SWAP_PERCENT" -ge 50 ]]; then
+        warn "Swap usage is ${SWAP_PERCENT}%. Benchmark results may be affected."
+    else
+        info "Swap Check" "${SWAP_PERCENT}% (Optimal)"
+    fi
+else
+    info "Swap Check" "No Swap configured."
+fi
+info "RAM Available" "${RAM_AVAILABLE_MB} MB"
+if [[ -n "$TEMP_ZONE" ]]; then
+    IDLE_TEMP_CURRENT="$(read_temperature "$TEMP_ZONE")"
+    info "Idle Temperature" "${IDLE_TEMP_CURRENT} C"
+else
+    info "Idle Temperature" "N/A"
+fi
+
+section_end
+
+# 8.0 REAL WORLD SCENARIO
+###############################################################################
+
+if [[ "${RUN_REALWORLD:-0}" -eq 1 ]]; then
+section "REAL WORLD SCENARIO"
+
+subsection "File Locator"
+EXPECTED_MP4_MD5="fb20ba0a7f531eabb345a5abcce33d78"
+EXPECTED_ZIP_MD5="acc8d0b77517da4a9aebb64b3777a0d0"
+FILE_URL="https://download.blender.org/demo/movies/BBB/bbb_sunflower_2160p_60fps_normal.mp4.zip"
+MP4_NAME="bbb_sunflower_2160p_60fps_normal.mp4"
+ZIP_NAME="bbb_sunflower_2160p_60fps_normal.mp4.zip"
+
+TARGET_MP4=""
+TARGET_ZIP=""
+
+info "Target MP4" "$MP4_NAME"
+info "Search paths" "\$PWD, /mnt/*, /media/*"
+
+search_file() {
+    local fname="$1"
+    local fmd5="$2"
+    local found_path=""
+    if [[ -f "$PWD/$fname" ]]; then
+        found_path="$PWD/$fname"
+    else
+        for d in /mnt /media; do
+            [[ ! -d "$d" ]] && continue
+            found=$(find "$d" -name "$fname" 2>/dev/null | head -n 1)
+            if [[ -n "$found" ]]; then
+                found_path="$found"
+                break
+            fi
+        done
+    fi
+    
+    if [[ -n "$found_path" ]]; then
+        info "Found" "$found_path" >&2
+        local hash=$(md5sum "$found_path" | awk '{print $1}')
+        if [[ "$hash" == "$fmd5" ]]; then
+            echo "$found_path"
+            return 0
+        else
+            warn "MD5 mismatch for $found_path (expected: $fmd5, got: $hash)" >&2
+        fi
+    fi
+    return 1
+}
+
+TARGET_MP4=$(search_file "$MP4_NAME" "$EXPECTED_MP4_MD5")
+if [[ -z "$TARGET_MP4" ]]; then
+    info "Status" "MP4 not found. Searching for ZIP..."
+    TARGET_ZIP=$(search_file "$ZIP_NAME" "$EXPECTED_ZIP_MD5")
+    if [[ -z "$TARGET_ZIP" ]]; then
+        dl_dir="$PWD"
+        if [[ -n "${USB_MNT_POINTS:-}" ]]; then
+            for mnt in $USB_MNT_POINTS; do
+                if [[ -d "$mnt" && -w "$mnt" ]]; then
+                    dl_dir="$mnt"
+                    break
+                fi
+            done
+        fi
+        
+        info "Status" "ZIP not found. Downloading to $dl_dir..."
+        
+        TOTAL_BYTES=0
+        if command -v curl >/dev/null 2>&1; then
+            TOTAL_BYTES=$(curl -sI "$FILE_URL" | awk -v IGNORECASE=1 '/^Content-Length:/ {print $2}' | tr -d '\r' | grep -Eo '^[0-9]+' || echo 0)
+        fi
+        
+        wget -q "$FILE_URL" -O "$dl_dir/$ZIP_NAME" &
+        WGET_PID=$!
+        
+        while kill -0 $WGET_PID 2>/dev/null; do
+            if [[ -f "$dl_dir/$ZIP_NAME" ]]; then
+                curr_bytes=$(stat -c%s "$dl_dir/$ZIP_NAME" 2>/dev/null || echo 0)
+                if [[ "$curr_bytes" -gt 0 ]]; then
+                    if [[ "$TOTAL_BYTES" -gt 0 ]]; then
+                        pct=$(( curr_bytes * 100 / TOTAL_BYTES ))
+                        curr_mb=$(( curr_bytes / 1048576 ))
+                        tot_mb=$(( TOTAL_BYTES / 1048576 ))
+                        printf "\r| %-14s : %-41s |" "Status" "Downloading... ${pct}% (${curr_mb} MB / ${tot_mb} MB)"
+                    else
+                        curr_mb=$(( curr_bytes / 1048576 ))
+                        printf "\r| %-14s : %-41s |" "Status" "Downloading... ${curr_mb} MB"
+                    fi
+                fi
+            fi
+            sleep 1
+        done
+        echo ""
+        hash_val=$(md5sum "$dl_dir/$ZIP_NAME" | awk '{print $1}')
+        if [[ "$hash_val" == "$EXPECTED_ZIP_MD5" ]]; then
+            TARGET_ZIP="$dl_dir/$ZIP_NAME"
+        else
+            fail "Downloaded ZIP MD5 mismatch."
+        fi
+    fi
+    
+    if [[ -n "$TARGET_ZIP" ]]; then
+        info "Status" "Extracting ZIP..."
+        ZIP_DIR="$(dirname "$TARGET_ZIP")"
+        unzip -q -o "$TARGET_ZIP" -d "$ZIP_DIR"
+        mhash_val=$(md5sum "$ZIP_DIR/$MP4_NAME" | awk '{print $1}')
+        if [[ "$mhash_val" == "$EXPECTED_MP4_MD5" ]]; then
+            TARGET_MP4="$ZIP_DIR/$MP4_NAME"
+        else
+            fail "Extracted MP4 MD5 mismatch."
+        fi
+    fi
+fi
+
+if [[ -n "$TARGET_MP4" ]]; then
+    ok "MP4 Source Ready: $TARGET_MP4"
+    if [[ -z "$FFMPEG_OUT_DIR" ]]; then
+        FFMPEG_OUT_DIR="$(dirname "$TARGET_MP4")"
+    fi
+    mkdir -p "$FFMPEG_OUT_DIR"
+    
+    start_cpu_monitor "realworld"
+
+    subsection "Scenario A: 4K to 1080p H.264 (Multi-Core)"
+    info "Source" "BBB 4K 2160p60, first 30s"
+    info "Target" "1080p H.264 (preset: slow, $(nproc) threads)"
+    info "Status" "Transcoding 30 seconds..."
+    time_start=$(date +%s%N)
+    
+    FFMPEG_OUT_A="$FFMPEG_OUT_DIR/rw_video.mp4"
+    ffmpeg -threads $(nproc) -filter_threads $(nproc) -i "$TARGET_MP4" -t 30 -vf scale=1920:1080 -c:v libx264 -preset slow -threads $(nproc) -y "$FFMPEG_OUT_A" 2> "$TEMP_ROOT/ff_a.log"
+    
+    time_end=$(date +%s%N)
+    elapsed_a_ms=$(( (time_end - time_start) / 1000000 ))
+    elapsed_a_sec=$(awk "BEGIN {print $elapsed_a_ms/1000}")
+    
+    fps_a=$(cat "$TEMP_ROOT/ff_a.log" | grep -o "fps=[^a-z]*" | tail -n 1 | awk '{print $1}' | awk -F'=' '{print $2}')
+    [[ -z "$fps_a" ]] && fps_a="N/A"
+    
+    info "Video 4K->1080p" "${fps_a} FPS (${elapsed_a_sec}s)"
+    echo "${fps_a}|${elapsed_a_sec}" > "$TEMP_ROOT/rw_video_res"
+
+    subsection "Scenario B: Audio Extraction AAC (Single-Core)"
+    info "Source" "BBB 4K 2160p60, first 60s"
+    info "Target" "AAC 192kbps (single-core)"
+    info "Status" "Transcoding audio 60 seconds..."
+    time_start=$(date +%s%N)
+    
+    FFMPEG_OUT_B="$FFMPEG_OUT_DIR/rw_audio.aac"
+    ffmpeg -i "$TARGET_MP4" -t 60 -vn -c:a aac -b:a 192k -y "$FFMPEG_OUT_B" 2> "$TEMP_ROOT/ff_b.log"
+    
+    time_end=$(date +%s%N)
+    elapsed_b_ms=$(( (time_end - time_start) / 1000000 ))
+    elapsed_b_sec=$(awk "BEGIN {print $elapsed_b_ms/1000}")
+    
+    speed_b=$(cat "$TEMP_ROOT/ff_b.log" | grep -o "speed=[^ ]*" | tail -n 1 | awk -F'=' '{print $2}')
+    [[ -z "$speed_b" ]] && speed_b="N/A"
+    
+    info "Audio Extraction" "${speed_b} speed (${elapsed_b_sec}s)"
+    echo "${speed_b}|${elapsed_b_sec}" > "$TEMP_ROOT/rw_audio_res"
+
+    stop_cpu_monitor
+    print_monitor_summary "$MONITOR_FILE"
+
+    rm -f "$FFMPEG_OUT_A" "$FFMPEG_OUT_B"
+else
+    fail "Unable to acquire test video."
+    echo "FAILED|FAILED" > "$TEMP_ROOT/rw_video_res"
+    echo "FAILED|FAILED" > "$TEMP_ROOT/rw_audio_res"
+fi
+
+section_end
+print_cpu_monitor "$TEMP_ROOT/realworld_monitor.txt"
+fi
+
+###############################################################################
+# 7. IMBA SUMMARY
+###############################################################################
+
+section "IMBA SUMMARY"
+
+SINGLE_SCORE="$(cat "$TEMP_ROOT/single_score" 2>/dev/null || echo "")"
+ALL_SCORE="$(cat "$TEMP_ROOT/all_score" 2>/dev/null || echo "")"
+SCALE="$(cat "$TEMP_ROOT/cpu_scale" 2>/dev/null || echo "")"
+EFFICIENCY="$(cat "$TEMP_ROOT/cpu_efficiency" 2>/dev/null || echo "")"
+
+MEM_READ="$(cat "$TEMP_ROOT/mem_read" 2>/dev/null || echo "")"
+MEM_WRITE="$(cat "$TEMP_ROOT/mem_write" 2>/dev/null || echo "")"
+
+FILE_READ="$(cat "$TEMP_ROOT/file_read_iops" 2>/dev/null || echo "")"
+FILE_WRITE="$(cat "$TEMP_ROOT/file_write_iops" 2>/dev/null || echo "")"
+FILE_READ_MB="$(cat "$TEMP_ROOT/file_read_mibs" 2>/dev/null || echo "")"
+FILE_WRITE_MB="$(cat "$TEMP_ROOT/file_write_mibs" 2>/dev/null || echo "")"
+
+FIO_SEQ="$(cat "$TEMP_ROOT/fio_seq" 2>/dev/null || echo "")"
+FIO_RND_QD1="$(cat "$TEMP_ROOT/fio_qd1" 2>/dev/null || echo "")"
+FIO_RND_QD32="$(cat "$TEMP_ROOT/fio_qd32" 2>/dev/null || echo "")"
+
+THREADS_SCORE="$(cat "$TEMP_ROOT/threads_score" 2>/dev/null || echo "")"
+MUTEX_SCORE="$(cat "$TEMP_ROOT/mutex_score" 2>/dev/null || echo "")"
+
+NET_LOCAL="$(cat "$TEMP_ROOT/net_local" 2>/dev/null || echo "")"
+NET_DL="$(cat "$TEMP_ROOT/net_down" 2>/dev/null || echo "")"
+NET_UL="$(cat "$TEMP_ROOT/net_up" 2>/dev/null || echo "")"
+NET_ST_DL="$(cat "$TEMP_ROOT/net_st_dl" 2>/dev/null || echo "")"
+NET_ST_UL="$(cat "$TEMP_ROOT/net_st_ul" 2>/dev/null || echo "")"
+NET_ST_ISP="$(cat "$TEMP_ROOT/net_st_isp" 2>/dev/null || echo "")"
+NET_ST_SERVER="$(cat "$TEMP_ROOT/net_st_server" 2>/dev/null || echo "")"
+NET_ST_URL="$(cat "$TEMP_ROOT/net_st_url" 2>/dev/null || echo "")"
+NET_WIFI_CYCLE="$(cat "$TEMP_ROOT/net_wifi_cycle" 2>/dev/null || echo "")"
+
+if [[ "$RUN_CPU" -eq 1 ]]; then
+    subsection "[ CPU ]"
+if [[ -n "$SINGLE_SCORE" ]]; then info "Single Core" "$SINGLE_SCORE events/s"; else info "Single Core" "N/A"; fi
+if [[ -n "$ALL_SCORE" ]]; then info "All Core" "$ALL_SCORE events/s"; else info "All Core" "N/A"; fi
+if [[ -n "$SCALE" ]]; then info "Scaling" "${SCALE}x"; fi
+if [[ -n "$EFFICIENCY" ]]; then info "Linear Efficiency" "${EFFICIENCY}%"; fi
+
+# Per-cluster scores (big.LITTLE)
+for label_file in "$TEMP_ROOT"/cluster_*_score; do
+    [[ -f "$label_file" ]] || continue
+    cl_label="$(basename "$label_file" | sed 's/cluster_//;s/_score//')"
+    cl_score="$(cat "$label_file" 2>/dev/null || echo "")"
+    if [[ -n "$cl_score" ]]; then
+        info "Core ($cl_label)" "$cl_score events/s"
+    fi
+done
+
+# Real clockspeed results
+if [[ -f "$TEMP_ROOT/mhz_results.txt" ]]; then
+    while IFS=: read -r mhz_label mhz_os mhz_real; do
+        info "Clock ($mhz_label)" "OS: ${mhz_os} MHz / Real: ${mhz_real} MHz"
+    done < "$TEMP_ROOT/mhz_results.txt"
+fi
+
+if [[ -n "$THREADS_SCORE" ]]; then info "Threads" "$THREADS_SCORE events/s"; else info "Threads" "N/A"; fi
+if [[ -n "$MUTEX_SCORE" ]]; then info "Mutex" "$MUTEX_SCORE events/s"; else info "Mutex" "N/A"; fi
+
+fi
+
+if [[ "$RUN_MEM" -eq 1 ]]; then
+    subsection "[ MEMORY ]"
+if [[ -n "$MEM_READ" ]]; then info "Memory Read" "$MEM_READ MiB/s"; else info "Memory Read" "N/A"; fi
+if [[ -n "$MEM_WRITE" ]]; then info "Memory Write" "$MEM_WRITE MiB/s"; else info "Memory Write" "N/A"; fi
+
+fi
+
+if [[ "$RUN_STORAGE" -eq 1 ]]; then
+    subsection "[ STORAGE ]"
+for f in "$TEMP_ROOT"/storage_result_*; do
+    [[ -f "$f" ]] || continue
+    bn="$(basename "$f" | sed 's/storage_result_//')"
+    IFS="|" read -r dev_type model size seq_val qd1_val qd32_val write_val < "$f"
+    info "$dev_type ($bn)" "$model ($size)"
+    info "  Seq Read" "$seq_val"
+    info "  Rand 4K QD1" "$qd1_val"
+    info "  Rand 4K QD32" "$qd32_val"
+    info "  File I/O Random" "$write_val"
+done
+
+fi
+
+NET_IFACE="$(cat "$TEMP_ROOT/net_iface" 2>/dev/null || echo "unknown")"
+
+if [[ "$RUN_NET" -eq 1 ]]; then
+    subsection "[ NETWORK ]"
+if [[ -n "$NET_LOCAL" ]]; then info "Loopback TCP" "$NET_LOCAL"; else info "Loopback TCP" "SKIPPED"; fi
+if [[ -n "$NET_DL" ]]; then info "TCP DL ($NET_IFACE)" "$NET_DL"; else info "TCP DL" "SKIPPED"; fi
+if [[ -n "$NET_UL" ]]; then info "TCP UL ($NET_IFACE)" "$NET_UL"; else info "TCP UL" "SKIPPED"; fi
+
+fi
+
+if [[ -n "$NET_ST_DL" || "$RUN_SPEEDTEST" -eq 1 ]]; then
+    subsection "[ INTERNET ]"
+    if [[ -n "$NET_ST_DL" ]]; then info "Speedtest DL" "$NET_ST_DL"; fi
+    if [[ -n "$NET_ST_UL" ]]; then info "Speedtest UL" "$NET_ST_UL"; fi
+    if [[ -n "$NET_ST_ISP" ]]; then info "Speedtest ISP" "$NET_ST_ISP"; fi
+    if [[ -n "$NET_ST_SERVER" ]]; then info "Speedtest Server" "$NET_ST_SERVER"; fi
+    if [[ -n "$NET_ST_URL" ]]; then info "Speedtest URL" "$NET_ST_URL"; fi
+fi
+
+if [[ -n "$NET_WIFI_CYCLE" ]]; then
+    subsection "[ WIFI CYCLE ]"
+    while IFS= read -r line; do
+        info "WiFi Cycle" "$line"
+    done <<< "$NET_WIFI_CYCLE"
+fi
+
+if [[ "$RUN_REALWORLD" -eq 1 ]]; then
+    subsection "[ REAL WORLD (FFmpeg) ]"
+if [[ -f "$TEMP_ROOT/rw_video_res" ]]; then
+    IFS="|" read -r v_fps v_time < "$TEMP_ROOT/rw_video_res"
+    info "Video 4K -> 1080p H.264" "${v_fps} FPS (Time: ${v_time}s)"
+else
+    info "Video 4K -> 1080p H.264" "SKIPPED"
+fi
+if [[ -f "$TEMP_ROOT/rw_audio_res" ]]; then
+    IFS="|" read -r a_speed a_time < "$TEMP_ROOT/rw_audio_res"
+    info "Audio Extraction (AAC)" "${a_speed} (Time: ${a_time}s)"
+else
+    info "Audio Extraction (AAC)" "SKIPPED"
+fi
+
+fi
+
+section_end
+
+###############################################################################
+###############################################################################
+# 8.5 JSON EXPORT
+###############################################################################
+
+if [[ "$EXPORT_JSON" -eq 1 ]]; then
+    JSON_FILE="${EXPORT_DIR}/imba${BENCH_LABEL}_${SAFE_DEVICE_NAME}_${DATE_FILE}.json"
+    # Helpers for strict JSON formatting
+    num() {
+        local val="$1"
+        if [[ -z "$val" || "$val" == "SKIPPED" || "$val" == "FAILED" ]]; then
+            echo "null"
+            return
+        fi
+        local ext
+        ext=$(echo "$val" | grep -oE '^[0-9]+(\.[0-9]+)?' | head -n1)
+        echo "${ext:-null}"
+    }
+    fio_bw() {
+        local val="$1"
+        if [[ -z "$val" || "$val" == "SKIPPED" || "$val" == "FAILED" ]]; then
+            echo "null"
+            return
+        fi
+        local ext
+        ext=$(echo "$val" | grep -oE '\([0-9.]+' | tr -d '(')
+        echo "${ext:-null}"
+    }
+    str() {
+        local val="$1"
+        if [[ -z "$val" || "$val" == "N/A" ]]; then
+            echo "null"
+        else
+            echo "\"$val\""
+        fi
+    }
+
+    cat <<EOF > "$JSON_FILE"
+{
+  "device": "$DEVICE_MODEL",
+  "soc": "$SOC_NAME",
+  "os": "$OS_NAME",
+  "kernel": "$(uname -r)",
+  "cpu": {
+    "single_core": $(num "$SINGLE_SCORE"),
+    "all_core": $(num "$ALL_SCORE"),
+    "threads": $(num "$THREADS_SCORE"),
+    "mutex": $(num "$MUTEX_SCORE"),
+    "clusters": {$(
+        sep=""
+        for f in "$TEMP_ROOT"/cluster_*_score; do
+            [[ -f "$f" ]] || continue
+            cl="$(basename "$f" | sed 's/cluster_//;s/_score//')"
+            cs="$(cat "$f" 2>/dev/null)"
+            [[ -n "$cs" ]] && printf '%s\n      "%s": %s' "$sep" "$cl" "$(num "$cs")"
+            sep=","
+        done
+    )
+    },
+    "clockspeed_verified": {$(
+        sep=""
+        if [[ -f "$TEMP_ROOT/mhz_results.txt" ]]; then
+            while IFS=: read -r ml mo mr; do
+                printf '%s\n      "%s": {"os_mhz": %s, "real_mhz": %s}' "$sep" "$ml" "$(num "$mo")" "$(num "$mr")"
+                sep=","
+            done < "$TEMP_ROOT/mhz_results.txt"
+        fi
+    )
+    }
+  },
+  "memory": {
+    "read_mibps": $(num "$MEM_READ"),
+    "write_mibps": $(num "$MEM_WRITE")
+  },
+  "storage": {
+    "devices": {$(
+        sep=""
+        for f in "$TEMP_ROOT"/storage_result_*; do
+            [[ -f "$f" ]] || continue
+            bn="$(basename "$f" | sed 's/storage_result_//')"
+            IFS="|" read -r dev_type model size seq_val qd1_val qd32_val write_val < "$f"
+            printf '%s\n      "%s": {"type": %s, "model": %s, "size": %s, "seq_read_iops": %s, "seq_read_mibps": %s, "rand_read_qd1_iops": %s, "rand_read_qd1_mibps": %s, "rand_read_qd32_iops": %s, "rand_read_qd32_mibps": %s, "rand_write_iops": %s, "rand_write_mibps": %s}' \
+            "$sep" "$bn" "$(str "$dev_type")" "$(str "$model")" "$(str "$size")" \
+            "$(num "$seq_val")" "$(fio_bw "$seq_val")" \
+            "$(num "$qd1_val")" "$(fio_bw "$qd1_val")" \
+            "$(num "$qd32_val")" "$(fio_bw "$qd32_val")" \
+            "$(num "$write_val")" "$(fio_bw "$write_val")"
+            sep=","
+        done
+    )
+    }
+  },
+  "network": {
+    "local_iperf3_loopback_mbps": $(num "$NET_LOCAL"),
+    "local_iperf3_wifi_cycle_tests": $(
+      if [[ -z "$NET_WIFI_CYCLE" ]]; then
+          echo "[],"
+      else
+          echo "["
+          sep=""
+          while IFS= read -r line; do
+              [[ -z "$line" ]] && continue
+              printf '%s\n      "%s"' "$sep" "$line"
+              sep=","
+          done <<< "$NET_WIFI_CYCLE"
+          echo -e "\n    ],"
+      fi
+    )
+    "local_iperf3_interfaces": {
+      "${NET_IFACE:-unknown}": {
+        "download_mbps": $(num "$NET_DL"),
+        "upload_mbps": $(num "$NET_UL")
+      }
+    },
+    "internet_speedtest": {
+      "download_mbps": $(num "$NET_ST_DL"),
+      "upload_mbps": $(num "$NET_ST_UL"),
+      "isp": $(str "$NET_ST_ISP"),
+      "server": $(str "$NET_ST_SERVER"),
+      "url": $(str "$NET_ST_URL")
+    }
+  },
+  "realworld": {$(
+      sep=""
+      if [[ -f "$TEMP_ROOT/rw_video_res" ]]; then
+          IFS="|" read -r v_fps v_time < "$TEMP_ROOT/rw_video_res"
+          printf '\n    "video_4k_1080p_fps": %s,\n    "video_4k_1080p_time_s": %s' "$(num "$v_fps")" "$(num "$v_time")"
+          sep=","
+      fi
+      if [[ -f "$TEMP_ROOT/rw_audio_res" ]]; then
+          IFS="|" read -r a_speed a_time < "$TEMP_ROOT/rw_audio_res"
+          printf '%s\n    "audio_aac_speed": %s,\n    "audio_aac_time_s": %s' "$sep" "$(num "$a_speed")" "$(num "$a_time")"
+      fi
+      echo
+  )},
+  "power": {
+    "enabled": $([ "$POWER_MONITOR_ENABLED" -eq 1 ] && echo "true" || echo "false"),
+    "source": $(str "AC Wall Power (Home Assistant)"),
+    "entity": $(str "$HA_POWER_ENTITY"),
+    "idle_watts": $(num "$(cat "$TEMP_ROOT/idle_power" 2>/dev/null)"),
+    "avg_watts": $(num "$(cat "$TEMP_ROOT/last_power_avg" 2>/dev/null)"),
+    "max_watts": $(num "$(cat "$TEMP_ROOT/last_power_max" 2>/dev/null)"),
+    "min_watts": $(num "$(cat "$TEMP_ROOT/last_power_min" 2>/dev/null)")
+  }
+}
+EOF
+fi
+
+###############################################################################
+# 8. CONFIGURATION
+###############################################################################
+
+section "CONFIGURATION"
+
+info "IMBA Version" "$IMBA_VERSION"
+info "CPU Duration" "${CPU_DURATION} seconds"
+info "Memory Duration" "${MEMORY_DURATION} seconds"
+info "Threads Duration" "${THREAD_DURATION} seconds"
+info "File I/O Duration" "${FILEIO_DURATION} seconds"
+info "File I/O Size" "$FILEIO_SIZE"
+info "FIO Size" "$FIO_SIZE"
+info "FIO Block" "$FIO_BS"
+info "Mutex Locks" "$MUTEX_LOCKS"
+info "Mutex Loops" "$MUTEX_LOOPS"
+info "Mutex Num" "$MUTEX_NUM"
+if [[ "$POWER_MONITOR_ENABLED" -eq 1 ]]; then
+    info "Power Monitor" "Enabled (Home Assistant)"
+    info "Power Entity" "$HA_POWER_ENTITY"
+    info "HA URL" "$HA_URL"
+else
+    info "Power Monitor" "Disabled"
+fi
+
+section_end
+
+###############################################################################
+# 9. IMBA COMPLETE
+###############################################################################
+
+section "IMBA COMPLETE"
+
+info "Device" "$DEVICE_MODEL"
+info "Hostname" "$HOSTNAME_VALUE"
+info "Log" "$LOG_FILE"
+
+subsection "Notes"
+info "Raw storage tests" "READ ONLY"
+info "USB storage tests" "READ ONLY"
+info "Temporary files" "CLEANED AUTOMATICALLY"
+if [[ "$EXPORT_JSON" -eq 1 ]]; then
+    info "JSON Export" "$JSON_FILE"
+fi
+
+subsection "Status"
+ok "IMBA finished."
+
+TOTAL_ELAPSED=$(( $(date +%s) - SCRIPT_START_TIME ))
+TOTAL_M=$(( TOTAL_ELAPSED / 60 ))
+TOTAL_S=$(( TOTAL_ELAPSED % 60 ))
+info "Total Duration" "${TOTAL_M}m ${TOTAL_S}s"
+
+section_end
+
+# Interactive Prompt for Sharing
+# Sleep briefly to ensure 'tee' flushes the last output lines
+sleep 0.5
+echo ""
+echo "=========================================================================="
+echo "  [AI ANALYSIS] Upload this log to get a professional AI analysis         "
+echo "=========================================================================="
+read -r -p "Do you want to upload and share this result anonymously? [y/N] " response </dev/tty || true
+if [[ "$response" =~ ^([yY][eE][sS]|[yY])$ ]]; then
+    echo "Uploading log to multiple services (please wait)..."
+    url_dpaste_org="FAILED"
+    url_dpaste_com="FAILED"
+    url_cnet="FAILED"
+    
+    if command_exists curl; then
+        url_dpaste_org="$(curl -s -m 15 -F "content=<$LOG_FILE" -F "format=url" https://dpaste.org/api/ | tr -d '\r\n')"
+        url_dpaste_com="$(curl -s -m 15 -F "content=<$LOG_FILE" https://dpaste.com/api/v2/ | tr -d '\r\n')"
+        url_cnet="$(curl -s -m 15 -F "file=@$LOG_FILE" https://paste.c-net.org/ | tr -d '\r\n')"
+    fi
+    
+    [[ ! "$url_dpaste_org" =~ ^http ]] && url_dpaste_org="FAILED"
+    [[ ! "$url_dpaste_com" =~ ^http ]] && url_dpaste_com="FAILED"
+    [[ ! "$url_cnet" =~ ^http ]] && url_cnet="FAILED"
+    
+    echo "[OK] Upload process finished!"
+    echo "dpaste.org:    $url_dpaste_org"
+    echo "dpaste.com:    $url_dpaste_com"
+    echo "c-net.org:     $url_cnet"
+    echo ""
+    
+    # Pick the best valid URL for the AI prompt
+    share_url=""
+    for url in "$url_dpaste_org" "$url_dpaste_com" "$url_cnet"; do
+        if [[ "$url" =~ ^http ]]; then
+            share_url="$url"
+            break
+        fi
+    done
+
+    if [[ -n "$share_url" ]]; then
+        echo "--------------------------------------------------------------------------"
+        
+        if [[ "$RUN_CPU" -eq 1 && "$RUN_MEM" -eq 1 && "$RUN_STORAGE" -eq 1 && "$RUN_NET" -eq 1 && "$RUN_REALWORLD" -eq 1 ]]; then
+            echo " [AI] Thermal Context Assistant (Optional)                        "
+            echo "--------------------------------------------------------------------------"
+            echo "Untuk mendapatkan analisa suhu (Thermal) AI yang jauh lebih akurat,"
+            read -r -p "apakah Anda ingin memasukkan informasi fisik sistem pendingin perangkat ini? [y/N]: " ask_thermal </dev/tty || true
+            THERMAL_CONTEXT_TEXT=""
+            if [[ "$ask_thermal" =~ ^([yY][eE][sS]|[yY])$ ]]; then
+                echo ""
+                echo "[1/3] Sistem Pendingin (Cooling System) yang menempel pada SoC:"
+                echo "  1) Default Bawaan (Hanya heatsink pabrik, tanpa kipas)"
+                echo "  2) Custom Passive (Heatsink yang lebih besar / modifikasi tanpa kipas)"
+                echo "  3) Active Standar (Heatsink + Kipas kecil bawaan)"
+                echo "  4) Extreme Active (Custom heatsink besar + Kipas ukuran PC 8cm/12cm)"
+                read -r -p "Pilih [1-4]: " cool_choice </dev/tty || true
+                
+                echo ""
+                echo "[2/3] Kondisi Casing (Enclosure) perangkat saat pengetesan:"
+                echo "  1) Tertutup Rapat (Casing standar pabrik tanpa modifikasi)"
+                echo "  2) Modifikasi Ventilasi (Casing dilubangi / ditambah sirkulasi udara buatan)"
+                echo "  3) Telanjang / Open Air (Casing dibuka sepenuhnya / board telanjang)"
+                read -r -p "Pilih [1-3]: " case_choice </dev/tty || true
+                
+                echo ""
+                echo "[3/3] Suhu Ruangan (Ambient Room Temperature):"
+                echo "  1) Ber-AC (Air Conditioned, Dingin ~20-24°C)"
+                echo "  2) Normal / Suhu Ruang (Indoor Non-AC, ~25-30°C)"
+                echo "  3) Panas / Ekstrem (Outdoor / Tanpa sirkulasi udara luar, >30°C)"
+                read -r -p "Pilih [1-3]: " room_choice </dev/tty || true
+
+                case "$cool_choice" in
+                    1) cool_text="Default Bawaan (Hanya heatsink pabrik, tanpa kipas)" ;;
+                    2) cool_text="Custom Passive (Heatsink yang lebih besar / modifikasi tanpa kipas)" ;;
+                    3) cool_text="Active Standar (Heatsink + Kipas kecil bawaan)" ;;
+                    4) cool_text="Extreme Active (Custom heatsink besar + Kipas ukuran PC 8cm/12cm)" ;;
+                    *) cool_text="Unknown Cooling" ;;
+                esac
+                
+                case "$case_choice" in
+                    1) case_text="Tertutup Rapat (Casing standar pabrik tanpa modifikasi)" ;;
+                    2) case_text="Modifikasi Ventilasi (Casing dilubangi / ditambah sirkulasi udara buatan)" ;;
+                    3) case_text="Telanjang / Open Air (Casing dibuka sepenuhnya / board telanjang)" ;;
+                    *) case_text="Unknown Enclosure" ;;
+                esac
+                
+                case "$room_choice" in
+                    1) room_text="Ber-AC (Air Conditioned, Dingin ~20-24°C)" ;;
+                    2) room_text="Normal / Suhu Ruang (Indoor Non-AC, ~25-30°C)" ;;
+                    3) room_text="Panas / Ekstrem (Outdoor / Tanpa sirkulasi udara luar, >30°C)" ;;
+                    *) room_text="Unknown Ambient" ;;
+                esac
+                
+                THERMAL_CONTEXT_TEXT="**Hardware Context Note for AI:** The user is running this benchmark using an [${cool_text}] cooling solution, with a [${case_text}] enclosure, operating in a [${room_text}] ambient temperature environment. Please take this physical thermodynamics profile into account when analyzing the thermal stability and thermal throttling of the device."
+                
+                echo ""
+                echo "✅ Data Thermal Fisik berhasil dirangkum dan ditambahkan ke dalam prompt!"
+                echo "--------------------------------------------------------------------------"
+            fi
+            
+            echo " [AI] ChatGPT / Claude Analysis Prompt                            "
+            echo "--------------------------------------------------------------------------"
+            if [[ -f "$PROMPT_FILE" ]]; then
+                PROMPT_OUT_FILE="${EXPORT_DIR}/imba${BENCH_LABEL}_${SAFE_DEVICE_NAME}_${DATE_FILE}_prompt.txt"
+                cat "$PROMPT_FILE" | while IFS= read -r line; do
+                    if [[ "$line" == *"{{URL_OR_LOG}}"* || "$line" == *"{{URL}}"* ]]; then
+                        echo "$share_url"
+                        if [[ -n "$THERMAL_CONTEXT_TEXT" ]]; then
+                            echo ""
+                            echo "$THERMAL_CONTEXT_TEXT"
+                        fi
+                    else
+                        echo "$line"
+                    fi
+                done > "$PROMPT_OUT_FILE"
+                
+                echo "✅ AI Prompt has been successfully generated!"
+                echo "Because your prompt is very detailed ($(wc -l < "$PROMPT_FILE") lines), it has been saved to:"
+                echo "-> $PROMPT_OUT_FILE"
+                echo ""
+                echo "Please open that file, copy all its text, and paste it to ChatGPT or Claude."
+            else
+                echo "✅ Log successfully uploaded!"
+                echo "Share URL: $share_url"
+                echo ""
+                echo "(Note: imba.prompt file was not found, so no prompt was automatically generated.)"
+            fi
+        else
+            echo "✅ Log successfully uploaded!"
+            echo "Share URL: $share_url"
+            echo ""
+            echo "(Catatan: Generator Prompt AI dilewati karena Anda hanya menjalankan sebagian"
+            echo "tes. Prompt AI komprehensif hanya dibuat untuk sesi Benchmark Penuh)."
+        fi
+        echo "--------------------------------------------------------------------------"
+    else
+        echo "[FAILED] All uploads failed. Please share the log file manually."
+    fi
+fi
+
+# Fix ownership of exported files if running via sudo
+if [[ -n "${SUDO_USER:-}" ]]; then
+    chown -R "$SUDO_USER:$SUDO_USER" "$EXPORT_DIR" 2>/dev/null || true
+fi
+if command -v screen >/dev/null 2>&1 && [[ "${STY:-}" == *"$SCREEN_NAME"* ]]; then
+    echo ""
+    read -r -p "Do you want to terminate the '$SCREEN_NAME' screen session? [Y/n] " kill_screen_response </dev/tty || true
+    if [[ "$kill_screen_response" =~ ^([nN][oO]|[nN])$ ]]; then
+        echo "Keeping screen session alive. Dropping to shell..."
+        exec "${SHELL:-bash}"
+    else
+        echo "Terminating screen session..."
+    fi
+fi

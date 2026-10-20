@@ -17,7 +17,7 @@ mkdir -p "$tmp/fixtures/usr/share/openvfd" "$tmp/fixtures/usr/share/ophub/armbia
 printf 'boot-config\n' > "$tmp/fixtures/boot/uEnv.txt"
 printf 'boot-script\n' > "$tmp/fixtures/boot/boot.scr"
 tar -czf "$SRC/userpatches/platform/u-boot.tar.gz" -C "$tmp/fixtures" boot
-printf 'triad-test-firmware\\n' > "$tmp/fixtures/triad/firmware/brcm/triad-test.bin"
+printf 'triad-test-firmware\n' > "$tmp/fixtures/triad/firmware/brcm/triad-test.bin"
 tar -czf "$SRC/userpatches/platform/triad-firmware.tar.gz" -C "$tmp/fixtures/triad" firmware
 
 exe_paths=(

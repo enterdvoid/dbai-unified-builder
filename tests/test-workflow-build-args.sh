@@ -32,7 +32,7 @@ grep -Fq 'cp extensions/dbai-platform-overlays.sh armbian-source/userpatches/ext
   exit 1
 }
 # shellcheck disable=SC2016 # Match literal variable references embedded in workflow YAML.
-grep -Fq 'cp "$GITHUB_WORKSPACE/platform/u-boot.tar.gz" "$GITHUB_WORKSPACE/platform/usr.tar.gz" armbian-source/userpatches/platform/' "$workflow" || {
+grep -Fq 'cp "$GITHUB_WORKSPACE/platform/u-boot.tar.gz" "$GITHUB_WORKSPACE/platform/usr.tar.gz" "$GITHUB_WORKSPACE/platform/triad-firmware.tar.gz" armbian-source/userpatches/platform/' "$workflow" || {
   echo "FAIL: workflow must stage the U-Boot and userspace archives." >&2
   exit 1
 }
@@ -40,7 +40,7 @@ grep -Fq 'scripts/patch-rootfs-uuid.py' "$workflow" || {
   echo "FAIL: build workflow must patch Armbian's rootfs mkfs command with the fixed UUID." >&2
   exit 1
 }
-grep -Fq '19450817-1945-4817-a817-194508170817' "$repo_root/scripts/patch-rootfs-uuid.py" || {
+grep -Fq '19450817-1998-4512-a817-202510202026' "$repo_root/scripts/patch-rootfs-uuid.py" || {
   echo "FAIL: fixed rootfs UUID changed unexpectedly." >&2
   exit 1
 }
