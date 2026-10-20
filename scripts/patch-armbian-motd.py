@@ -90,12 +90,12 @@ C_ACCENT="\\e[1;38;2;56;189;248m"   # Sky Blue #38bdf8
 C_LABEL="\\e[38;2;148;163;184m"     # Muted Slate #94a3b8
 
 # Kolom 1 (Kiri)
-col1_names=("Configuration" "Upgrade" "Monitoring" "Applications")
-col1_cmds=("armbian-config" "armbian-upgrade" "btop" "dbai-apps")
+col1_names=("Configuration" "Resize rootfs" "Install to eMMC" "Monitoring")
+col1_cmds=("armbian-config" "armbian-tf" "armbian-install" "btop")
 
 # Kolom 2 (Kanan)
-col2_names=("Benchmark" "Resize rootfs" "Install to eMMC" "Full dump eMMC")
-col2_cmds=("imba" "armbian-tf" "armbian-install" "armbian-regression")
+col2_names=("Benchmark" "Nokia Utility" "Applications" "Full dump eMMC")
+col2_cmds=("imba" "dbai-nokia" "dbai-apps" "dbai-regression")
 
 echo ""
 printf " ${C_ACCENT}● Commands:${R}\\n\\n"
@@ -107,7 +107,7 @@ for i in {0..3}; do
 	cmd2="${col2_cmds[$i]}"
 
 	# Kolom 1: Awali dengan 1 spasi agar presisi sejajar vertikal dengan Load:, CPU freq:, CPU temp:
-	printf " ${C_LABEL}%-14s${R} : ${C_ACCENT}%-16s${R}     " "$name1" "$cmd1"
+	printf " ${C_LABEL}%-16s${R} : ${C_ACCENT}%-16s${R}   " "$name1" "$cmd1"
 
 	# Kolom 2: Sejajar vertikal dengan Uptime:, Memory usage:, Usage of /:
 	printf "${C_LABEL}%-16s${R} : ${C_ACCENT}%s${R}\\n" "$name2" "$cmd2"

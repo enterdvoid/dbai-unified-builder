@@ -78,9 +78,16 @@ EOF
 		install -m 0755 "$dbai_imba_script" "${SDCARD}/usr/local/bin/imba"
 	fi
 
-	# Install btop monitoring tool if chroot apt helper exists
-	if declare -F chroot_sdcard_apt_get_install >/dev/null 2>&1; then
-		chroot_sdcard_apt_get_install btop || true
+	# Install btop monitoring tool on all profiles except Minimal
+	local is_minimal="no"
+	if [[ "${BUILD_MINIMAL:-no}" == "yes" && "${DESKTOP_OPENBOX:-no}" != "yes" ]]; then
+		is_minimal="yes"
+	fi
+
+	if [[ "$is_minimal" != "yes" ]]; then
+		if declare -F chroot_sdcard_apt_get_install >/dev/null 2>&1; then
+			chroot_sdcard_apt_get_install btop || true
+		fi
 	fi
 
 	# Hold BSP package to show kernel upgrade disabled
@@ -94,6 +101,20 @@ EOF
 	fi
 	if [[ -f "${SDCARD}/etc/update-motd.d/35-armbian-tips" ]]; then
 		chmod -x "${SDCARD}/etc/update-motd.d/35-armbian-tips" 2>/dev/null || true
+	fi
+
+	# Disable automatic rootfs resize on first boot; rely on manual 'armbian-tf'
+	mkdir -p "${SDCARD}/root"
+	touch "${SDCARD}/root/.no_rootfs_resize"
+	mkdir -p "${SDCARD}/etc/systemd/system"
+	rm -f "${SDCARD}/etc/systemd/system/multi-user.target.wants/armbian-resize-filesystem.service"
+	rm -f "${SDCARD}/etc/systemd/system/basic.target.wants/armbian-resize-filesystem.service"
+	ln -sf /dev/null "${SDCARD}/etc/systemd/system/armbian-resize-filesystem.service"
+
+	# Symlink dbai-regression to armbian-ddbr for full eMMC dump
+	if [[ -e "${SDCARD}/usr/sbin/armbian-ddbr" ]]; then
+		mkdir -p "${SDCARD}/usr/local/bin"
+		ln -sf /usr/sbin/armbian-ddbr "${SDCARD}/usr/local/bin/dbai-regression"
 	fi
 
 	python3 "$dbai_motd_patcher" "$dbai_motd_header" "$dbai_motd_commands"

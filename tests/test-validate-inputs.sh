@@ -149,6 +149,7 @@ test -x "$brand_tmp/usr/local/bin/dbai-apps"
 grep -Fq '# --- DBAI board and version line ---' "$brand_tmp/etc/update-motd.d/10-armbian-header"
 grep -Fq 'figlet -f slant' "$brand_tmp/etc/update-motd.d/10-armbian-header"
 grep -Fq "dbai-apps" "$brand_tmp/etc/update-motd.d/41-commands"
+grep -Fq "dbai-nokia" "$brand_tmp/etc/update-motd.d/41-commands"
 grep -Fq "imba" "$brand_tmp/etc/update-motd.d/41-commands"
 grep -Fq "btop" "$brand_tmp/etc/update-motd.d/41-commands"
 

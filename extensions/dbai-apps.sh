@@ -34,6 +34,26 @@ function extension_prepare_config__dbai_apps() {
 function pre_customize_image__dbai_stage_docker_apps() {
 	: "${SDCARD:?Armbian did not set SDCARD for DBAI app staging}"
 	chroot_sdcard_apt_get_install ca-certificates curl
+
+	# Install Tailscale & Cloudflare Tunnel for secure remote management
+	mkdir -p "${SDCARD}/usr/share/keyrings" "${SDCARD}/etc/apt/sources.list.d" "${SDCARD}/usr/local/bin"
+	curl -fsSL "https://pkgs.tailscale.com/stable/debian/${RELEASE}.noarmor.gpg" -o "${SDCARD}/usr/share/keyrings/tailscale-archive-keyring.gpg" 2>/dev/null || true
+	if [[ -f "${SDCARD}/usr/share/keyrings/tailscale-archive-keyring.gpg" ]]; then
+		printf 'deb [signed-by=/usr/share/keyrings/tailscale-archive-keyring.gpg] https://pkgs.tailscale.com/stable/debian %s main\n' "${RELEASE}" > "${SDCARD}/etc/apt/sources.list.d/tailscale.list"
+		chroot_sdcard apt-get update 2>/dev/null || true
+		chroot_sdcard_apt_get_install tailscale || true
+	fi
+
+	local cf_arch="arm64"
+	case "${ARCH}" in
+		arm64) cf_arch="arm64" ;;
+		amd64) cf_arch="amd64" ;;
+		armhf|arm) cf_arch="arm" ;;
+	esac
+	curl -fsSL "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${cf_arch}" -o "${SDCARD}/usr/local/bin/cloudflared" 2>/dev/null || true
+	if [[ -s "${SDCARD}/usr/local/bin/cloudflared" ]]; then
+		chmod 755 "${SDCARD}/usr/local/bin/cloudflared"
+	fi
 	local app_dir="${SDCARD}/opt/dbai/apps"
 	mkdir -p "${app_dir}" "${SDCARD}/usr/local/sbin" "${SDCARD}/etc/systemd/system" "${SDCARD}/var/lib/dbai"
 	chmod 755 "${app_dir}"
@@ -73,10 +93,22 @@ services:
       - lightnvr-config:/etc/lightnvr
       - lightnvr-data:/var/lib/lightnvr/data
 
+  portainer:
+    image: portainer/portainer-ce:latest
+    container_name: dbai-portainer
+    restart: unless-stopped
+    ports:
+      - "9000:9000"
+      - "9443:9443"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - portainer-data:/data
+
 volumes:
   9router-data:
   lightnvr-config:
   lightnvr-data:
+  portainer-data:
 COMPOSE
 
 	# The profile list is supplied explicitly so unrelated containers do not start.
