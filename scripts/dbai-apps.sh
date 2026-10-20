@@ -125,7 +125,7 @@ detect_proxmox() {
     return
   fi
   if file_exists /etc/apt/sources.list.d/pxvirt-sources.list; then
-    mode='Proxmox Community (PXVIRT)'
+    mode='Proxmox Community'
   elif file_exists /etc/apt/sources.list.d/pve-install-repo.sources; then
     mode='Proxmox VE Official'
   fi
@@ -181,7 +181,7 @@ detect_homeassistant() {
     [[ "$state" == running ]] && running=yes
   done
   if [[ "$installed" == no ]]; then
-    set_result 'Home Assistant' 'not installed' 'Home Assistant Supervised service/package or a Home Assistant container was not found.'
+    set_result 'Home Assistant' 'not installed' 'Home Assistant service/package or a Home Assistant container was not found.'
   elif [[ "$running" == yes ]]; then
     set_result 'Home Assistant' 'running' 'A Home Assistant/Supervisor service or container is active.'
   else
@@ -356,8 +356,8 @@ detect_app() {
       ;;
     proxmox-community|pxvirt)
       detect_proxmox
-      if [[ "$RESULT_STATUS" != 'not installed' && "$RESULT_NAME" != 'Proxmox Community (PXVIRT)' ]]; then
-        set_result 'Proxmox Community (PXVIRT)' 'not installed' 'The PXVIRT repository marker was not found on this image.'
+      if [[ "$RESULT_STATUS" != 'not installed' && "$RESULT_NAME" != 'Proxmox Community' ]]; then
+        set_result 'Proxmox Community' 'not installed' 'The Proxmox Community repository marker was not found on this image.'
       fi
       ;;
     *)
@@ -794,11 +794,11 @@ APP_TITLES=(
   "Portainer CE"
   "9router AI Proxy"
   "LightNVR + go2rtc"
-  "Proxmox Community (PXVIRT)"
+  "Proxmox Community"
   "Proxmox VE Official"
   "OpenMediaVault (OMV)"
   "CasaOS Dashboard"
-  "Home Assistant Supervised"
+  "Home Assistant"
   "Hermes AI Agent"
   "Tailscale Mesh VPN"
   "Cloudflare Tunnel"
