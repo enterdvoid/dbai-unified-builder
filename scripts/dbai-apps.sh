@@ -878,9 +878,9 @@ menu_install() {
     printf "%s║%s                                                                            %s║%s\n" "$C_CYAN" "$C_RESET" "$C_CYAN" "$C_RESET"
     printf "%s%s%s\n" "$C_CYAN" "$div" "$C_RESET"
     printf "%s║%s  Petunjuk:                                                                 %s║%s\n" "$C_CYAN" "$C_RESET" "$C_CYAN" "$C_RESET"
-    printf "%s║%s   • Pilih nomor [1-12] untuk memasang aplikasi baru                         %s║%s\n" "$C_CYAN" "$C_RESET" "$C_CYAN" "$C_RESET"
-    printf "%s║%s   • Jika aplikasi sudah terpasang, sistem otomatis memeriksa pembaruan      %s║%s\n" "$C_CYAN" "$C_RESET" "$C_CYAN" "$C_RESET"
-    printf "%s║%s   • Masukkan [0] untuk kembali ke Menu Utama                                %s║%s\n" "$C_CYAN" "$C_RESET" "$C_CYAN" "$C_RESET"
+    printf "%s║%s   • Pilih nomor [1-12] untuk memasang aplikasi baru                        %s║%s\n" "$C_CYAN" "$C_RESET" "$C_CYAN" "$C_RESET"
+    printf "%s║%s   • Jika aplikasi sudah terpasang, sistem otomatis memeriksa pembaruan     %s║%s\n" "$C_CYAN" "$C_RESET" "$C_CYAN" "$C_RESET"
+    printf "%s║%s   • Masukkan [0] untuk kembali ke Menu Utama                               %s║%s\n" "$C_CYAN" "$C_RESET" "$C_CYAN" "$C_RESET"
     printf "%s║%s                                                                            %s║%s\n" "$C_CYAN" "$C_RESET" "$C_CYAN" "$C_RESET"
     printf "%s%s%s\n" "$C_CYAN" "$bot" "$C_RESET"
 

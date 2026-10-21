@@ -162,3 +162,12 @@ function pre_customize_image__100_dbai_platform_overlays() {
 	rm -rf -- "$stage_dir"
 	display_alert "DBAI platform payloads" "Installed U-Boot files, overlaid usr.tar.gz, installed ${triad_file_count} Triad firmware files, and marked the 23 designated programs/scripts executable" "info"
 }
+
+function post_config__dbai_platform_overlays_rename_docker() {
+	local idx
+	for idx in "${!EXTRA_IMAGE_SUFFIXES[@]}"; do
+		if [[ "${EXTRA_IMAGE_SUFFIXES[idx]}" == "-docker" ]]; then
+			EXTRA_IMAGE_SUFFIXES[idx]="-docker+portainer"
+		fi
+	done
+}

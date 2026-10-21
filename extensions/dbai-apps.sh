@@ -13,7 +13,9 @@ function extension_prepare_config__dbai_apps() {
 			exit_with_error "DBAI Docker app profiles currently support bookworm and trixie only; got ${RELEASE}"
 			;;
 	esac
-	case "${DBAI_APP_PROFILE:-}" in
+	case "${DBAI_APP_PROFILE:-docker}" in
+		docker|"")
+			;;
 		hermes-9router|hermes-9router-lightnvr)
 			case "${ARCH}" in arm64|amd64) ;; *) exit_with_error "Hermes + 9Router profiles require arm64 or amd64; got ${ARCH}" ;; esac
 			;;
@@ -21,7 +23,17 @@ function extension_prepare_config__dbai_apps() {
 			case "${ARCH}" in arm64|armhf|amd64) ;; *) exit_with_error "LightNVR profile requires arm64, armhf, or amd64; got ${ARCH}" ;; esac
 			;;
 	esac
-	case "${DBAI_APP_PROFILE:-}" in
+	case "${DBAI_APP_PROFILE:-docker}" in
+		docker|"")
+			local idx found=no
+			for idx in "${!EXTRA_IMAGE_SUFFIXES[@]}"; do
+				if [[ "${EXTRA_IMAGE_SUFFIXES[idx]}" == "-docker" ]]; then
+					EXTRA_IMAGE_SUFFIXES[idx]="-docker+portainer"
+					found=yes
+				fi
+			done
+			[[ "$found" == "yes" ]] || EXTRA_IMAGE_SUFFIXES+=("-docker+portainer")
+			;;
 		hermes-9router|lightnvr-go2rtc|hermes-9router-lightnvr)
 			EXTRA_IMAGE_SUFFIXES+=("-${DBAI_APP_PROFILE}")
 			;;
@@ -113,7 +125,8 @@ COMPOSE
 
 	# The profile list is supplied explicitly so unrelated containers do not start.
 	local compose_profiles=""
-	case "${DBAI_APP_PROFILE}" in
+	case "${DBAI_APP_PROFILE:-docker}" in
+		docker|"") compose_profiles="" ;;
 		hermes-9router) compose_profiles="hermes-9router" ;;
 		lightnvr-go2rtc) compose_profiles="lightnvr-go2rtc" ;;
 		hermes-9router-lightnvr) compose_profiles="hermes-9router lightnvr-go2rtc" ;;
