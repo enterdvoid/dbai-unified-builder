@@ -2,8 +2,13 @@
 # Apply DBAI-2K26 branding to stock Armbian metadata and MOTD scripts.
 # shellcheck shell=bash
 
-function post_repo_customize_image__dbai_branding() {
+function dbai_apply_branding() {
 	: "${SDCARD:?Armbian did not set SDCARD for DBAI branding}"
+	if [[ -f "${SDCARD}/etc/.dbai_branding_applied" ]]; then
+		return 0
+	fi
+	touch "${SDCARD}/etc/.dbai_branding_applied"
+
 	local release_file="${SDCARD}/etc/armbian-release"
 	mkdir -p "${SDCARD}/etc"
 
@@ -49,8 +54,32 @@ PY
 |_____/|______/___|___|_______|    |______|__|\__|______|______|
 EOF
 
-	local dbai_motd_patcher="${SRC}/userpatches/tools/patch-armbian-motd.py"
-	local dbai_apps_script="${SRC}/userpatches/tools/dbai-apps.sh"
+	local dbai_motd_patcher=""
+	for cand in \
+		"${SRC}/userpatches/tools/patch-armbian-motd.py" \
+		"${SRC}/tools/patch-armbian-motd.py" \
+		"${SRC}/userpatches/extensions/patch-armbian-motd.py" \
+		"$(pwd)/scripts/patch-armbian-motd.py" \
+		"${GITHUB_WORKSPACE:-}/scripts/patch-armbian-motd.py"; do
+		if [[ -s "$cand" ]]; then
+			dbai_motd_patcher="$cand"
+			break
+		fi
+	done
+
+	local dbai_apps_script=""
+	for cand in \
+		"${SRC}/userpatches/tools/dbai-apps.sh" \
+		"${SRC}/tools/dbai-apps.sh" \
+		"${SRC}/userpatches/extensions/dbai-apps.sh" \
+		"$(pwd)/scripts/dbai-apps.sh" \
+		"${GITHUB_WORKSPACE:-}/scripts/dbai-apps.sh"; do
+		if [[ -s "$cand" ]]; then
+			dbai_apps_script="$cand"
+			break
+		fi
+	done
+
 	local dbai_motd_header="${SDCARD}/etc/update-motd.d/10-armbian-header"
 	local dbai_motd_commands="${SDCARD}/etc/update-motd.d/41-commands"
 
@@ -64,7 +93,9 @@ EOF
 	local dbai_imba_script=""
 	for cand in \
 		"${SRC}/userpatches/tools/imba" \
+		"${SRC}/tools/imba" \
 		"${SRC}/userpatches/extensions/imba" \
+		"${SRC}/extensions/imba" \
 		"${SRC}/../scripts/imba" \
 		"$(pwd)/scripts/imba" \
 		"${GITHUB_WORKSPACE:-}/scripts/imba"; do
@@ -76,6 +107,8 @@ EOF
 
 	if [[ -n "$dbai_imba_script" ]]; then
 		install -m 0755 "$dbai_imba_script" "${SDCARD}/usr/local/bin/imba"
+	elif [[ -e "${SDCARD}/usr/bin/imba" ]]; then
+		ln -sf /usr/bin/imba "${SDCARD}/usr/local/bin/imba"
 	fi
 
 	# Install btop monitoring tool on all profiles except Minimal
@@ -119,4 +152,12 @@ EOF
 
 	python3 "$dbai_motd_patcher" "$dbai_motd_header" "$dbai_motd_commands"
 	display_alert "DBAI-2K26 branding" "Patched existing Armbian header/commands; preserved stock IP, performance, tips and login sections" "info"
+}
+
+function pre_customize_image__500_dbai_branding() {
+	dbai_apply_branding "$@"
+}
+
+function post_repo_customize_image__dbai_branding() {
+	dbai_apply_branding "$@"
 }

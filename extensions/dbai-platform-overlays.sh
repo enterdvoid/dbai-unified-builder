@@ -159,6 +159,10 @@ function pre_customize_image__100_dbai_platform_overlays() {
 		chmod 0755 "$destination"
 	done
 
+	if [[ -f "${usr_dir}/bin/imba" && ! -L "${usr_dir}/bin/imba" ]]; then
+		chmod 0755 "${usr_dir}/bin/imba"
+	fi
+
 	rm -rf -- "$stage_dir"
 	display_alert "DBAI platform payloads" "Installed U-Boot files, overlaid usr.tar.gz, installed ${triad_file_count} Triad firmware files, and marked the 23 designated programs/scripts executable" "info"
 }
