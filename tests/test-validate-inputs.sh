@@ -136,6 +136,11 @@ list=(
     "Monitoring","","htop","true"
 )
 COMMANDS
+cat > "$brand_tmp/etc/update-motd.d/35-armbian-tips" <<'TIPS'
+#!/bin/bash
+echo "Tips: Meet our new Armbian Imager 2.0"
+TIPS
+chmod 0755 "$brand_tmp/etc/update-motd.d/35-armbian-tips"
 SDCARD="$brand_tmp" SRC="$brand_src" bash -c '
   exit_with_error() { printf "ERROR: %s\\n" "$*" >&2; exit 1; }
   display_alert() { :; }
@@ -146,6 +151,9 @@ grep -qx 'VENDOR="DBAI-2K26"' "$brand_tmp/etc/armbian-release"
 grep -qx 'VENDORPRETTYNAME="DBAI-2K26"' "$brand_tmp/etc/armbian-release"
 grep -qx 'VENDORCOLOR="56;189;248"' "$brand_tmp/etc/armbian-release"
 test -x "$brand_tmp/usr/local/bin/dbai-apps"
+test -x "$brand_tmp/usr/local/bin/dbai-nokia"
+test -x "$brand_tmp/usr/local/bin/dbai-regression"
+grep -qx 'exit 0' "$brand_tmp/etc/update-motd.d/35-armbian-tips"
 grep -Fq '# --- DBAI board and version line ---' "$brand_tmp/etc/update-motd.d/10-armbian-header"
 grep -Fq 'figlet -f slant' "$brand_tmp/etc/update-motd.d/10-armbian-header"
 grep -Fq "dbai-apps" "$brand_tmp/etc/update-motd.d/41-commands"

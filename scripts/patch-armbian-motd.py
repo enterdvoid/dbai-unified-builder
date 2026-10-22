@@ -341,10 +341,12 @@ def patch_siblings(motd_dir: pathlib.Path) -> None:
 
     tips = motd_dir / "35-armbian-tips"
     if tips.is_file():
+        tips.write_text("#!/bin/bash\nexit 0\n", encoding="utf-8")
         try:
-            tips.chmod(0o644)
+            tips.chmod(0o755)
         except Exception:
             pass
+
 
 
 def main() -> None:

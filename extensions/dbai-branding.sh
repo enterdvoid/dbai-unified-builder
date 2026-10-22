@@ -128,12 +128,24 @@ EOF
 		chroot_sdcard apt-mark hold armbian-bsp-cli-aml-s9xx-box-current 2>/dev/null || true
 	fi
 
-	# Truncate sponsor quotes and disable tips
+	# Truncate sponsor quotes and permanently silence tips MOTD
 	if [[ -f "${SDCARD}/etc/update-motd.d/quotes.txt" ]]; then
 		: > "${SDCARD}/etc/update-motd.d/quotes.txt"
 	fi
 	if [[ -f "${SDCARD}/etc/update-motd.d/35-armbian-tips" ]]; then
-		chmod -x "${SDCARD}/etc/update-motd.d/35-armbian-tips" 2>/dev/null || true
+		cat > "${SDCARD}/etc/update-motd.d/35-armbian-tips" <<'EOF'
+#!/bin/bash
+exit 0
+EOF
+		chmod 0755 "${SDCARD}/etc/update-motd.d/35-armbian-tips"
+	fi
+	# Neutralize background daily quotes updater so it never re-downloads quotes.txt
+	if [[ -f "${SDCARD}/etc/cron.daily/armbian-quotes" ]]; then
+		cat > "${SDCARD}/etc/cron.daily/armbian-quotes" <<'EOF'
+#!/bin/bash
+exit 0
+EOF
+		chmod 0755 "${SDCARD}/etc/cron.daily/armbian-quotes"
 	fi
 
 	# Disable automatic rootfs resize on first boot; rely on manual 'armbian-tf'
@@ -144,10 +156,28 @@ EOF
 	rm -f "${SDCARD}/etc/systemd/system/basic.target.wants/armbian-resize-filesystem.service"
 	ln -sf /dev/null "${SDCARD}/etc/systemd/system/armbian-resize-filesystem.service"
 
-	# Symlink dbai-regression to armbian-ddbr for full eMMC dump
-	if [[ -e "${SDCARD}/usr/sbin/armbian-ddbr" ]]; then
-		mkdir -p "${SDCARD}/usr/local/bin"
-		ln -sf /usr/sbin/armbian-ddbr "${SDCARD}/usr/local/bin/dbai-regression"
+	# Utility placeholders for commands menu: dbai-nokia and dbai-regression
+	mkdir -p "${SDCARD}/usr/local/bin"
+	if [[ ! -e "${SDCARD}/usr/local/bin/dbai-nokia" ]]; then
+		cat > "${SDCARD}/usr/local/bin/dbai-nokia" <<'EOF'
+#!/bin/bash
+echo -e "\e[1;38;2;56;189;248m[DBAI]\e[0m Utility dbai-nokia sedang dalam tahap penulisan."
+exit 0
+EOF
+		chmod 0755 "${SDCARD}/usr/local/bin/dbai-nokia"
+	fi
+
+	if [[ ! -e "${SDCARD}/usr/local/bin/dbai-regression" ]]; then
+		if [[ -e "${SDCARD}/usr/sbin/armbian-ddbr" ]]; then
+			ln -sf /usr/sbin/armbian-ddbr "${SDCARD}/usr/local/bin/dbai-regression"
+		else
+			cat > "${SDCARD}/usr/local/bin/dbai-regression" <<'EOF'
+#!/bin/bash
+echo -e "\e[1;38;2;56;189;248m[DBAI]\e[0m Utility dbai-regression sedang dalam tahap penulisan."
+exit 0
+EOF
+			chmod 0755 "${SDCARD}/usr/local/bin/dbai-regression"
+		fi
 	fi
 
 	python3 "$dbai_motd_patcher" "$dbai_motd_header" "$dbai_motd_commands"
@@ -161,3 +191,4 @@ function pre_customize_image__500_dbai_branding() {
 function post_repo_customize_image__dbai_branding() {
 	dbai_apply_branding "$@"
 }
+
