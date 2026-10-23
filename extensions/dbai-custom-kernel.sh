@@ -389,6 +389,12 @@ function dbai_restore_custom_kernel_boot_payload() {
 	kernel_name="$(sed -n 's/^Boot kernel file: //p' "$manifest" | sed -n '1p')"
 	ramdisk_name="$(sed -n 's/^Boot ramdisk file: //p' "$manifest" | sed -n '1p')"
 	dbai_sync_custom_kernel_uenv "$target_root/boot/uEnv.txt" "$custom_release" "$kernel_name" "$ramdisk_name" || return 1
+	if [[ -s "$target_root/boot/$kernel_name" && ! -e "$target_root/boot/zImage" ]]; then
+		cp -f "$target_root/boot/$kernel_name" "$target_root/boot/zImage"
+	fi
+	if [[ -s "$target_root/boot/$ramdisk_name" && ! -e "$target_root/boot/uInitrd" ]]; then
+		cp -f "$target_root/boot/$ramdisk_name" "$target_root/boot/uInitrd"
+	fi
 	dtb_stage="$(TMPDIR=/tmp mktemp -d /tmp/dbai-final-dtb.XXXXXX)" || { echo "ERROR: unable to create temporary directory for custom DTBs." >&2; return 1; }
 	if ! tar --no-same-owner --no-same-permissions -xf "$cache_dir/dtb.tar" -C "$dtb_stage"; then
 		rm -rf -- "$dtb_stage"
@@ -683,6 +689,12 @@ function pre_customize_image__dbai_overlay_kernel_bundle() {
 	fi
 	[[ -n "$boot_ramdisk_file" ]] || exit_with_error "Custom bootfs requires the KERNEL-derived uInitrd-${modules_release} unless it has an explicit INITRD= assignment"
 	dbai_sync_custom_kernel_uenv "$boot_config" "$modules_release" "$(basename "$boot_kernel_file")" "$(basename "$boot_ramdisk_file")" || exit_with_error "Unable to align /boot/uEnv.txt with the custom kernel and supplied U-Boot ramdisk"
+	if [[ -s "$boot_kernel_file" && ! -e "${SDCARD}/boot/zImage" ]]; then
+		cp -f "$boot_kernel_file" "${SDCARD}/boot/zImage"
+	fi
+	if [[ -s "$boot_ramdisk_file" && ! -e "${SDCARD}/boot/uInitrd" ]]; then
+		cp -f "$boot_ramdisk_file" "${SDCARD}/boot/uInitrd"
+	fi
 
 	boot_kernel_sha="$(sha256sum "$boot_kernel_file" | awk '{print $1}')"
 	boot_ramdisk_sha="$(sha256sum "$boot_ramdisk_file" | awk '{print $1}')"
