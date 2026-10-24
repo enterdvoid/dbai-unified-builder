@@ -84,6 +84,16 @@ for f in ${MOTD_DISABLE}; do
 	[[ "${f}" == "${THIS_SCRIPT}" ]] && exit 0
 done
 
+# Only display for authenticated user sessions (post-login)
+if [[ -z "${USER:-}" && -z "${LOGNAME:-}" && -z "${PAM_USER:-}" ]]; then
+	exit 0
+fi
+if [[ -z "${MOTD_SHOWN:-}" && -z "${XDG_SESSION_ID:-}" && -z "${SSH_CONNECTION:-}" && -z "${PAM_USER:-}" ]]; then
+	if ! who 2>/dev/null | grep -q .; then
+		exit 0
+	fi
+fi
+
 # Colors
 R="\\e[0m"
 C_ACCENT="\\e[1;38;2;56;189;248m"   # Sky Blue #38bdf8
@@ -130,6 +140,16 @@ safe_source /etc/default/armbian-motd
 for f in ${MOTD_DISABLE}; do
 	[[ "${f}" == "${THIS_SCRIPT}" ]] && exit 0
 done
+
+# Only display for authenticated user sessions (post-login)
+if [[ -z "${USER:-}" && -z "${LOGNAME:-}" && -z "${PAM_USER:-}" ]]; then
+	exit 0
+fi
+if [[ -z "${MOTD_SHOWN:-}" && -z "${XDG_SESSION_ID:-}" && -z "${SSH_CONNECTION:-}" && -z "${PAM_USER:-}" ]]; then
+	if ! who 2>/dev/null | grep -q .; then
+		exit 0
+	fi
+fi
 
 # Colors - Modern Cyber Sky & Emerald Palette
 R="\\e[0m"
@@ -262,11 +282,6 @@ def patch_header(path: pathlib.Path) -> None:
     # Vendor banner block: support /etc/armbian-banner with figlet slant fallback
     banner_logic = r'''# --- Vendor banner ---
 if [[ -f /etc/armbian-banner ]]; then
-	if [[ -n "${VENDORCOLOR:-}" ]]; then
-		printf '\e[38;2;%sm' "${VENDORCOLOR}"
-	else
-		printf '\e[1;91m'
-	fi
 	cat /etc/armbian-banner
 	printf '\e[0m\n'
 elif [[ -n "${VENDORCOLOR:-}" ]]; then

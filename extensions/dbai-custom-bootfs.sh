@@ -46,6 +46,15 @@ function dbai_verify_boot_archive_payload_paths() {
 	done < <(find "$payload" \( -type f -o -type l \) -print0)
 }
 
+function dbai_configure_uenv_rootfs() {
+	local uenv="$1" fs="${ROOTFS_TYPE:-${FILESYSTEM:-ext4}}"
+	[[ -f "$uenv" ]] || return 0
+	if [[ "${fs,,}" == "btrfs" ]]; then
+		sed -i -E 's|^[[:space:]]*APPEND=.*|APPEND=root=UUID=19450817-1998-4512-a817-202510202026 rootflags=compress=zstd:6 rw rootwait rootfstype=btrfs console=ttyAML0,115200n8 consoleblank=0 fsck.fix=yes fsck.repair=yes net.ifnames=0 max_loop=128 cgroup_enable=cpuset cgroup_memory=1 cgroup_enable=memory swapaccount=1|' "$uenv"
+		display_alert "DBAI custom bootfs" "Configured uEnv.txt for BTRFS root filesystem" "info"
+	fi
+}
+
 function dbai_replace_bootfs_files() {
 	# Final /boot is composed from the U-Boot archive first, then the custom
 	# bootfs config, then the custom kernel/DTB bundle. This prevents the later
@@ -73,6 +82,7 @@ function dbai_replace_bootfs_files() {
 	find "$boot_dir" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
 	cp -a "${uboot_payload}/." "$boot_dir/"
 	cp -a "${custom_payload}/." "$boot_dir/"
+	dbai_configure_uenv_rootfs "${boot_dir}/uEnv.txt"
 	dbai_verify_boot_archive_payload_paths "$uboot_payload" "$boot_dir" "u-boot.tar.gz"
 	dbai_verify_boot_archive_payload_paths "$custom_payload" "$boot_dir" "bootfs_custom_kernel.tar.gz"
 	find "$boot_dir" -mindepth 1 -print -quit | grep -q . || exit_with_error "Custom bootfs merge left /boot empty"

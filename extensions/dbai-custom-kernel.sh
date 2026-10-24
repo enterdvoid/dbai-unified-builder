@@ -342,6 +342,16 @@ function dbai_prune_noncustom_boot_artifacts() {
 		rm -rf -- "$entry"
 	done
 }
+if ! declare -F dbai_configure_uenv_rootfs >/dev/null 2>&1; then
+	function dbai_configure_uenv_rootfs() {
+		local uenv="$1" fs="${ROOTFS_TYPE:-${FILESYSTEM:-ext4}}"
+		[[ -f "$uenv" ]] || return 0
+		if [[ "${fs,,}" == "btrfs" ]]; then
+			sed -i -E 's|^[[:space:]]*APPEND=.*|APPEND=root=UUID=19450817-1998-4512-a817-202510202026 rootflags=compress=zstd:6 rw rootwait rootfstype=btrfs console=ttyAML0,115200n8 consoleblank=0 fsck.fix=yes fsck.repair=yes net.ifnames=0 max_loop=128 cgroup_enable=cpuset cgroup_memory=1 cgroup_enable=memory swapaccount=1|' "$uenv"
+		fi
+	}
+fi
+
 function dbai_sync_custom_kernel_uenv() {
 	local uenv="$1" release="$2" kernel_name="$3" ramdisk_name="$4" tmp
 	[[ -f "$uenv" && ! -L "$uenv" ]] || { echo "ERROR: custom-kernel U-Boot config is missing or not a regular file: $uenv" >&2; return 1; }
@@ -367,6 +377,7 @@ function dbai_sync_custom_kernel_uenv() {
 	fi
 	chmod --reference="$uenv" "$tmp" || { rm -f -- "$tmp"; return 1; }
 	mv -f -- "$tmp" "$uenv" || { rm -f -- "$tmp"; return 1; }
+	dbai_configure_uenv_rootfs "$uenv"
 	echo "Synchronized uEnv.txt to kernel release $release, kernel /$kernel_name, and ramdisk /$ramdisk_name."
 }
 
@@ -389,12 +400,7 @@ function dbai_restore_custom_kernel_boot_payload() {
 	kernel_name="$(sed -n 's/^Boot kernel file: //p' "$manifest" | sed -n '1p')"
 	ramdisk_name="$(sed -n 's/^Boot ramdisk file: //p' "$manifest" | sed -n '1p')"
 	dbai_sync_custom_kernel_uenv "$target_root/boot/uEnv.txt" "$custom_release" "$kernel_name" "$ramdisk_name" || return 1
-	if [[ -s "$target_root/boot/$kernel_name" && ! -e "$target_root/boot/zImage" ]]; then
-		cp -f "$target_root/boot/$kernel_name" "$target_root/boot/zImage"
-	fi
-	if [[ -s "$target_root/boot/$ramdisk_name" && ! -e "$target_root/boot/uInitrd" ]]; then
-		cp -f "$target_root/boot/$ramdisk_name" "$target_root/boot/uInitrd"
-	fi
+# Boot scripts load kernel/ramdisk directly without duplicate copies
 	dtb_stage="$(TMPDIR=/tmp mktemp -d /tmp/dbai-final-dtb.XXXXXX)" || { echo "ERROR: unable to create temporary directory for custom DTBs." >&2; return 1; }
 	if ! tar --no-same-owner --no-same-permissions -xf "$cache_dir/dtb.tar" -C "$dtb_stage"; then
 		rm -rf -- "$dtb_stage"
@@ -689,12 +695,7 @@ function pre_customize_image__dbai_overlay_kernel_bundle() {
 	fi
 	[[ -n "$boot_ramdisk_file" ]] || exit_with_error "Custom bootfs requires the KERNEL-derived uInitrd-${modules_release} unless it has an explicit INITRD= assignment"
 	dbai_sync_custom_kernel_uenv "$boot_config" "$modules_release" "$(basename "$boot_kernel_file")" "$(basename "$boot_ramdisk_file")" || exit_with_error "Unable to align /boot/uEnv.txt with the custom kernel and supplied U-Boot ramdisk"
-	if [[ -s "$boot_kernel_file" && ! -e "${SDCARD}/boot/zImage" ]]; then
-		cp -f "$boot_kernel_file" "${SDCARD}/boot/zImage"
-	fi
-	if [[ -s "$boot_ramdisk_file" && ! -e "${SDCARD}/boot/uInitrd" ]]; then
-		cp -f "$boot_ramdisk_file" "${SDCARD}/boot/uInitrd"
-	fi
+# Boot scripts load kernel/ramdisk directly without duplicate copies
 
 	boot_kernel_sha="$(sha256sum "$boot_kernel_file" | awk '{print $1}')"
 	boot_ramdisk_sha="$(sha256sum "$boot_ramdisk_file" | awk '{print $1}')"
