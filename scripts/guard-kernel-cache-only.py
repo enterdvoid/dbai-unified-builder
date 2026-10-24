@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Make DBAI's Kernel Official mode fail closed if Armbian misses its kernel artifact cache."""
+"""Make DBAI's Kernel Official and Custom Kernel modes fail closed if Armbian attempts to compile kernel sources."""
 
 from pathlib import Path
 import sys
@@ -11,6 +11,8 @@ GUARD = (
     + "\n\t" + MARKER
     + '\n\tif [[ "${DBAI_KERNEL_MODE:-}" == "Kernel Official" ]]; then'
     + '\n\t\texit_with_error "DBAI Kernel Official: no reusable official kernel artifact was found in the Armbian artifact cache. Refusing to compile from source. Choose Recompile Kernel Official to build it."'
+    + '\n\telif [[ "${DBAI_KERNEL_MODE:-}" == "Custom Kernel" ]]; then'
+    + '\n\t\texit_with_error "DBAI Custom Kernel: compiling kernel from source in Custom Kernel mode is prohibited. Custom Kernel must overlay the pre-built bundle."'
     + "\n\tfi\n"
 )
 
@@ -22,7 +24,7 @@ def main() -> int:
 
     source = Path(sys.argv[1])
     mode = sys.argv[2]
-    if mode != "Kernel Official":
+    if mode not in ("Kernel Official", "Custom Kernel"):
         print(f"Kernel cache guard not needed for mode: {mode}")
         return 0
 
@@ -32,7 +34,7 @@ def main() -> int:
 
     text = source.read_text(encoding="utf-8")
     if MARKER in text:
-        print("Kernel Official cache-only guard already installed.")
+        print("Kernel guard already installed.")
         return 0
 
     occurrences = text.count(FUNCTION)
@@ -45,7 +47,7 @@ def main() -> int:
         return 2
 
     source.write_text(text.replace(FUNCTION, GUARD, 1), encoding="utf-8")
-    print("Installed Kernel Official cache-only guard: cache miss will fail instead of compiling.")
+    print(f"Installed kernel guard for {mode}: source compilation will fail instead of compiling.")
     return 0
 
 

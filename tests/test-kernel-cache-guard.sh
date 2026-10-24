@@ -21,6 +21,15 @@ python3 "$repo_root/scripts/guard-kernel-cache-only.py" "$source_file" "Kernel O
 after="$(sha256sum "$source_file" | awk '{print $1}')"
 [[ "$before" == "$after" ]]
 
+cat > "$tmp/custom-kernel.sh" <<'FIXTURE'
+function artifact_kernel_build_from_sources() {
+  compile_kernel
+}
+FIXTURE
+python3 "$repo_root/scripts/guard-kernel-cache-only.py" "$tmp/custom-kernel.sh" "Custom Kernel"
+grep -q 'DBAI_KERNEL_OFFICIAL_CACHE_ONLY_GUARD' "$tmp/custom-kernel.sh"
+grep -q 'compiling kernel from source in Custom Kernel mode is prohibited' "$tmp/custom-kernel.sh"
+
 cat > "$tmp/no-hook.sh" <<'FIXTURE'
 function another_artifact() {
   :

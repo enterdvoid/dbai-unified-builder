@@ -6,7 +6,7 @@ The workflow exposes four intentionally distinct kernel modes.
 |---|---|
 | `Kernel Official` | Uses the official `armbian/build` framework and attempts to pull the matching prebuilt kernel artifact from Armbian's remote OCI cache. If the framework would fall back to compiling from source, the DBAI guard stops the job with an explicit error. |
 | `Recompile Kernel Official` | Sets `ARTIFACT_IGNORE_CACHE=yes`, intentionally bypassing artifact caches and compiling the official-source kernel. |
-| `Custom Kernel` | Overlays the four-part kernel bundle supplied through `kernel_custom_input`; it does not compile that kernel. |
+| `Custom Kernel` | Sets `KERNELSOURCE=none` and overlays the four-part kernel bundle supplied through `kernel_custom_input`. It never compiles from source, and is protected by a guard that immediately fails if compilation is ever attempted. |
 | `Recompile Custom Kernel` | Builds from the Git repository/ref supplied through `kernel_custom_input`. |
 
 ## Why Kernel Official can fail
@@ -17,12 +17,17 @@ The failure message means no matching reusable artifact was available for that b
 
 The guard is injected into Armbian's `lib/functions/artifacts/artifact-kernel.sh` immediately before the build starts. If the expected upstream hook changes or is missing, the workflow fails closed rather than claiming cache-only behavior without enforcing it.
 
+## Custom Kernel protection
+
+In `Custom Kernel` mode, DBAI passes `KERNELSOURCE=none` to the Armbian build engine, bypassing kernel artifact generation and preventing Armbian from attempting to clone or build the official kernel. In addition, the guard in `artifact-kernel.sh` fails immediately if source compilation is ever invoked in `Custom Kernel` mode.
+
 ## Verification
 
 Run `tests/test-kernel-cache-guard.sh` to check that the guard:
 - inserts into the expected kernel artifact hook;
 - is idempotent;
+- protects both `Kernel Official` and `Custom Kernel` modes;
 - fails closed if the hook changes or is missing; and
-- leaves other kernel modes unchanged.
+- leaves recompile kernel modes unchanged.
 
 This check validates the guard logic only. A real workflow run is still needed to confirm that the selected source revision exposes the expected hook and that its Armbian artifact cache contains a matching kernel artifact.

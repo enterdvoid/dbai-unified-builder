@@ -525,6 +525,7 @@ function extension_prepare_config__dbai_custom_kernel() {
 	if [[ -z "${DBAI_KERNEL_BUNDLE_URL:-}" || ! "${DBAI_KERNEL_BUNDLE_URL}" =~ ^https:// ]]; then
 		exit_with_error "Custom Kernel requires one HTTPS URL to a bundle archive"
 	fi
+	KERNELSOURCE="none"
 	EXTRA_IMAGE_SUFFIXES+=("-custom-kernel")
 }
 
