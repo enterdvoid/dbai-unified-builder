@@ -645,9 +645,11 @@ jobs:
           # Ensure host kernel has filesystem drivers loaded for Armbian host compatibility checks
           if [[ "$FILESYSTEM" == "btrfs" || "$FILESYSTEM" == "both" ]]; then
             if ! grep -q -w btrfs /proc/filesystems; then
-              sudo modprobe btrfs 2>/dev/null || {
-                sudo apt-get update && sudo apt-get install -y btrfs-progs "linux-modules-extra-$(uname -r)" && sudo modprobe btrfs || true
-              }
+              if ! sudo modprobe btrfs 2>/dev/null; then
+                sudo apt-get update || true
+                sudo apt-get install -y btrfs-progs "linux-modules-extra-$(uname -r)" || true
+                sudo modprobe btrfs || true
+              fi
             fi
           fi
           cd armbian-source
