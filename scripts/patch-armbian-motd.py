@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """Patch Armbian's existing MOTD scripts in place for DBAI branding.
 
-This updates Armbian MOTD modules with DBAI-2K26 branding, Sky Cyan & Mint
-color harmony, a 3x2 swapped performance grid, and a 2-column commands menu.
+This updates Armbian MOTD modules with TrueColor gradient harmony (Neon Pink,
+Purple, Sky Cyan, Mint Emerald), a 3x2 swapped performance grid, and a
+2-column commands menu.
 """
 from __future__ import annotations
 
 import pathlib
+import re
 import sys
 
 HEADER_START = "# --- Board name and version line ---"
@@ -30,20 +32,20 @@ if [[ -r /proc/device-tree/compatible ]]; then
 	DBAI_DEVICE_COMPATIBLE="$(tr '\0' ' ' < /proc/device-tree/compatible)"
 fi
 DBAI_SOC=""
-case "${DBAI_DEVICE_COMPATIBLE,,}" in
+case "${DBAI_DEVICE_COMPATIBLE,,} ${DBAI_BOARD_MODEL,,}" in
 	*s905x4*) DBAI_SOC="Amlogic S905X4" ;;
 	*s905y4*) DBAI_SOC="Amlogic S905Y4" ;;
 	*s905d4*) DBAI_SOC="Amlogic S905D4" ;;
 	*s905x3*) DBAI_SOC="Amlogic S905X3" ;;
 	*s905y3*) DBAI_SOC="Amlogic S905Y3" ;;
 	*s905d3*) DBAI_SOC="Amlogic S905D3" ;;
-	*s905x2*) DBAI_SOC="Amlogic S905X2" ;;
+	*s905x2*|*b860h-v5*) DBAI_SOC="Amlogic S905X2" ;;
 	*s905y2*) DBAI_SOC="Amlogic S905Y2" ;;
 	*s905d2*) DBAI_SOC="Amlogic S905D2" ;;
-	*s905x*) DBAI_SOC="Amlogic S905X" ;;
+	*p212*|*b860h*|*hg680*|*s905x*) DBAI_SOC="Amlogic S905X" ;;
 	*s905y*) DBAI_SOC="Amlogic S905Y" ;;
 	*s905d*) DBAI_SOC="Amlogic S905D" ;;
-	*s912*) DBAI_SOC="Amlogic S912" ;;
+	*s912*|*gxm*) DBAI_SOC="Amlogic S912" ;;
 	*rk3588*) DBAI_SOC="Rockchip RK3588" ;;
 	*rk3568*) DBAI_SOC="Rockchip RK3568" ;;
 	*rk3566*) DBAI_SOC="Rockchip RK3566" ;;
@@ -67,13 +69,58 @@ if [[ "${VERSION:-}" == *trunk* ]]; then
 	VERSION="${VERSION} rolling"
 fi
 
-printf ' Armbian \e[0;92mv%s\e[0m | Linux \e[0;92m%s\e[0m | running on \e[0;96m%s\e[0m\n' \
+# Vibrant harmony subtitle line matching banner palette
+printf ' \e[38;2;148;163;184mArmbian\e[0m \e[1;38;2;52;211;153mv%s\e[0m \e[38;2;100;116;139m|\e[0m \e[38;2;148;163;184mLinux\e[0m \e[1;38;2;168;85;247m%s\e[0m \e[38;2;100;116;139m|\e[0m \e[38;2;148;163;184mrunning on\e[0m \e[1;38;2;255;42;133m%s\e[0m\n' \
 	"${VERSION}" "${KERNELID}" "${DBAI_BOARD_DISPLAY}"
 
+HARDWARE_STATUS=""
+if [[ "${IMAGE_TYPE:-}" != "stable" ]]; then
+	case "${IMAGE_TYPE:-}" in
+		"user-built") HARDWARE_STATUS=$'\e[1;38;2;52;211;153mDIY\e[0m \e[38;2;148;163;184m(custom image)\e[0m' ;;
+		"nightly")    HARDWARE_STATUS=$'\e[1;38;2;168;85;247mfor advanced users\e[0m \e[38;2;148;163;184m(rolling release)\e[0m' ;;
+	esac
+else
+	case "${BOARD_TYPE:-}" in
+		"csc"|"tvb") HARDWARE_STATUS=$'\e[1;38;2;52;211;153mDIY\e[0m \e[38;2;148;163;184m(community maintained)\e[0m' ;;
+		"wip")       HARDWARE_STATUS=$'\e[1;38;2;168;85;247mfor advanced users\e[0m \e[38;2;148;163;184m(work in progress)\e[0m' ;;
+		"eos")       HARDWARE_STATUS=$'\e[1;38;2;255;42;133mend of life\e[0m' ;;
+	esac
+fi
+
+case "${DISTRIBUTION_STATUS:-}" in
+	supported) DISTRO_STATUS=$'\e[1;38;2;52;211;153mstable\e[0m' ;;
+	eos)       DISTRO_STATUS=$'\e[1;38;2;255;42;133mend of life\e[0m' ;;
+	*)         DISTRO_STATUS=$'\e[1;38;2;251;191;36mrolling\e[0m' ;;
+esac
+[[ -n "${DISTRIBUTION_CODENAME}" ]] && DISTRO_STATUS+=" \e[38;2;148;163;184m(${DISTRIBUTION_CODENAME})\e[0m"
+
+if [[ -f /var/cache/apt/archives/updates.number ]]; then
+	. /var/cache/apt/archives/updates.number
+	[[ -n "${UPDATES}" ]] && [[ "${UPDATES}" -gt 0 ]] && {
+		if [[ -f /var/run/reboot-required ]]; then
+			UPGRADE_TARGET=$'\e[1;38;2;248;113;113mreboot required\e[0m'
+		else
+			UPGRADE_TARGET="$(printf '\e[1;38;2;251;191;36m%d update%s\e[0m' "${UPDATES}" "$([[ "${UPDATES}" -gt 1 ]] && printf 's')")"
+		fi
+	}
+fi
+
+[[ -z "${HARDWARE_STATUS}" ]] || HARDWARE_STATUS="$(printf '\e[38;2;100;116;139m[\e[0m %s \e[38;2;100;116;139m]\e[0m' "${HARDWARE_STATUS}")"
+[[ -z "${DISTRO_STATUS}" ]]   || DISTRO_STATUS="$(printf '\e[38;2;100;116;139m[\e[0m %s \e[38;2;100;116;139m]\e[0m' "${DISTRO_STATUS}")"
+[[ -z "${UPGRADE_TARGET}" ]]  || UPGRADE_TARGET="$(printf '\e[38;2;100;116;139m[\e[0m %s \e[38;2;100;116;139m]\e[0m' "${UPGRADE_TARGET}")"
+
+LINE_PARTS=()
+[[ -z "${HARDWARE_STATUS}" ]] || LINE_PARTS+=("${HARDWARE_STATUS}")
+[[ -z "${DISTRO_STATUS}" ]]   || LINE_PARTS+=("${DISTRO_STATUS}")
+[[ -z "${UPGRADE_TARGET}" ]]  || LINE_PARTS+=("${UPGRADE_TARGET}")
+
+if (( ${#LINE_PARTS[@]} > 0 )); then
+	printf ' %s\n' "$(IFS=" "; echo "${LINE_PARTS[*]}")"
+fi
 """
 
-TWO_COLUMN_COMMANDS = """#!/bin/bash
-# Armbian MOTD: Commands (2 Parallel Columns with Color Harmony)
+TWO_COLUMN_COMMANDS = r"""#!/bin/bash
+# Armbian MOTD: Commands (2 Parallel Columns with TrueColor Harmony)
 
 THIS_SCRIPT="commands"
 MOTD_DISABLE=""
@@ -94,10 +141,13 @@ if [[ -z "${MOTD_SHOWN:-}" && -z "${XDG_SESSION_ID:-}" && -z "${SSH_CONNECTION:-
 	fi
 fi
 
-# Colors
-R="\\e[0m"
-C_ACCENT="\\e[1;38;2;56;189;248m"   # Sky Blue #38bdf8
-C_LABEL="\\e[38;2;148;163;184m"     # Muted Slate #94a3b8
+# Colors matching ASCII Art TrueColor palette (Sky Blue, Neon Pink, Purple, Mint, Slate)
+R="\e[0m"
+C_DOT="\e[1;38;2;255;42;133m"      # Neon Pink #ff2a85
+C_TITLE="\e[1;38;2;56;189;248m"    # Sky Blue #38bdf8
+C_LABEL="\e[38;2;148;163;184m"     # Muted Slate #94a3b8
+C_CMD="\e[1;38;2;56;189;248m"      # Sky Blue #38bdf8
+C_SEP="\e[38;2;168;85;247m"        # Purple #a855f7
 
 # Kolom 1 (Kiri)
 col1_names=("Configuration" "Resize rootfs" "Install to eMMC" "Monitoring")
@@ -108,7 +158,7 @@ col2_names=("Benchmark" "Nokia Utility" "Applications" "Full dump eMMC")
 col2_cmds=("imba" "dbai-nokia" "dbai-apps" "dbai-regression")
 
 echo ""
-printf " ${C_ACCENT}● Commands:${R}\\n\\n"
+printf " ${C_DOT}●${R} ${C_TITLE}Commands:${R}\n\n"
 
 for i in {0..3}; do
 	name1="${col1_names[$i]}"
@@ -116,19 +166,18 @@ for i in {0..3}; do
 	name2="${col2_names[$i]}"
 	cmd2="${col2_cmds[$i]}"
 
-	# Kolom 1: Awali dengan 1 spasi agar presisi sejajar vertikal dengan Load:, CPU freq:, CPU temp:
-	printf " ${C_LABEL}%-16s${R} : ${C_ACCENT}%-16s${R}   " "$name1" "$cmd1"
-
-	# Kolom 2: Sejajar vertikal dengan Uptime:, Memory usage:, Usage of /:
-	printf "${C_LABEL}%-16s${R} : ${C_ACCENT}%s${R}\\n" "$name2" "$cmd2"
+	# Kolom 1: Awali dengan 1 spasi agar presisi sejajar vertikal
+	printf " ${C_LABEL}%-16s${R} ${C_SEP}:${R} ${C_CMD}%-16s${R}   " "$name1" "$cmd1"
+	# Kolom 2: Sejajar vertikal
+	printf "${C_LABEL}%-16s${R} ${C_SEP}:${R} ${C_CMD}%s${R}\n" "$name2" "$cmd2"
 done
 echo ""
 
 exit 0
 """
 
-SWAPPED_SYSINFO = """#!/bin/bash
-# Armbian MOTD: System Info (Swapped Performance Grid with Color Harmony)
+SWAPPED_SYSINFO = r"""#!/bin/bash
+# Armbian MOTD: System Info (Swapped Performance Grid with TrueColor Harmony)
 
 set -o pipefail
 export LC_ALL=C
@@ -151,14 +200,16 @@ if [[ -z "${MOTD_SHOWN:-}" && -z "${XDG_SESSION_ID:-}" && -z "${SSH_CONNECTION:-
 	fi
 fi
 
-# Colors - Modern Cyber Sky & Emerald Palette
-R="\\e[0m"
-C_ACCENT="\\e[1;38;2;56;189;248m"   # Sky Blue #38bdf8
-C_LABEL="\\e[38;2;148;163;184m"     # Muted Slate #94a3b8
-C_OK="\\e[1;38;2;52;211;153m"       # Mint Emerald #34d399
-C_WARN="\\e[1;38;2;251;191;36m"     # Warm Amber #fbbf24
-C_CRIT="\\e[1;38;2;248;113;113m"    # Coral Red #f87171
-C_SUB="\\e[38;2;100;116;139m"       # Dim Slate #64748b
+# Colors matching ASCII Art TrueColor palette
+R="\e[0m"
+C_DOT="\e[1;38;2;255;42;133m"      # Neon Pink #ff2a85
+C_TITLE="\e[1;38;2;56;189;248m"    # Sky Blue #38bdf8
+C_LABEL="\e[38;2;148;163;184m"     # Muted Slate #94a3b8
+C_OK="\e[1;38;2;52;211;153m"       # Mint Emerald #34d399
+C_FREQ="\e[1;38;2;168;85;247m"     # Purple #a855f7
+C_WARN="\e[1;38;2;251;191;36m"     # Warm Amber #fbbf24
+C_CRIT="\e[1;38;2;248;113;113m"    # Coral Red #f87171
+C_SUB="\e[38;2;100;116;139m"       # Dim Slate #64748b
 
 # 1. Root storage info
 rootInfo="$(df -hP /)"
@@ -231,7 +282,7 @@ if (( root_usage >= 90 )); then disk_col="$C_CRIT"; elif (( root_usage >= 80 ));
 
 # Print Performance Header
 echo ""
-printf " ${C_ACCENT}● Performance:${R}\\n\\n"
+printf " ${C_DOT}●${R} ${C_TITLE}Performance:${R}\n\n"
 
 # Helper print cell dengan lebar tepat 38 karakter
 print_row() {
@@ -255,14 +306,14 @@ print_row() {
 	if [[ -n "$e2" ]]; then
 		printf " ${C_SUB}%s${R}" "$e2"
 	fi
-	printf "\\n"
+	printf "\n"
 }
 
 # SWAPPED LAYOUT:
 # Left column is CPU cluster (Load, Clock Freq, Temp)
 # Right column is System resources (Uptime, Memory, Disk root)
 print_row "Load:" "${load_val}%" "" "$load_col" "Uptime:" "$uptime_str" "" "$C_OK"
-print_row "CPU freq:" "$cpu_freq_val" "$cpu_freq_extra" "$C_ACCENT" "Memory usage:" "${mem_usage_val}%" "of ${memory_total}" "$mem_col"
+print_row "CPU freq:" "$cpu_freq_val" "$cpu_freq_extra" "$C_FREQ" "Memory usage:" "${mem_usage_val}%" "of ${memory_total}" "$mem_col"
 print_row "CPU temp:" "${cpu_temp_val}°C" "" "$temp_col" "Usage of /:" "${root_usage}%" "of ${root_total}" "$disk_col"
 echo ""
 
@@ -277,6 +328,11 @@ def patch_header(path: pathlib.Path) -> None:
             end = text.index(HEADER_END, start)
         except ValueError as exc:
             raise SystemExit(f"Unrecognized Armbian header layout: {path}") from exc
+        text = text[:start] + DBAI_HEADER + text[end:]
+    else:
+        # Replace existing DBAI header block with updated SoC detection and colors
+        start = text.index(HEADER_MARKER)
+        end = text.index(HEADER_END, start)
         text = text[:start] + DBAI_HEADER + text[end:]
 
     # Vendor banner block: support /etc/armbian-banner with figlet slant fallback
@@ -335,20 +391,30 @@ def patch_siblings(motd_dir: pathlib.Path) -> None:
     ip_info = motd_dir / "20-ip-info"
     if ip_info.is_file():
         text = ip_info.read_text(encoding="utf-8")
-        if 'C_LABEL' not in text and 'prefix4=' in text:
-            text = text.replace(
-                'local prefix4=" IPv4:       "',
-                r'local prefix4=" \e[38;2;148;163;184mIPv4:\e[0m        "'
-            )
-            text = text.replace(
-                r'[[ -n "$ipv4s" ]] && line+=" \x1B[93m(LAN)\x1B[0m \x1B[96m${ipv4s// /, }\x1B[0m"',
-                r'[[ -n "$ipv4s" ]] && line+=" \e[38;2;100;116;139m(LAN)\e[0m \e[1;38;2;52;211;153m${ipv4s// /, }\x1B[0m"'
-            )
-            text = text.replace(
-                r'[[ -n "$wan4"  ]] && line+=" \x1B[93m(WAN)\x1B[0m \x1B[96m${wan4}\x1B[0m"',
-                r'[[ -n "$wan4"  ]] && line+=" \e[38;2;100;116;139m(WAN)\e[0m \e[1;38;2;56;189;248m${wan4}\x1B[0m"'
-            )
-            ip_info.write_text(text, encoding="utf-8")
+        # Replace prefixes and tags with TrueColor palette
+        text = re.sub(r'local prefix4="[^"]+"', r'local prefix4=" \\e[1;38;2;255;42;133mIPv4:\\e[0m        "', text)
+        text = re.sub(r'local prefix6="[^"]+"', r'local prefix6=" \\e[1;38;2;255;42;133mIPv6:\\e[0m        "', text)
+        text = re.sub(
+            r'\[\[ -n "\$ipv4s" \]\] && line\+=[^\n]+',
+            r'[[ -n "$ipv4s" ]] && line+=" \\e[38;2;168;85;247m(LAN)\\e[0m \\e[1;38;2;52;211;153m${ipv4s// /, }\\e[0m"',
+            text
+        )
+        text = re.sub(
+            r'\[\[ -n "\$wan4"  \]\] && line\+=[^\n]+',
+            r'[[ -n "$wan4"  ]] && line+=" \\e[38;2;168;85;247m(WAN)\\e[0m \\e[1;38;2;56;189;248m${wan4}\\e[0m"',
+            text
+        )
+        text = re.sub(
+            r'\[\[ -n "\$ipv6s" \]\] && line\+=[^\n]+',
+            r'[[ -n "$ipv6s" ]] && line+=" \\e[38;2;168;85;247m(LAN)\\e[0m \\e[1;38;2;52;211;153m${ipv6s// /, }\\e[0m"',
+            text
+        )
+        text = re.sub(
+            r'\[\[ -n "\$wan6"  \]\] && line\+=[^\n]+',
+            r'[[ -n "$wan6"  ]] && line+=" \\e[38;2;168;85;247m(WAN)\\e[0m \\e[1;38;2;56;189;248m${wan6}\\e[0m"',
+            text
+        )
+        ip_info.write_text(text, encoding="utf-8")
 
     quotes = motd_dir / "quotes.txt"
     if quotes.is_file():
@@ -361,7 +427,6 @@ def patch_siblings(motd_dir: pathlib.Path) -> None:
             tips.chmod(0o755)
         except Exception:
             pass
-
 
 
 def main() -> None:

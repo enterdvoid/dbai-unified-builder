@@ -147,9 +147,9 @@ SDCARD="$brand_tmp" SRC="$brand_src" bash -c '
   source "$1"
   post_repo_customize_image__dbai_branding
 ' _ "$ROOT/extensions/dbai-branding.sh"
-grep -qx 'VENDOR="DBAI-2K26"' "$brand_tmp/etc/armbian-release"
-grep -qx 'VENDORPRETTYNAME="DBAI-2K26"' "$brand_tmp/etc/armbian-release"
-grep -qx 'VENDORCOLOR="56;189;248"' "$brand_tmp/etc/armbian-release"
+grep -qx 'VENDOR="DBAI"' "$brand_tmp/etc/armbian-release"
+grep -qx 'VENDORPRETTYNAME="Armbian-DBAI-2K26"' "$brand_tmp/etc/armbian-release"
+grep -qx 'VENDORCOLOR="39;174;96"' "$brand_tmp/etc/armbian-release"
 test -x "$brand_tmp/usr/local/bin/dbai-apps"
 test -x "$brand_tmp/usr/local/bin/dbai-nokia"
 test -x "$brand_tmp/usr/local/bin/dbai-regression"

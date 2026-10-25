@@ -2,6 +2,20 @@
 # Apply DBAI-2K26 branding to stock Armbian metadata and MOTD scripts.
 # shellcheck shell=bash
 
+function extension_prepare_config__dbai_branding() {
+	HOST="${HOST:-tvbox-dbai}"
+	VENDOR="${VENDOR:-DBAI}"
+	VENDORPRETTYNAME="${VENDORPRETTYNAME:-Armbian-DBAI-2K26}"
+	VENDORCOLOR="${VENDORCOLOR:-39;174;96}"
+	VENDORDOCS="${VENDORDOCS:-https://github.com/armarchindo/build#readme}"
+	VENDORURL="${VENDORURL:-https://github.com/armarchindo/build}"
+	VENDORSUPPORT="${VENDORSUPPORT:-https://github.com/armarchindo/build/issues}"
+	VENDORBUGS="${VENDORBUGS:-https://github.com/armarchindo/build/issues}"
+	VENDORLOGO="${VENDORLOGO:-armbian-logo}"
+	MAINTAINER="${MAINTAINER:-DBAI Armbian Project}"
+	MAINTAINERMAIL="${MAINTAINERMAIL:-dbaimedia@gmail.com}"
+}
+
 function dbai_apply_branding() {
 	: "${SDCARD:?Armbian did not set SDCARD for DBAI branding}"
 	if [[ -f "${SDCARD}/etc/.dbai_branding_applied" ]]; then
@@ -9,41 +23,77 @@ function dbai_apply_branding() {
 	fi
 	touch "${SDCARD}/etc/.dbai_branding_applied"
 
-	local release_file="${SDCARD}/etc/armbian-release"
 	mkdir -p "${SDCARD}/etc"
 
-	python3 - "$release_file" <<'PY'
+	# Set hostname and hosts to tvbox-dbai
+	local target_host="${HOST:-tvbox-dbai}"
+	echo "${target_host}" > "${SDCARD}/etc/hostname"
+	if [[ -f "${SDCARD}/etc/hosts" ]]; then
+		sed -i -E "s/127\.0\.1\.1[[:space:]]+.*/127.0.1.1\t${target_host}/" "${SDCARD}/etc/hosts"
+		if ! grep -q "${target_host}" "${SDCARD}/etc/hosts"; then
+			echo -e "127.0.1.1\t${target_host}" >> "${SDCARD}/etc/hosts"
+		fi
+	else
+		cat > "${SDCARD}/etc/hosts" <<EOF
+127.0.0.1	localhost
+127.0.1.1	${target_host}
+::1		localhost ip6-localhost ip6-loopback
+fe00::0		ip6-localnet
+ff00::0		ip6-mcastprefix
+ff02::1		ip6-allnodes
+ff02::2		ip6-allrouters
+EOF
+	fi
+
+	local release_file="${SDCARD}/etc/armbian-release"
+	local img_release_file="${SDCARD}/etc/armbian-image-release"
+
+	python3 - "$release_file" "$img_release_file" "$target_host" <<'PY'
 import pathlib
 import sys
 
-path = pathlib.Path(sys.argv[1])
-try:
-    lines = path.read_text(encoding="utf-8").splitlines()
-except FileNotFoundError:
-    lines = []
+rel_path = pathlib.Path(sys.argv[1])
+img_rel_path = pathlib.Path(sys.argv[2])
+target_host = sys.argv[3] if len(sys.argv) > 3 else "tvbox-dbai"
 
 branding = {
-    "VENDOR": "DBAI-2K26",
-    "VENDORPRETTYNAME": "DBAI-2K26",
-    "VENDORCOLOR": "56;189;248",
+    "BOARD_NAME": "ZTE B860H",
+    "HOST": target_host,
+    "VENDOR": "DBAI",
+    "VENDORPRETTYNAME": "Armbian-DBAI-2K26",
+    "VENDORCOLOR": "39;174;96",
+    "VENDORDOCS": "https://github.com/armarchindo/build#readme",
+    "VENDORURL": "https://github.com/armarchindo/build",
+    "VENDORSUPPORT": "https://github.com/armarchindo/build/issues",
+    "VENDORBUGS": "https://github.com/armarchindo/build/issues",
+    "VENDORLOGO": "armbian-logo",
+    "MAINTAINER": "DBAI Armbian Project",
+    "MAINTAINERMAIL": "dbaimedia@gmail.com",
 }
-seen = set()
-updated = []
-for line in lines:
-    key = line.partition("=")[0]
-    if key in branding:
+
+for path in (rel_path, img_rel_path):
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except FileNotFoundError:
+        lines = []
+
+    seen = set()
+    updated = []
+    for line in lines:
+        key = line.partition("=")[0].strip()
+        if key in branding:
+            if key not in seen:
+                updated.append(f'{key}="{branding[key]}"')
+                seen.add(key)
+        else:
+            updated.append(line)
+
+    for key, value in branding.items():
         if key not in seen:
-            updated.append(f'{key}="{branding[key]}"')
-            seen.add(key)
-    else:
-        updated.append(line)
+            updated.append(f'{key}="{value}"')
 
-for key, value in branding.items():
-    if key not in seen:
-        updated.append(f'{key}="{value}"')
-
-path.write_text("\n".join(updated) + "\n", encoding="utf-8")
-print("Set DBAI-2K26 vendor metadata in /etc/armbian-release")
+    path.write_text("\n".join(updated) + "\n", encoding="utf-8")
+    print(f"Updated vendor branding in {path}")
 PY
 
 	# Install TrueColor PHP2sheel-style gradient ASCII art banner
@@ -245,4 +295,3 @@ function pre_customize_image__500_dbai_branding() {
 function post_repo_customize_image__dbai_branding() {
 	dbai_apply_branding "$@"
 }
-
