@@ -153,6 +153,15 @@ for f in ${MOTD_DISABLE}; do
 	[[ "${f}" == "${THIS_SCRIPT}" ]] && exit 0
 done
 
+# Only display for authenticated user sessions (post-login)
+if [[ -z "${USER:-}" && -z "${LOGNAME:-}" && -z "${PAM_USER:-}" ]]; then
+	exit 0
+fi
+if [[ -z "${MOTD_SHOWN:-}" && -z "${XDG_SESSION_ID:-}" && -z "${SSH_CONNECTION:-}" && -z "${PAM_USER:-}" ]]; then
+	if ! who 2>/dev/null | grep -q .; then
+		exit 0
+	fi
+fi
 
 # Colors matching ASCII Art TrueColor palette (Sky Blue, Neon Pink, Purple, Mint, Slate)
 R="\e[0m"
@@ -203,6 +212,15 @@ for f in ${MOTD_DISABLE}; do
 	[[ "${f}" == "${THIS_SCRIPT}" ]] && exit 0
 done
 
+# Only display for authenticated user sessions (post-login)
+if [[ -z "${USER:-}" && -z "${LOGNAME:-}" && -z "${PAM_USER:-}" ]]; then
+	exit 0
+fi
+if [[ -z "${MOTD_SHOWN:-}" && -z "${XDG_SESSION_ID:-}" && -z "${SSH_CONNECTION:-}" && -z "${PAM_USER:-}" ]]; then
+	if ! who 2>/dev/null | grep -q .; then
+		exit 0
+	fi
+fi
 
 # Colors matching ASCII Art TrueColor palette
 R="\e[0m"
