@@ -2,8 +2,8 @@
 """Patch Armbian's existing MOTD scripts in place for DBAI branding.
 
 This updates Armbian MOTD modules with TrueColor gradient harmony (Neon Pink,
-Purple, Sky Cyan, Mint Emerald), a 3x2 swapped performance grid, and a
-2-column commands menu.
+Purple, Sky Cyan, Mint Emerald), selection badge subtitle, a 3x2 swapped
+performance grid, and a 2-column commands menu.
 """
 from __future__ import annotations
 
@@ -33,34 +33,56 @@ if [[ -r /proc/device-tree/compatible ]]; then
 fi
 DBAI_SOC=""
 case "${DBAI_DEVICE_COMPATIBLE,,} ${DBAI_BOARD_MODEL,,}" in
-	*s905x4*) DBAI_SOC="Amlogic S905X4" ;;
-	*s905y4*) DBAI_SOC="Amlogic S905Y4" ;;
-	*s905d4*) DBAI_SOC="Amlogic S905D4" ;;
-	*s905x3*) DBAI_SOC="Amlogic S905X3" ;;
-	*s905y3*) DBAI_SOC="Amlogic S905Y3" ;;
-	*s905d3*) DBAI_SOC="Amlogic S905D3" ;;
-	*s905x2*|*b860h-v5*) DBAI_SOC="Amlogic S905X2" ;;
-	*s905y2*) DBAI_SOC="Amlogic S905Y2" ;;
-	*s905d2*) DBAI_SOC="Amlogic S905D2" ;;
-	*p212*|*b860h*|*hg680*|*s905x*) DBAI_SOC="Amlogic S905X" ;;
-	*s905y*) DBAI_SOC="Amlogic S905Y" ;;
-	*s905d*) DBAI_SOC="Amlogic S905D" ;;
-	*s912*|*gxm*) DBAI_SOC="Amlogic S912" ;;
-	*rk3588*) DBAI_SOC="Rockchip RK3588" ;;
-	*rk3568*) DBAI_SOC="Rockchip RK3568" ;;
-	*rk3566*) DBAI_SOC="Rockchip RK3566" ;;
-	*rk3399*) DBAI_SOC="Rockchip RK3399" ;;
-	*rk3328*) DBAI_SOC="Rockchip RK3328" ;;
-	*sun50i-h618*) DBAI_SOC="Allwinner H618" ;;
-	*sun50i-h616*) DBAI_SOC="Allwinner H616" ;;
-	*sun50i-a64*) DBAI_SOC="Allwinner A64" ;;
-	*sun8i-h3*) DBAI_SOC="Allwinner H3" ;;
-	*mt6890*) DBAI_SOC="MediaTek MT6890" ;;
+	*s905x4*) DBAI_SOC="S905X4" ;;
+	*s905y4*) DBAI_SOC="S905Y4" ;;
+	*s905d4*) DBAI_SOC="S905D4" ;;
+	*s905w2*) DBAI_SOC="S905W2" ;;
+	*s905x3*) DBAI_SOC="S905X3" ;;
+	*s905y3*) DBAI_SOC="S905Y3" ;;
+	*s905d3*) DBAI_SOC="S905D3" ;;
+	*s905x2*|*b860h-v5*) DBAI_SOC="S905X2" ;;
+	*s905y2*) DBAI_SOC="S905Y2" ;;
+	*s905d2*) DBAI_SOC="S905D2" ;;
+	*p212*|*b860h*|*hg680*|*s905x*) DBAI_SOC="S905X" ;;
+	*s905w*) DBAI_SOC="S905W" ;;
+	*s905y*) DBAI_SOC="S905Y" ;;
+	*s905d*) DBAI_SOC="S905D" ;;
+	*p201*|*p200*|*s905*) DBAI_SOC="S905" ;;
+	*s912*|*gxm*) DBAI_SOC="S912" ;;
+	*a311d2*) DBAI_SOC="A311D2" ;;
+	*a311d*) DBAI_SOC="A311D" ;;
+	*s922x*) DBAI_SOC="S922X" ;;
+	*t962x*) DBAI_SOC="T962X" ;;
+	*s805x2*) DBAI_SOC="S805X2" ;;
+	*s805x*) DBAI_SOC="S805X" ;;
+	*rk3588*) DBAI_SOC="RK3588" ;;
+	*rk3576*) DBAI_SOC="RK3576" ;;
+	*rk3568*) DBAI_SOC="RK3568" ;;
+	*rk3566*) DBAI_SOC="RK3566" ;;
+	*rk3399*) DBAI_SOC="RK3399" ;;
+	*rk3328*) DBAI_SOC="RK3328" ;;
+	*sun50i-h618*|*h618*) DBAI_SOC="H618" ;;
+	*sun50i-h616*|*h616*) DBAI_SOC="H616" ;;
+	*sun50i-h313*|*h313*) DBAI_SOC="H313" ;;
+	*sun50i-a64*|*a64*) DBAI_SOC="A64" ;;
+	*sun8i-h3*|*h3*) DBAI_SOC="H3" ;;
+	*mt6890*) DBAI_SOC="MT6890" ;;
 esac
 
-DBAI_BOARD_DISPLAY="$DBAI_BOARD_MODEL"
-if [[ -n "$DBAI_SOC" && "${DBAI_BOARD_DISPLAY,,}" != *"${DBAI_SOC,,}"* ]]; then
-	DBAI_BOARD_DISPLAY+=" ($DBAI_SOC)"
+# Dynamic fallback: if not in explicit list, extract vendor chip name (e.g. amlogic,a311d2 -> A311D2)
+if [[ -z "$DBAI_SOC" && -n "$DBAI_DEVICE_COMPATIBLE" ]]; then
+	if [[ "$DBAI_DEVICE_COMPATIBLE" =~ (amlogic|rockchip|allwinner),([a-zA-Z0-9_-]+) ]]; then
+		raw_soc="${BASH_REMATCH[2]}"
+		raw_soc="${raw_soc#meson-}"
+		raw_soc="${raw_soc#sun50i-}"
+		raw_soc="${raw_soc#sun8i-}"
+		DBAI_SOC="${raw_soc^^}"
+	fi
+fi
+
+DBAI_DEVICE_LABEL="${DBAI_BOARD_MODEL}"
+if [[ -n "${DBAI_SOC}" && "${DBAI_DEVICE_LABEL,,}" != *"${DBAI_SOC,,}"* ]]; then
+	DBAI_DEVICE_LABEL="${DBAI_BOARD_MODEL} ${DBAI_SOC}"
 fi
 
 # Preserve Armbian VERSION; if it ends with "trunk", show "rolling".
@@ -69,9 +91,9 @@ if [[ "${VERSION:-}" == *trunk* ]]; then
 	VERSION="${VERSION} rolling"
 fi
 
-# Vibrant harmony subtitle line matching banner palette
-printf ' \e[38;2;148;163;184mArmbian\e[0m \e[1;38;2;52;211;153mv%s\e[0m \e[38;2;100;116;139m|\e[0m \e[38;2;148;163;184mLinux\e[0m \e[1;38;2;168;85;247m%s\e[0m \e[38;2;100;116;139m|\e[0m \e[38;2;148;163;184mrunning on\e[0m \e[1;38;2;255;42;133m%s\e[0m\n' \
-	"${VERSION}" "${KERNELID}" "${DBAI_BOARD_DISPLAY}"
+# Two-tone badge subtitle matching terminal selection styling
+printf ' \e[48;2;226;232;240m\e[1;38;2;15;23;42m Armbian \e[48;2;52;211;153m\e[1;38;2;15;23;42m v%s \e[0m \e[38;2;100;116;139m|\e[0m \e[48;2;226;232;240m\e[1;38;2;15;23;42m Linux \e[48;2;168;85;247m\e[1;38;2;15;23;42m %s \e[0m \e[38;2;100;116;139m|\e[0m \e[48;2;255;42;133m\e[1;38;2;15;23;42m %s \e[0m\n' \
+	"${VERSION}" "${KERNELID}" "${DBAI_DEVICE_LABEL}"
 
 HARDWARE_STATUS=""
 if [[ "${IMAGE_TYPE:-}" != "stable" ]]; then

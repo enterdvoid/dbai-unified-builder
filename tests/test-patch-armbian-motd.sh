@@ -38,7 +38,7 @@ COMMANDS
 python3 "$repo_root/scripts/patch-armbian-motd.py" "$header" "$commands"
 bash -n "$header"
 grep -Fq 'DBAI board and version line' "$header"
-grep -Fq 'running on' "$header"
+grep -Fq 'DBAI_DEVICE_LABEL' "$header"
 grep -Fq 'figlet -f slant' "$header"
 grep -Fq "dbai-apps" "$commands"
 grep -Fq "dbai-nokia" "$commands"
