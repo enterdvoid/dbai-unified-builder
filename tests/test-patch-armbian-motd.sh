@@ -25,6 +25,19 @@ printf ' v%s for %s running Armbian Linux %s\n' "${VERSION}" "${BOARD_NAME}" "${
 
 # --- Hardware support status ---
 HARDWARE_STATUS=""
+
+# --- Distribution status line ---
+case "${DISTRIBUTION_STATUS:-}" in
+	supported) DISTRO_STATUS=$'\e[0;92mstable\e[0m' ;;
+	eos)       DISTRO_STATUS=$'\e[0;91mend of life\e[0m' ;;
+	*)         DISTRO_STATUS=$'\e[0;93mrolling\e[0m' ;;
+esac
+[[ -n "${DISTRIBUTION_CODENAME}" ]] && DISTRO_STATUS+=" (${DISTRIBUTION_CODENAME})"
+
+# --- Updates status ---
+
+# --- Display summary ---
+printf ' Packages:     %s %b\n' "${DISTRIBUTION_ID^}" "${DISTRO_STATUS}"
 HEADER
 
 cat > "$commands" <<'COMMANDS'
@@ -40,6 +53,8 @@ bash -n "$header"
 grep -Fq 'DBAI board and version line' "$header"
 grep -Fq 'DBAI_DEVICE_LABEL' "$header"
 grep -Fq 'figlet -f slant' "$header"
+grep -Fq 'CODENAME=' "$header"
+grep -Fq 'Packages:' "$header" 
 grep -Fq "dbai-apps" "$commands"
 grep -Fq "dbai-nokia" "$commands"
 grep -Fq "imba" "$commands"

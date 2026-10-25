@@ -345,12 +345,13 @@ case "${CODENAME,,}" in
 esac
 [[ -n "${CODENAME}" ]] && DISTRO_STATUS+=" (${CODENAME})"
 """
-        text = re.sub(
-            r'# --- Distribution status line ---.*?(?=\n# --- Updates status ---|\Z)',
-            distro_block.rstrip(),
-            text,
-            flags=re.DOTALL
-        )
+        start_d = text.index('# --- Distribution status line ---')
+        end_marker = '\n# --- Updates status ---'
+        if end_marker in text:
+            end_d = text.index(end_marker, start_d)
+            text = text[:start_d] + distro_block.rstrip() + text[end_d:]
+        else:
+            text = text[:start_d] + distro_block.rstrip()
 
     # Highlight distribution name in Sky Blue and clean up distro name (e.g. Debian GNU/Linux -> Debian)
     if "printf ' Packages:     %s %b\\n'" in text:
