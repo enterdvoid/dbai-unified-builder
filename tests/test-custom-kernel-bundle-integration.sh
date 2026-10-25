@@ -41,11 +41,13 @@ echo "Detected actual kernel module release from published bundle: ${module_rele
 # Never rename the payloads or create a replacement initramfs in the image builder.
 bootfs_archive="${repo_root}/platform/bootfs_custom_kernel.tar.gz"
 [[ -s "$bootfs_archive" ]] || { echo "FAIL: tracked custom bootfs archive is missing." >&2; exit 1; }
-tar -tzf "$bootfs_archive" | grep -Fxq 'uEnv.txt' || {
+tar -tzf "$bootfs_archive" | sed 's,^[.]/,,;' | grep -Fxq 'uEnv.txt' || {
   echo "FAIL: custom bootfs archive is missing uEnv.txt." >&2
   exit 1
 }
-tar -xOzf "$bootfs_archive" uEnv.txt > "${tmp}/uEnv.txt"
+if ! tar -xOzf "$bootfs_archive" uEnv.txt > "${tmp}/uEnv.txt" 2>/dev/null; then
+  tar -xOzf "$bootfs_archive" ./uEnv.txt > "${tmp}/uEnv.txt"
+fi
 # The bootfs archive may use CRLF line endings; normalize only the test copy.
 tr -d '\r' < "${tmp}/uEnv.txt" > "${tmp}/uEnv.normalized.txt"
 mv "${tmp}/uEnv.normalized.txt" "${tmp}/uEnv.txt"
