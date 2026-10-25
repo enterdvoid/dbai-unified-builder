@@ -92,7 +92,7 @@ if [[ "${VERSION:-}" == *trunk* ]]; then
 fi
 
 # Two-tone badge subtitle matching terminal selection styling
-printf ' \e[48;2;226;232;240m\e[1;38;2;15;23;42m Armbian \e[48;2;52;211;153m\e[1;38;2;15;23;42m v%s \e[0m \e[38;2;100;116;139m|\e[0m \e[48;2;226;232;240m\e[1;38;2;15;23;42m Linux \e[48;2;168;85;247m\e[1;38;2;15;23;42m %s \e[0m \e[38;2;100;116;139m|\e[0m \e[48;2;255;42;133m\e[1;38;2;15;23;42m %s \e[0m\n' \
+printf '  \e[48;2;226;232;240m\e[1;38;2;15;23;42m Armbian \e[48;2;52;211;153m\e[1;38;2;15;23;42m v%s \e[0m \e[38;2;100;116;139m|\e[0m \e[48;2;226;232;240m\e[1;38;2;15;23;42m Linux \e[48;2;168;85;247m\e[1;38;2;15;23;42m %s \e[0m \e[38;2;100;116;139m|\e[0m \e[48;2;255;42;133m\e[1;38;2;15;23;42m %s \e[0m\n' \
 	"${VERSION}" "${KERNELID}" "${DBAI_DEVICE_LABEL}"
 
 HARDWARE_STATUS=""
@@ -114,7 +114,11 @@ case "${DISTRIBUTION_STATUS:-}" in
 	eos)       DISTRO_STATUS=$'\e[1;38;2;255;42;133mend of life\e[0m' ;;
 	*)         DISTRO_STATUS=$'\e[1;38;2;251;191;36mrolling\e[0m' ;;
 esac
-[[ -n "${DISTRIBUTION_CODENAME}" ]] && DISTRO_STATUS+="$(printf ' \e[38;2;148;163;184m(%s)\e[0m' "${DISTRIBUTION_CODENAME}")"
+if [[ -n "${DISTRIBUTION_CODENAME}" ]]; then
+	color_code=$'\e[38;2;148;163;184m'
+	reset_code=$'\e[0m'
+	DISTRO_STATUS+=" ${color_code}(${DISTRIBUTION_CODENAME})${reset_code}"
+fi
 
 if [[ -f /var/cache/apt/archives/updates.number ]]; then
 	. /var/cache/apt/archives/updates.number
@@ -137,8 +141,10 @@ LINE_PARTS=()
 [[ -z "${UPGRADE_TARGET}" ]]  || LINE_PARTS+=("${UPGRADE_TARGET}")
 
 if (( ${#LINE_PARTS[@]} > 0 )); then
-	printf ' %s\n' "$(IFS=" "; echo "${LINE_PARTS[*]}")"
+	printf '  %s\n' "$(IFS=" "; echo "${LINE_PARTS[*]}")"
 fi
+
+(return 0 2>/dev/null) || exit 0
 """
 
 TWO_COLUMN_COMMANDS = r"""#!/bin/bash
