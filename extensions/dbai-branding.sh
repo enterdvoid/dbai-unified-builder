@@ -157,6 +157,12 @@ EOF
 	# Ensure issue and issue.net display minimal clean branding without MOTD leaks
 	echo -e "\e[1;38;2;56;189;248mDBAI-2K26\e[0m (\\l)\n" > "${SDCARD}/etc/issue"
 	echo -e "DBAI-2K26" > "${SDCARD}/etc/issue.net"
+	# Replace Armbian-unofficial with Armbian-DBAI-2K26 in os-release so systemd boot welcome displays DBAI branding
+	for os_rel in "${SDCARD}/etc/os-release" "${SDCARD}/usr/lib/os-release"; do
+		if [[ -f "$os_rel" ]]; then
+			sed -i "s/Armbian-unofficial/Armbian-DBAI-2K26/g" "$os_rel"
+		fi
+	done
 
 	local dbai_motd_patcher=""
 	for cand in \
