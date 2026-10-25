@@ -141,7 +141,7 @@ on:
         description: "Custom Kernel: one HTTPS bundle URL. Recompile Custom Kernel: HTTPS Git URL optionally followed by #branch:<name> or #tag:<name>."
         type: string
         required: false
-        default: ""
+        default: "https://github.com/armarchindo/kernel/releases/download/kernel_dbai/6.1.66-DBAI.tar.gz"
 
 # Keep the DBAI product version independent of the upstream Armbian "-trunk" development suffix.
 env:
