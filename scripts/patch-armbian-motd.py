@@ -327,6 +327,38 @@ fi
         elif 'figlet -f ' in text:
             text = text.replace('figlet -f small " ${VENDOR}"', 'figlet -f slant " ${VENDOR}"')
 
+    # Source /etc/os-release if not present to ensure UBUNTU_CODENAME / VERSION_CODENAME are available
+    if '[[ -f /etc/os-release ]] && . /etc/os-release' not in text:
+        if '[[ -f /etc/armbian-release ]] && . /etc/armbian-release' in text:
+            text = text.replace(
+                '[[ -f /etc/armbian-release ]] && . /etc/armbian-release',
+                '[[ -f /etc/os-release ]] && . /etc/os-release\n[[ -f /etc/armbian-release ]] && . /etc/armbian-release'
+            )
+
+    # Ensure distribution status is "stable" for all releases (bullseye, bookworm, trixie, focal, jammy, noble, resolute)
+    if '# --- Distribution status line ---' in text:
+        distro_block = """# --- Distribution status line ---
+CODENAME="${UBUNTU_CODENAME:-${VERSION_CODENAME:-${DISTRIBUTION_CODENAME:-}}}"
+case "${CODENAME,,}" in
+	sid|unstable|testing) DISTRO_STATUS=$'\\e[0;93mrolling\\e[0m' ;;
+	*)                    DISTRO_STATUS=$'\\e[0;92mstable\\e[0m' ;;
+esac
+[[ -n "${CODENAME}" ]] && DISTRO_STATUS+=" (${CODENAME})"
+"""
+        text = re.sub(
+            r'# --- Distribution status line ---.*?(?=\n# --- Updates status ---|\Z)',
+            distro_block.rstrip(),
+            text,
+            flags=re.DOTALL
+        )
+
+    # Highlight distribution name in Sky Blue and clean up distro name (e.g. Debian GNU/Linux -> Debian)
+    if "printf ' Packages:     %s %b\\n'" in text:
+        text = text.replace(
+            "printf ' Packages:     %s %b\\n' \"${DISTRIBUTION_ID^}\" \"${DISTRO_STATUS}\"",
+            "RAW_DISTRO=\"${ID:-${DISTRIBUTION_ID:-${NAME:-Linux}}}\"; DISTRO_NAME=\"${RAW_DISTRO%% *}\"; printf ' Packages:     \\e[1;38;2;56;189;248m%s\\e[0m %b\\n' \"${DISTRO_NAME^}\" \"${DISTRO_STATUS}\""
+        )
+
     # Update kernel hold check to detect armbian-bsp package
     if "apt-mark showhold" in text and "armbian-bsp" not in text:
         text = text.replace("grep -q '^linux-image'", "grep -Eq '^linux-image|^armbian-bsp'")
