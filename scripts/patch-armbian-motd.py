@@ -114,7 +114,7 @@ case "${DISTRIBUTION_STATUS:-}" in
 	eos)       DISTRO_STATUS=$'\e[1;38;2;255;42;133mend of life\e[0m' ;;
 	*)         DISTRO_STATUS=$'\e[1;38;2;251;191;36mrolling\e[0m' ;;
 esac
-[[ -n "${DISTRIBUTION_CODENAME}" ]] && DISTRO_STATUS+=" \e[38;2;148;163;184m(${DISTRIBUTION_CODENAME})\e[0m"
+[[ -n "${DISTRIBUTION_CODENAME}" ]] && DISTRO_STATUS+="$(printf ' \e[38;2;148;163;184m(%s)\e[0m' "${DISTRIBUTION_CODENAME}")"
 
 if [[ -f /var/cache/apt/archives/updates.number ]]; then
 	. /var/cache/apt/archives/updates.number
@@ -152,6 +152,9 @@ safe_source /etc/default/armbian-motd
 for f in ${MOTD_DISABLE}; do
 	[[ "${f}" == "${THIS_SCRIPT}" ]] && exit 0
 done
+
+# Sembunyikan jika masih dalam proses setup awal first-login
+[[ -f /root/.not_logged_in_yet ]] && exit 0
 
 
 # Colors matching ASCII Art TrueColor palette (Sky Blue, Neon Pink, Purple, Mint, Slate)
@@ -202,6 +205,9 @@ safe_source /etc/default/armbian-motd
 for f in ${MOTD_DISABLE}; do
 	[[ "${f}" == "${THIS_SCRIPT}" ]] && exit 0
 done
+
+# Sembunyikan jika masih dalam proses setup awal first-login
+[[ -f /root/.not_logged_in_yet ]] && exit 0
 
 
 # Colors matching ASCII Art TrueColor palette
