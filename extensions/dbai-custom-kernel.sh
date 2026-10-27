@@ -347,7 +347,7 @@ if ! declare -F dbai_configure_uenv_rootfs >/dev/null 2>&1; then
 		local uenv="$1" fs="${ROOTFS_TYPE:-${FILESYSTEM:-ext4}}"
 		[[ -f "$uenv" ]] || return 0
 		if [[ "${fs,,}" == "btrfs" ]]; then
-			sed -i -E 's|^[[:space:]]*APPEND=.*|APPEND=root=UUID=19450817-1998-4512-a817-202510202026 rootflags=compress=zstd:6 rw rootwait rootfstype=btrfs console=ttyAML0,115200n8 consoleblank=0 fsck.fix=yes fsck.repair=yes net.ifnames=0 max_loop=128 cgroup_enable=cpuset cgroup_memory=1 cgroup_enable=memory swapaccount=1|' "$uenv"
+			sed -i -E 's|^[[:space:]]*APPEND=.*|APPEND=root=UUID=19450817-1998-4512-a817-202510202026 rootflags=subvol=@,compress=zstd:6 rw rootwait rootfstype=btrfs console=ttyAML0,115200n8 console=tty0 no_console_suspend consoleblank=0 fsck.fix=yes fsck.repair=yes net.ifnames=0 max_loop=128 cgroup_enable=cpuset cgroup_memory=1 cgroup_enable=memory swapaccount=1|' "$uenv"
 		fi
 	}
 fi
